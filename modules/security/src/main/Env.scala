@@ -70,7 +70,9 @@ final class Env(
 
   lazy val userSpy = UserSpy(firewall, geoIP) _
 
-  lazy val disconnect = Store disconnect _
+  def store = Store
+
+  lazy val disconnect = store disconnect _
 
   lazy val emailConfirm = new EmailConfirm(
     apiUrl = EmailConfirmMailgunApiUrl,
@@ -96,7 +98,7 @@ final class Env(
   scheduler.once(30 seconds)(tor.refresh(_ => funit))
   scheduler.effect(TorRefreshDelay, "Refresh TOR exit nodes")(tor.refresh(firewall.unblockIps))
 
-  lazy val api = new Api(firewall, tor)
+  lazy val api = new Api(firewall, tor, geoIP)
 
   def cli = new Cli
 

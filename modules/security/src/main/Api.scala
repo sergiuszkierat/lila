@@ -8,7 +8,7 @@ import reactivemongo.bson._
 
 import lila.user.{ User, UserRepo }
 
-private[security] final class Api(firewall: Firewall, tor: Tor) {
+final class Api(firewall: Firewall, tor: Tor, geoIP: GeoIP) {
 
   val AccessUri = "access_uri"
 
@@ -25,9 +25,7 @@ private[security] final class Api(firewall: Firewall, tor: Tor) {
       case true => fufail(Api MustConfirmEmail userId)
       case false =>
         val sessionId = Random nextStringUppercase 12
-        Store.save(
-          sessionId, userId, req, apiVersion, tor isExitNode req.remoteAddress
-        ) inject sessionId
+        Store.save(sessionId, userId, req, apiVersion) inject sessionId
     }
 
   // blocking function, required by Play2 form
@@ -51,10 +49,20 @@ private[security] final class Api(firewall: Firewall, tor: Tor) {
       }
     }
 
+  def locatedOpenSessions(userId: String, nb: Int): Fu[List[LocatedSession]] =
+    Store.openSessions(userId, nb) map {
+      _.map { session =>
+        LocatedSession(session, geoIP(session.ip))
+      }
+    }
+
+  def dedup(userId: String, req: RequestHeader): Funit =
+    reqSessionId(req) ?? { Store.dedup(userId, _) }
+
   def setFingerprint(req: RequestHeader, fingerprint: String): Funit =
     reqSessionId(req) ?? { Store.setFingerprint(_, fingerprint) }
 
-  private def reqSessionId(req: RequestHeader) = req.session get "sessionId"
+  def reqSessionId(req: RequestHeader) = req.session get "sessionId"
 
   def userIdsSharingIp = userIdsSharingField("ip") _
 
