@@ -2,6 +2,7 @@ package controllers
 
 import play.api.mvc._, Results._
 
+import lila.api.Context
 import lila.app._
 import lila.common.LilaCookie
 import lila.db.api.$find
@@ -81,19 +82,23 @@ object Account extends LilaController {
 
   def emailApply = AuthBody { implicit ctx =>
     me =>
-      implicit val req = ctx.body
-      FormFuResult(Env.security.forms.changeEmail(me)) { err =>
-        fuccess(html.account.email(me, err))
-      } { data =>
-        val email = Env.security.emailAddress.validate(data.email) err s"Invalid email ${data.email}"
-        for {
-          ok ← UserRepo.checkPassword(me.id, data.passwd)
-          _ ← ok ?? UserRepo.email(me.id, email)
-          form <- emailForm(me)
-        } yield {
-          val content = html.account.email(me, form, ok.some)
-          ok.fold(Ok(content), BadRequest(content))
-        }
+      UserRepo hasEmail me.id flatMap {
+        case true => notFound
+        case false =>
+          implicit val req = ctx.body
+          FormFuResult(Env.security.forms.changeEmail(me)) { err =>
+            fuccess(html.account.email(me, err))
+          } { data =>
+            val email = Env.security.emailAddress.validate(data.email) err s"Invalid email ${data.email}"
+            for {
+              ok ← UserRepo.checkPassword(me.id, data.passwd)
+              _ ← ok ?? UserRepo.email(me.id, email)
+              form <- emailForm(me)
+            } yield {
+              val content = html.account.email(me, form, ok.some)
+              ok.fold(Ok(content), BadRequest(content))
+            }
+          }
       }
   }
 
@@ -132,16 +137,23 @@ object Account extends LilaController {
       (UserRepo toggleKid me) inject Redirect(routes.Account.kid)
   }
 
+  private def currentSessionId(implicit ctx: Context) =
+    ~Env.security.api.reqSessionId(ctx.req)
+
   def security = Auth { implicit ctx =>
     me =>
       Env.security.api.dedup(me.id, ctx.req) >>
         Env.security.api.locatedOpenSessions(me.id, 50) map { sessions =>
-          Ok(html.account.security(me, sessions, ~Env.security.api.reqSessionId(ctx.req)))
+          Ok(html.account.security(me, sessions, currentSessionId))
         }
   }
 
-  def signout(sessionId: String) = Auth { ctx =>
+  def signout(sessionId: String) = Auth { implicit ctx =>
     me =>
-      lila.security.Store.closeUserAndSessionId(me.id, sessionId)
+      if (sessionId == "all")
+        lila.security.Store.closeUserExceptSessionId(me.id, currentSessionId) inject
+          Redirect(routes.Account.security)
+      else
+        lila.security.Store.closeUserAndSessionId(me.id, sessionId)
   }
 }

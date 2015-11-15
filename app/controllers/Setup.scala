@@ -19,8 +19,7 @@ object Setup extends LilaController with TheftPrevention {
 
   private def env = Env.setup
 
-  private val FormRateLimit = new lila.memo.RateLimitByKey(500 millis)
-  private val PostRateLimit = new lila.memo.RateLimitByKey(500 millis)
+  private val PostRateLimit = new lila.memo.RateLimit(5, 1 minute)
 
   def aiForm = Open { implicit ctx =>
     if (HTTPRequest isXhr ctx.req) {
@@ -92,10 +91,8 @@ object Setup extends LilaController with TheftPrevention {
   }
 
   def hookForm = Open { implicit ctx =>
-    if (HTTPRequest isXhr ctx.req) FormRateLimit(ctx.req.remoteAddress) {
-      NoPlaybanOrCurrent {
-        env.forms.hookFilled(timeModeString = get("time")) map { html.setup.hook(_) }
-      }
+    if (HTTPRequest isXhr ctx.req) NoPlaybanOrCurrent {
+      env.forms.hookFilled(timeModeString = get("time")) map { html.setup.hook(_) }
     }
     else fuccess {
       Redirect(routes.Lobby.home + "#hook")
@@ -124,8 +121,8 @@ object Setup extends LilaController with TheftPrevention {
       NoPlaybanOrCurrent {
         env.forms.hook(ctx).bindFromRequest.fold(
           err => negotiate(
-            html = BadRequest(err.errorsAsJson.toString).fuccess,
-            api = _ => BadRequest(err.errorsAsJson).fuccess),
+            html = BadRequest(errorsAsJson(err).toString).fuccess,
+            api = _ => BadRequest(errorsAsJson(err)).fuccess),
           preConfig => (ctx.userId ?? Env.relation.api.blocking) zip
             mobileHookAllowAnon(preConfig) flatMap {
               case (blocking, config) =>
@@ -238,7 +235,7 @@ object Setup extends LilaController with TheftPrevention {
       form(ctx).bindFromRequest.fold(
         f => negotiate(
           html = Lobby.renderHome(Results.BadRequest),
-          api = _ => fuccess(BadRequest(f.errorsAsJson))
+          api = _ => fuccess(BadRequest(errorsAsJson(f)))
         ),
         config => op(config)(ctx) flatMap {
           case (pov, call) => negotiate(
