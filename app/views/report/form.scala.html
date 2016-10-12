@@ -4,7 +4,7 @@
 
 @title = @{ trans.reportAUser.str() }
 
-@site.layout(title = title, moreCss = cssTag("report.css")) {
+@base.layout(title = title, moreCss = cssTag("report.css")) {
 <div class="content_box" id="report">
   <h1>@title</h1>
   <form class="create" action="@routes.Report.create()@reqUser.map(u => "?username=" + u.username)" method="post">
@@ -19,8 +19,7 @@
       }.getOrElse {
       <input
       type="text"
-      data-provider="@routes.User.autocomplete"
-      class="autocomplete"
+      class="user-autocomplete"
       required="required"
       name="@form("username").name"
       id="@form("username").id"
@@ -30,7 +29,7 @@
     </div>
     <div class="field_reason">
       <label for="@form("reason").id">@trans.reason()</label>
-      @base.select(form("reason"), translatedReasonChoices, trans.whatIsIheMatter.str().some)
+      @base.form.select(form("reason"), translatedReasonChoices, trans.whatIsIheMatter.str().some)
       @errMsg(form("reason"))
     </div>
     <div class="field_body">
@@ -45,7 +44,6 @@
       @errMsg(form("text"))
     </div>
     @base.captcha(form("move"), form("gameId"), captcha)
-    @errMsg(form)
     <div class="actions">
       <input class="send button" type="submit" value="@trans.send()" />
       <a class="cancel" href="@routes.Lobby.home()">@trans.cancel()</a>

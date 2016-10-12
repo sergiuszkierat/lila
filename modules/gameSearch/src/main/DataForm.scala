@@ -4,6 +4,7 @@ import chess.{ Mode }
 import org.joda.time.DateTime
 import play.api.data._
 import play.api.data.Forms._
+import play.api.data.validation.Constraints
 
 import lila.common.Form._
 import lila.search.Range
@@ -22,7 +23,6 @@ private[gameSearch] final class DataForm {
     "perf" -> optional(numberIn(Query.perfs)),
     "source" -> optional(numberIn(Query.sources)),
     "mode" -> optional(numberIn(Query.modes)),
-    "opening" -> optional(stringIn(Query.openings)),
     "turnsMin" -> optional(numberIn(Query.turns)),
     "turnsMax" -> optional(numberIn(Query.turns)),
     "ratingMin" -> optional(numberIn(Query.averageRatings)),
@@ -32,8 +32,14 @@ private[gameSearch] final class DataForm {
     "aiLevelMax" -> optional(numberIn(Query.aiLevels)),
     "durationMin" -> optional(numberIn(Query.durations)),
     "durationMax" -> optional(numberIn(Query.durations)),
-    "dateMin" -> optional(stringIn(Query.dates)),
-    "dateMax" -> optional(stringIn(Query.dates)),
+    "clock" -> mapping(
+      "initMin" -> optional(numberIn(Query.clockInits)),
+      "initMax" -> optional(numberIn(Query.clockInits)),
+      "incMin" -> optional(numberIn(Query.clockIncs)),
+      "incMax" -> optional(numberIn(Query.clockIncs))
+    )(SearchClock.apply)(SearchClock.unapply),
+    "dateMin" -> DataForm.dateField,
+    "dateMax" -> DataForm.dateField,
     "status" -> optional(numberIn(Query.statuses)),
     "analysed" -> optional(number),
     "sort" -> optional(mapping(
@@ -43,13 +49,21 @@ private[gameSearch] final class DataForm {
   )(SearchData.apply)(SearchData.unapply)) fill SearchData()
 }
 
+private[gameSearch] object DataForm {
+
+  val DateDelta = """^(\d+)(\w)$""".r
+  private val dateConstraint = Constraints.pattern(
+    regex = DateDelta,
+    error = "Invalid date.")
+  val dateField = optional(nonEmptyText.verifying(dateConstraint))
+}
+
 private[gameSearch] case class SearchData(
     players: SearchPlayer = SearchPlayer(),
     winnerColor: Option[Int] = None,
     perf: Option[Int] = None,
     source: Option[Int] = None,
     mode: Option[Int] = None,
-    opening: Option[String] = None,
     turnsMin: Option[Int] = None,
     turnsMax: Option[Int] = None,
     ratingMin: Option[Int] = None,
@@ -59,6 +73,7 @@ private[gameSearch] case class SearchData(
     aiLevelMax: Option[Int] = None,
     durationMin: Option[Int] = None,
     durationMax: Option[Int] = None,
+    clock: SearchClock = SearchClock(),
     dateMin: Option[String] = None,
     dateMax: Option[String] = None,
     status: Option[Int] = None,
@@ -75,12 +90,12 @@ private[gameSearch] case class SearchData(
     perf = perf,
     source = source,
     rated = mode flatMap Mode.apply map (_.rated),
-    opening = opening map (_.trim.toLowerCase),
     turns = Range(turnsMin, turnsMax),
     averageRating = Range(ratingMin, ratingMax),
     hasAi = hasAi map (_ == 1),
     aiLevel = Range(aiLevelMin, aiLevelMax),
     duration = Range(durationMin, durationMax),
+    clock = Clocking(clock.initMin, clock.initMax, clock.incMin, clock.incMax),
     date = Range(dateMin flatMap toDate, dateMax flatMap toDate),
     status = status,
     analysed = analysed map (_ == 1),
@@ -90,7 +105,8 @@ private[gameSearch] case class SearchData(
 
   def nonEmptyQuery = Some(query).filter(_.nonEmpty)
 
-  private val DateDelta = """^(\d+)(\w)$""".r
+  import DataForm.DateDelta
+
   private def toDate(delta: String): Option[DateTime] = delta match {
     case DateDelta(n, "h") => parseIntOption(n) map DateTime.now.minusHours
     case DateDelta(n, "d") => parseIntOption(n) map DateTime.now.minusDays
@@ -99,6 +115,9 @@ private[gameSearch] case class SearchData(
     case DateDelta(n, "y") => parseIntOption(n) map DateTime.now.minusYears
     case _                 => None
   }
+  private val dateConstraint = Constraints.pattern(
+    regex = DateDelta,
+    error = "Invalid date.")
 }
 
 private[gameSearch] case class SearchPlayer(
@@ -121,3 +140,9 @@ private[gameSearch] case class SearchPlayer(
 private[gameSearch] case class SearchSort(
   field: String = Sorting.default.f,
   order: String = Sorting.default.order)
+
+private[gameSearch] case class SearchClock(
+  initMin: Option[Int] = None,
+  initMax: Option[Int] = None,
+  incMin: Option[Int] = None,
+  incMax: Option[Int] = None)

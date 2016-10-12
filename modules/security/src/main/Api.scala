@@ -1,36 +1,59 @@
 package lila.security
 
+import org.joda.time.DateTime
 import ornicar.scalalib.Random
 import play.api.data._
 import play.api.data.Forms._
 import play.api.mvc.RequestHeader
 import reactivemongo.bson._
 
+import lila.common.ApiVersion
+import lila.db.BSON.BSONJodaDateTimeHandler
+import lila.db.dsl._
 import lila.user.{ User, UserRepo }
 
-final class Api(firewall: Firewall, tor: Tor, geoIP: GeoIP) {
+final class Api(
+    coll: Coll,
+    firewall: Firewall,
+    geoIP: GeoIP,
+    emailAddress: EmailAddress) {
 
   val AccessUri = "access_uri"
 
-  def loginForm = Form(mapping(
+  def usernameForm = Form(single(
+    "username" -> text
+  ))
+
+  def loginForm = Form(tuple(
     "username" -> nonEmptyText,
     "password" -> nonEmptyText
-  )(authenticateUser)(_.map(u => (u.username, "")))
+  ))
+
+  private def loadedLoginForm(candidate: Option[User.LoginCandidate]) = Form(mapping(
+    "username" -> nonEmptyText,
+    "password" -> nonEmptyText
+  )(authenticateCandidate(candidate))(_.map(u => (u.username, "")))
     .verifying("Invalid username or password", _.isDefined)
   )
 
-  def saveAuthentication(userId: String, apiVersion: Option[Int])(implicit req: RequestHeader): Fu[String] =
-    if (tor isExitNode req.remoteAddress) fufail(Api.AuthFromTorExitNode)
-    else UserRepo mustConfirmEmail userId flatMap {
+  def loadLoginForm(str: String): Fu[Form[Option[User]]] = {
+    emailAddress.validate(str) match {
+      case Some(email)                       => UserRepo.checkPasswordByEmail(email)
+      case None if User.couldBeUsername(str) => UserRepo.checkPasswordById(User normalize str)
+      case _                                 => fuccess(none)
+    }
+  } map loadedLoginForm _
+
+  private def authenticateCandidate(candidate: Option[User.LoginCandidate])(username: String, password: String): Option[User] =
+    candidate ?? { _(password) }
+
+  def saveAuthentication(userId: String, apiVersion: Option[ApiVersion])(implicit req: RequestHeader): Fu[String] =
+    UserRepo mustConfirmEmail userId flatMap {
       case true => fufail(Api MustConfirmEmail userId)
       case false =>
         val sessionId = Random nextStringUppercase 12
         Store.save(sessionId, userId, req, apiVersion) inject sessionId
     }
-
-  // blocking function, required by Play2 form
-  private def authenticateUser(username: String, password: String): Option[User] =
-    UserRepo.authenticate(username.toLowerCase, password) awaitSeconds 1
 
   def restoreUser(req: RequestHeader): Fu[Option[FingerprintedUser]] =
     firewall accepts req flatMap {
@@ -38,6 +61,7 @@ final class Api(firewall: Firewall, tor: Tor, geoIP: GeoIP) {
         reqSessionId(req) ?? { sessionId =>
           Store userIdAndFingerprint sessionId flatMap {
             _ ?? { d =>
+              if (d.isOld) Store.setDateToNow(sessionId)
               UserRepo.byId(d.user) map {
                 _ map {
                   FingerprintedUser(_, d.fp.isDefined)
@@ -59,8 +83,8 @@ final class Api(firewall: Firewall, tor: Tor, geoIP: GeoIP) {
   def dedup(userId: String, req: RequestHeader): Funit =
     reqSessionId(req) ?? { Store.dedup(userId, _) }
 
-  def setFingerprint(req: RequestHeader, fingerprint: String): Funit =
-    reqSessionId(req) ?? { Store.setFingerprint(_, fingerprint) }
+  def setFingerprint(req: RequestHeader, fingerprint: String): Fu[Option[String]] =
+    reqSessionId(req) ?? { Store.setFingerprint(_, fingerprint) map some }
 
   def reqSessionId(req: RequestHeader) = req.session get "sessionId"
 
@@ -68,28 +92,38 @@ final class Api(firewall: Firewall, tor: Tor, geoIP: GeoIP) {
 
   def userIdsSharingFingerprint = userIdsSharingField("fp") _
 
+  def recentByIpExists(ip: String): Fu[Boolean] = Store recentByIpExists ip
+
   private def userIdsSharingField(field: String)(userId: String): Fu[List[String]] =
-    tube.storeColl.find(
-      BSONDocument("user" -> userId, field -> BSONDocument("$exists" -> true)),
-      BSONDocument(field -> true)
-    ).cursor[BSONDocument]().collect[List]().map {
-        _.flatMap(_.getAs[String](field))
-      }.flatMap {
+    coll.distinct[String, List](
+      field,
+      $doc("user" -> userId, field -> $doc("$exists" -> true)).some
+    ).flatMap {
         case Nil => fuccess(Nil)
-        case values => tube.storeColl.find(
-          BSONDocument(
-            field -> BSONDocument("$in" -> values.distinct),
-            "user" -> BSONDocument("$ne" -> userId)
-          ),
-          BSONDocument("user" -> true)
-        ).cursor[BSONDocument]().collect[List]().map {
-            _.flatMap(_.getAs[String]("user"))
-          }
+        case values => coll.distinct[String, List](
+          "user",
+          $doc(
+            field $in values,
+            "user" $ne userId
+          ).some
+        )
       }
+
+  def recentUserIdsByFingerprint = recentUserIdsByField("fp") _
+
+  def recentUserIdsByIp = recentUserIdsByField("ip") _
+
+  private def recentUserIdsByField(field: String)(value: String): Fu[List[String]] =
+    coll.distinct[String, List](
+      "user",
+      $doc(
+        field -> value,
+        "date" $gt DateTime.now.minusYears(1)
+      ).some
+    )
 }
 
 object Api {
 
-  case object AuthFromTorExitNode extends Exception
   case class MustConfirmEmail(userId: String) extends Exception
 }

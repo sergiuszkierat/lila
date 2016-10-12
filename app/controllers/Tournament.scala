@@ -19,14 +19,25 @@ object Tournament extends LilaController {
 
   private def tournamentNotFound(implicit ctx: Context) = NotFound(html.tournament.notFound())
 
-  val home = Open { implicit ctx =>
-    env.api.fetchVisibleTournaments zip
-      repo.scheduledDedup zip
-      repo.finished(30) zip
-      UserRepo.allSortToints(10) map {
-        case (((visible, scheduled), finished), leaderboard) =>
-          Ok(html.tournament.home(scheduled, finished, leaderboard, env scheduleJsonView visible))
-      } map NoCache
+  def home(page: Int) = Open { implicit ctx =>
+    negotiate(
+      html = Reasonable(page, 20) {
+        val finishedPaginator = repo.finishedPaginator(maxPerPage = 30, page = page)
+        if (HTTPRequest isXhr ctx.req) finishedPaginator map { pag =>
+          Ok(html.tournament.finishedPaginator(pag))
+        }
+        else env.api.fetchVisibleTournaments zip
+          repo.scheduledDedup zip
+          finishedPaginator zip
+          Env.user.cached.topToints(true) map {
+            case (((visible, scheduled), finished), leaderboard) =>
+              Ok(html.tournament.home(scheduled, finished, leaderboard, env scheduleJsonView visible))
+          } map NoCache
+      },
+      api = _ => env.api.fetchVisibleTournaments map { tours =>
+        Ok(env scheduleJsonView tours)
+      }
+    )
   }
 
   def help(sysStr: Option[String]) = Open { implicit ctx =>
@@ -42,18 +53,25 @@ object Tournament extends LilaController {
     negotiate(
       html = repo byId id flatMap {
         _.fold(tournamentNotFound.fuccess) { tour =>
-          env.version(tour.id) zip env.jsonView(tour, page, ctx.userId, none) zip chatOf(tour) map {
-            case ((version, data), chat) => html.tournament.show(tour, version, data, chat)
-          }
+          (env.api.verdicts(tour, ctx.me) zip
+            env.version(tour.id) zip {
+              ctx.noKid ?? Env.chat.api.userChat.findMine(tour.id, ctx.me).map(some)
+            }).flatMap {
+              case ((verdicts, version), chat) => env.jsonView(tour, page, ctx.me, none, version.some) map {
+                html.tournament.show(tour, verdicts, _, chat)
+              }
+            }.map { Ok(_) }.mon(_.http.response.tournament.show.website)
         }
       },
       api = _ => repo byId id flatMap {
-        case None => NotFound(Json.obj("error" -> "No such tournament")).fuccess
-        case Some(tour) => get("playerInfo") ?? {
-          env.api.playerInfo(tour.id, _)
-        } flatMap { playerInfoExt =>
-          env.jsonView(tour, page, ctx.userId, playerInfoExt)
-        } map { Ok(_) }
+        case None => NotFound(jsonError("No such tournament")).fuccess
+        case Some(tour) => {
+          get("playerInfo").?? { env.api.playerInfo(tour.id, _) } zip
+            getBool("socketVersion").??(env version tour.id map some) flatMap {
+              case (playerInfoExt, socketVersion) =>
+                env.jsonView(tour, page, ctx.me, playerInfoExt, socketVersion)
+            } map { Ok(_) }
+        }.mon(_.http.response.tournament.show.mobile)
       } map (_ as JSON)
     ) map NoCache
   }
@@ -102,18 +120,19 @@ object Tournament extends LilaController {
     }
   }
 
-  def join(id: String) = Auth { implicit ctx =>
+  def join(id: String) = AuthBody(BodyParsers.parse.json) { implicit ctx =>
     implicit me =>
       NoLame {
+        val password = ctx.body.body.\("p").asOpt[String]
         negotiate(
           html = repo enterableById id map {
             case None => tournamentNotFound
             case Some(tour) =>
-              env.api.join(tour.id, me)
+              env.api.join(tour.id, me, password)
               Redirect(routes.Tournament.show(tour.id))
           },
           api = _ => OptionFuOk(repo enterableById id) { tour =>
-            env.api.join(tour.id, me)
+            env.api.join(tour.id, me, password)
             fuccess(Json.obj("ok" -> true))
           }
         )
@@ -126,6 +145,15 @@ object Tournament extends LilaController {
         env.api.withdraw(tour.id, me.id)
         if (HTTPRequest.isXhr(ctx.req)) Ok(Json.obj("ok" -> true)) as JSON
         else Redirect(routes.Tournament.show(tour.id))
+      }
+  }
+
+  def terminate(id: String) = Secure(_.TerminateTournament) { implicit ctx =>
+    me =>
+      OptionResult(repo startedById id) { tour =>
+        env.api finish tour
+        Env.mod.logApi.terminateTournament(me.id, tour.fullName)
+        Redirect(routes.Tournament show tour.id)
       }
   }
 
@@ -148,14 +176,19 @@ object Tournament extends LilaController {
       }
   }
 
-  def websocket(id: String, apiVersion: Int) = SocketOption[JsValue] { implicit ctx =>
-    (getInt("version") |@| get("sri")).tupled ?? {
-      case (version, uid) => env.socketHandler.join(id, version, uid, ctx.me)
-    }
+  def limitedInvitation = Auth { implicit ctx =>
+    me =>
+      env.api.fetchVisibleTournaments.flatMap { tours =>
+        lila.tournament.TournamentInviter.findNextFor(me, tours, env.verify.canEnter(me))
+      } map {
+        case None    => Redirect(routes.Tournament.home(1))
+        case Some(t) => Redirect(routes.Tournament.show(t.id))
+      }
   }
 
-  private def chatOf(tour: lila.tournament.Tournament)(implicit ctx: Context) =
-    ctx.isAuth ?? {
-      Env.chat.api.userChat find tour.id map (_.forUser(ctx.me).some)
+  def websocket(id: String, apiVersion: Int) = SocketOption[JsValue] { implicit ctx =>
+    get("sri") ?? { uid =>
+      env.socketHandler.join(id, uid, ctx.me)
     }
+  }
 }

@@ -1,80 +1,42 @@
 package lila.message
 
-import scala.concurrent.Future
-
-import play.api.libs.json.Json
-
-import lila.common.PimpedJson._
-import lila.db.api._
-import lila.db.Implicits._
-import tube.threadTube
+import lila.db.dsl._
+import lila.user.User
 
 object ThreadRepo {
-import play.modules.reactivemongo.json._
+
+  // dirty
+  private val coll = Env.current.threadColl
 
   type ID = String
 
   def byUser(user: ID): Fu[List[Thread]] =
-    $find($query(userQuery(user)) sort recentSort)
-
-  def visibleByUser(user: ID): Fu[List[Thread]] =
-    $find($query(visibleByUserQuery(user)) sort recentSort)
+    coll.find(userQuery(user)).sort(recentSort).cursor[Thread]().gather[List]()
 
   def visibleByUser(user: ID, nb: Int): Fu[List[Thread]] =
-    $find($query(visibleByUserQuery(user)) sort recentSort, nb)
+    coll.find(visibleByUserQuery(user)).sort(recentSort).list[Thread](nb)
 
-  def userUnreadIds(userId: String): Fu[List[String]] = {
-    import BSONMapReduceCommandImplicits._
+  def visibleByUserByIds(user: User, ids: List[String]): Fu[List[Thread]] =
+    coll.find($inIds(ids) ++ visibleByUserQuery(user.id)).list[Thread]()
 
-    val command = BSONMapReduceCommand.MapReduce(
-      mapFunction = """function() {
-  var thread = this;
-  thread.posts.forEach(function(p) {
-    if (!p.isRead) {
-      if (thread.creatorId == "%s") {
-        if (!p.isByCreator) emit("i", thread._id);
-      } else if (p.isByCreator) emit("i", thread._id);
-    }
-  });
-  }""" format userId,
-      reduceFunction = """function(key, values) {
-  var ids = [];
-  for(var i in values) { ids.push(values[i]); }
-  return ids.join(';');
-  }""",
-      query = JsObjectWriter.write(
-        visibleByUserQuery(userId) ++ Json.obj("posts.isRead" -> false)
-      ).some,
-      sort = JsObjectWriter.write(Json.obj("updatedAt" -> -1)).some)
-
-    tube.threadTube.coll.runCommand(command) map { res =>
-      BSONFormats.toJSON(res).arr("results").flatMap(_.apply(0).toOption).flatMap(_ str "value")
-    } map {
-      _ ?? (_ split ';' toList)
-    }
+  def setReadFor(user: User)(thread: Thread): Funit = {
+    val indexes = thread.unreadIndexesBy(user)
+    indexes.nonEmpty ?? coll.update($id(thread.id), $doc("$set" -> indexes.foldLeft($empty) {
+      case (s, index) => s ++ $doc(s"posts.$index.isRead" -> true)
+    })).void
   }
 
-  def setRead(thread: Thread): Funit = {
-    List.fill(thread.nbUnread) {
-      $update(
-        $select(thread.id) ++ Json.obj("posts.isRead" -> false),
-        $set("posts.$.isRead" -> true)
-      )
+  def setUnreadFor(user: User)(thread: Thread): Funit =
+    thread.readIndexesBy(user).lastOption ?? { index =>
+      coll.update($id(thread.id), $set(s"posts.$index.isRead" -> false)).void
     }
-  }.sequenceFu.void
 
   def deleteFor(user: ID)(thread: ID) =
-    $update($select(thread), $pull("visibleByUserIds", user))
+    coll.update($id(thread), $pull("visibleByUserIds", user)).void
 
-  def reallyDeleteByCreatorId(user: ID) = $remove(Json.obj("creatorId" -> user))
+  def userQuery(user: String) = $doc("userIds" -> user)
 
-  def visibleByUserContainingExists(user: ID, containing: String): Fu[Boolean] =
-    $count.exists(visibleByUserQuery(user) ++ Json.obj(
-      "posts.0.text" -> $regex(containing)))
-
-  def userQuery(user: String) = Json.obj("userIds" -> user)
-
-  def visibleByUserQuery(user: String) = Json.obj("visibleByUserIds" -> user)
+  def visibleByUserQuery(user: String) = $doc("visibleByUserIds" -> user)
 
   val recentSort = $sort desc "updatedAt"
 }

@@ -22,12 +22,30 @@ case class Perf(
   def add(g: Glicko, date: DateTime): Perf = copy(
     glicko = g,
     nb = nb + 1,
-    recent =
-      if (nb < 10) recent
-      else (g.intRating :: recent) take Perf.recentMaxSize,
+    recent = updateRecentWith(g),
     latest = date.some)
 
-  def add(r: Rating, date: DateTime): Perf = add(Glicko(r.getRating, r.getRatingDeviation, r.getVolatility), date)
+  def add(r: Rating, date: DateTime): Option[Perf] = {
+    val glicko = Glicko(r.getRating, r.getRatingDeviation, r.getVolatility)
+    glicko.sanityCheck option add(glicko, date)
+  }
+
+  def addOrReset(monitor: lila.mon.IncPath, msg: => String)(r: Rating, date: DateTime): Perf = add(r, date) | {
+    lila.log("rating").error(s"Crazy Glicko2 $msg")
+    lila.mon.incPath(monitor)()
+    add(Glicko.default, date)
+  }
+
+  def refund(points: Int): Perf = {
+    val newGlicko = glicko refund points
+    copy(
+      glicko = newGlicko,
+      recent = updateRecentWith(newGlicko))
+  }
+
+  private def updateRecentWith(glicko: Glicko) =
+    if (nb < 10) recent
+    else (glicko.intRating :: recent) take Perf.recentMaxSize
 
   def toRating = new Rating(
     math.max(Glicko.minRating, glicko.rating),
@@ -35,14 +53,17 @@ case class Perf(
     glicko.volatility,
     nb)
 
-  def nonEmpty = nb > 0
+  def isEmpty = nb == 0
+  def nonEmpty = !isEmpty
 
   def provisional = glicko.provisional
+  def established = glicko.established
 }
 
 case object Perf {
 
   type Key = String
+  type ID = Int
 
   case class Typed(perf: Perf, perfType: PerfType)
 
@@ -63,7 +84,7 @@ case object Perf {
     def writes(w: BSON.Writer, o: Perf) = BSONDocument(
       "gl" -> o.glicko,
       "nb" -> w.int(o.nb),
-      "re" -> w.intsO(o.recent),
+      "re" -> w.listO(o.recent),
       "la" -> o.latest.map(w.date))
   }
 }

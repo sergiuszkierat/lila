@@ -1,4 +1,5 @@
 var piotr2key = require('./piotr').piotr2key;
+var m = require('mithril');
 
 var UNDEF = 'undefined';
 
@@ -6,7 +7,16 @@ var defined = function(v) {
   return typeof v !== UNDEF;
 };
 
+var plyToTurn = function(ply) {
+  return Math.floor((ply - 1) / 2) + 1;
+}
+
+var fixCrazySan = function(san) {
+  return san[0] === 'P' ? san.slice(1) : san;
+}
+
 module.exports = {
+  initialFen: "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
   readDests: function(lines) {
     if (!defined(lines)) return null;
     var dests = {};
@@ -17,9 +27,21 @@ module.exports = {
     });
     return dests;
   },
+  aiName: function(variant) {
+    return variant.key === 'crazyhouse' ? 'Sunsetter' : 'Stockfish';
+  },
+  readDrops: function(line) {
+    if (typeof line === 'undefined' || line === null) return null;
+    return line.match(/.{2}/g) || [];
+  },
   defined: defined,
   empty: function(a) {
     return !a || a.length === 0;
+  },
+  range: function(len) {
+    var r = [];
+    for (var i = 0; i < len; i++) r.push(i);
+    return r;
   },
   renderEval: function(e) {
     e = Math.max(Math.min(Math.round(e / 10) / 10, 99), -99);
@@ -28,24 +50,86 @@ module.exports = {
   synthetic: function(data) {
     return data.game.id === 'synthetic';
   },
+  plyToTurn: plyToTurn,
+  nodeFullName: function(node) {
+    if (node.san) return plyToTurn(node.ply) + (
+      node.ply % 2 === 1 ? '.' : '...'
+    ) + ' ' + fixCrazySan(node.san);
+    return 'Initial position';
+  },
+  fixCrazySan: fixCrazySan,
   storedProp: function(k, defaultValue) {
     var sk = 'analyse.' + k;
     var value;
     var isBoolean = defaultValue === true || defaultValue === false;
     return function(v) {
-      if (defined(v) && v !== value) {
+      if (defined(v) && v != value) {
         value = v + '';
         lichess.storage.set(sk, v);
-      }
-      else if (!defined(value)) {
+      } else if (!defined(value)) {
         value = lichess.storage.get(sk);
         if (value === null) value = defaultValue + '';
       }
       return isBoolean ? value === 'true' : value;
     };
   },
+  storedJsonProp: function(keySuffix, defaultValue) {
+    var key = 'explorer.' + keySuffix;
+    return function() {
+      if (arguments.length) lichess.storage.set(key, JSON.stringify(arguments[0]));
+      var ret = JSON.parse(lichess.storage.get(key));
+      return (ret !== null) ? ret : defaultValue;
+    };
+  },
+  decomposeUci: function(uci) {
+    return [uci.slice(0, 2), uci.slice(2, 4), uci.slice(4, 5)];
+  },
+  median: function(values) {
+    values.sort(function(a, b) {
+      return a - b;
+    });
+    var half = Math.floor(values.length / 2);
+    return values.length % 2 ? values[half] :
+      (values[half - 1] + values[half]) / 2.0;
+  },
+  plural: function(noun, nb) {
+    return nb + ' ' + (nb === 1 ? noun : noun + 's');
+  },
+  titleNameToId: function(titleName) {
+    var split = titleName.split(' ');
+    var name = split.length == 1 ? split[0] : split[1];
+    return name.toLowerCase();
+  },
+  bindOnce: function(eventName, f) {
+    var withRedraw = function(e) {
+      m.startComputation();
+      f(e);
+      m.endComputation();
+    };
+    return function(el, isUpdate, ctx) {
+      if (isUpdate) return;
+      el.addEventListener(eventName, withRedraw)
+      ctx.onunload = function() {
+        el.removeEventListener(eventName, withRedraw);
+      };
+    }
+  },
+  roleToSan: {
+    pawn: 'P',
+    knight: 'N',
+    bishop: 'B',
+    rook: 'R',
+    queen: 'Q'
+  },
+  sanToRole: {
+    P: 'pawn',
+    N: 'knight',
+    B: 'bishop',
+    R: 'rook',
+    Q: 'queen'
+  },
   /**
-   * https://github.com/niksy/throttle-debounce/blob/master/lib/throttle.js
+   * https://github.com/niksy/throttle-debounce/blob/master/throttle.js
    *
    * Throttle execution of a function. Especially useful for rate limiting
    * execution of handlers on events like resize and scroll.

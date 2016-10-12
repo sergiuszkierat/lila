@@ -12,6 +12,7 @@ module.exports = function(env) {
   this.data = env.data;
   this.playban = env.playban;
   this.currentGame = env.currentGame;
+  this.perfIcons = env.perfIcons;
 
   hookRepo.initAll(this);
   seekRepo.initAll(this);
@@ -92,6 +93,7 @@ module.exports = function(env) {
   this.setSeeks = function(seeks) {
     this.data.seeks = seeks;
     seekRepo.initAll(this);
+    m.redraw();
   }.bind(this);
 
   this.gameActivity = function(gameId) {
@@ -129,5 +131,5 @@ module.exports = function(env) {
 
   this.trans = lichess.trans(env.i18n);
 
-  if (this.playban) setTimeout(location.reload, this.playban.remainingSeconds * 1000);
+  if (this.playban) setTimeout(lichess.reload, this.playban.remainingSeconds * 1000);
 };

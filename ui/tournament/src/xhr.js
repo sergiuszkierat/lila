@@ -7,23 +7,38 @@ var xhrConfig = function(xhr) {
   xhr.setRequestHeader('Accept', 'application/vnd.lichess.v1+json');
 }
 
-// when the tournament no longer exists
-function reloadPage() {
-  location.reload();
+function uncache(url) {
+  return url + '?_=' + new Date().getTime();
 }
 
-function tourAction(action, ctrl) {
+// when the tournament no longer exists
+function reloadPage() {
+  lichess.reload();
+}
+
+function join(ctrl, password) {
   return m.request({
     method: 'POST',
-    url: '/tournament/' + ctrl.data.id + '/' + action,
+    url: '/tournament/' + ctrl.data.id + '/join',
+    data: {
+      p: password || null
+    },
+    config: xhrConfig
+  }).then(null, reloadPage);
+}
+
+function withdraw(ctrl) {
+  return m.request({
+    method: 'POST',
+    url: '/tournament/' + ctrl.data.id + '/withdraw',
     config: xhrConfig
   }).then(null, reloadPage);
 }
 
 function loadPage(ctrl, p) {
-  return m.request({
+  m.request({
     method: 'GET',
-    url: '/tournament/' + ctrl.data.id + '/standing/' + p,
+    url: uncache('/tournament/' + ctrl.data.id + '/standing/' + p),
     config: xhrConfig
   }).then(ctrl.loadPage, reloadPage);
 }
@@ -31,7 +46,7 @@ function loadPage(ctrl, p) {
 function reloadTournament(ctrl) {
   return m.request({
     method: 'GET',
-    url: '/tournament/' + ctrl.data.id,
+    url: uncache('/tournament/' + ctrl.data.id),
     config: xhrConfig,
     data: {
       page: ctrl.vm.focusOnMe ? null : ctrl.vm.page,
@@ -43,14 +58,14 @@ function reloadTournament(ctrl) {
 function playerInfo(ctrl, userId) {
   return m.request({
     method: 'GET',
-    url: ['/tournament', ctrl.data.id, 'player', userId].join('/'),
+    url: uncache(['/tournament', ctrl.data.id, 'player', userId].join('/')),
     config: xhrConfig
   }).then(ctrl.setPlayerInfoData, reloadPage);
 }
 
 module.exports = {
-  join: throttle(1000, false, partial(tourAction, 'join')),
-  withdraw: throttle(1000, false, partial(tourAction, 'withdraw')),
+  join: throttle(1000, false, join),
+  withdraw: throttle(1000, false, withdraw),
   loadPage: throttle(1000, false, loadPage),
   reloadTournament: throttle(2000, false, reloadTournament),
   playerInfo: playerInfo

@@ -2,11 +2,15 @@ package lila.common
 
 import play.api.libs.json._
 
-object PimpedJson extends PimpedJson
+object PimpedJson {
 
-trait PimpedJson {
+  def anyValWriter[O, A: Writes](f: O => A): Writes[O] = Writes[O] { o =>
+    Json toJson f(o)
+  }
+  def intAnyValWriter[O](f: O => Int) = anyValWriter[O, Int](f)
+  def stringAnyValWriter[O](f: O => String) = anyValWriter[O, String](f)
 
-  implicit final class LilaPimpedJsObject(js: JsObject) {
+  implicit final class LilaPimpedJsObject(val js: JsObject) extends AnyVal {
 
     def str(key: String): Option[String] =
       (js \ key).asOpt[String]
@@ -31,6 +35,8 @@ trait PimpedJson {
 
     def ints(key: String): Option[List[Int]] = arrAs(key)(_.asOpt[Int])
 
+    def strs(key: String): Option[List[String]] = arrAs(key)(_.asOpt[String])
+
     def get[A: Reads](key: String): Option[A] =
       (js \ key).asOpt[A]
 
@@ -41,7 +47,7 @@ trait PimpedJson {
     }
   }
 
-  implicit final class LilaPimpedJsValue(js: JsValue) {
+  implicit final class LilaPimpedJsValue(val js: JsValue) extends AnyVal {
 
     def str(key: String): Option[String] =
       js.asOpt[JsObject] flatMap { obj =>

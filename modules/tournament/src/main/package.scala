@@ -13,14 +13,8 @@ package object tournament extends PackageObject with WithPlay with WithSocket {
   private[tournament]type Ranking = Map[String, Int]
 
   private[tournament]type Waiting = Map[String, Int]
-}
 
-package tournament {
+  private[tournament] val logger = lila.log("tournament")
 
-case class RankedPlayer(rank: Int, player: Player) {
-  def is(other: RankedPlayer) = player is other.player
-  override def toString = s"${player.userId}[${player.rating}]"
-}
-
-case class Winner(tourId: String, tourName: String, userId: String)
+  private[tournament] val pairingLogger = logger branch "pairing"
 }

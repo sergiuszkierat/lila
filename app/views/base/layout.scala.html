@@ -6,7 +6,7 @@ side: Option[Html] = None,
 menu: Option[Html] = None,
 chat: Option[Html] = None,
 underchat: Option[Html] = None,
-robots: Boolean = true,
+robots: Boolean = isGloballyCrawlable,
 moreCss: Html = Html(""),
 moreJs: Html = Html(""),
 zen: Boolean = false,
@@ -14,13 +14,14 @@ playing: Boolean = false,
 openGraph: Option[lila.app.ui.OpenGraph] = None,
 atom: Option[Html] = None,
 chessground: Boolean = true,
-withLangAnnotations: Boolean = true)(body: Html)(implicit ctx: Context)
+withLangAnnotations: Boolean = true,
+withGtm: Boolean = false)(body: Html)(implicit ctx: Context)
 <!doctype html>
 <html lang="@lang.language">
   <head>
     <meta charset="utf-8">
     <title>@if(!isProd){ [dev] }@fullTitle.getOrElse{@title • lichess.org}</title>
-    @fonts(lang)
+    <link href='//fonts.googleapis.com/css?family=Noto+Sans:400,700|Roboto:300' rel='stylesheet' type='text/css'>
     @ctx.currentBg match {
     case "dark" => { @cssTag("dark.css") }
     case "transp" => { @cssTag("dark.css")@cssTag("transp.css") }
@@ -31,7 +32,7 @@ withLangAnnotations: Boolean = true)(body: Html)(implicit ctx: Context)
     @if(ctx.is3d) { @cssTag("board-3d.css") }
     @moreCss
     <link id="piece-sprite" href="@staticUrl(s"stylesheets/piece/${ctx.currentPieceSet}.css?v=$assetVersion")" type="text/css" rel="stylesheet"/>
-    <meta content="@openGraph.fold(trans.freeOnlineChessGamePlayChessNowInACleanInterfaceNoRegistrationNoAdsNoPluginRequiredPlayChessWithComputerFriendsOrRandomOpponents())(o => Html(escapeEvenDoubleQuotes(o.description)))" name="description">
+    <meta content="@openGraph.fold(trans.freeOnlineChessGamePlayChessNowInACleanInterfaceNoRegistrationNoAdsNoPluginRequiredPlayChessWithComputerFriendsOrRandomOpponents())(o => Html(escapeHtml(o.description)))" name="description">
     <link rel="shortcut icon" href="@staticUrl("images/favicon-32-white.png")" type="image/x-icon" />
     @if(!robots) {
     <meta content="noindex, nofollow" name="robots">
@@ -41,7 +42,7 @@ withLangAnnotations: Boolean = true)(body: Html)(implicit ctx: Context)
     @atom.getOrElse {
     <link href="@routes.Blog.atom()" type="application/atom+xml" rel="alternate" title="Latest blog posts" />
     }
-    <link rel="mask-icon" href="@staticUrl("favicon.svg")" color="white">
+    <link rel="mask-icon" href="@staticUrl("favicon.svg")" color="black">
     @if(withLangAnnotations){@langAnnotations}
     @ctx.transpBgImg.map { img =>
     <style type="text/css" id="bg-data">body.transp::before{background-image:url('@img');}</style>
@@ -54,13 +55,19 @@ withLangAnnotations: Boolean = true)(body: Html)(implicit ctx: Context)
     ctx.currentPieceSet3d,
     ctx.pref.highlight ?? "highlight",
     ctx.pref.destination ?? "destination",
+    ctx.pref.pieceNotationIsLetter ?? "piece_letter",
     ctx.blindMode ?? "blind_mode",
     ctx.kid ?? "kid",
-    "coords_" + ctx.pref.coords).mkString(" ")"
+    ctx.isMobileBrowser ?? "mobile",
+    "coords_" + ctx.pref.coords,
+    playing ?? "fixed-scroll").mkString(" ")"
+    @if(!isProd){data-dev="true"}
     data-user="@ctx.userId"
     data-piece-set="@ctx.currentPieceSet"
     data-sound-set="@ctx.currentSoundSet"
     data-bg="@ctx.currentBg"
+    data-asset-url="@assetBaseUrl"
+    data-asset-version="@assetVersion"
     data-accept-languages="@acceptLanguages.mkString(",")">
     <form id="blind_mode" action="@routes.Main.toggleBlindMode" method="POST">
       <input type="hidden" name="enable" value="@ctx.blindMode.fold(0,1)" />
@@ -85,24 +92,25 @@ withLangAnnotations: Boolean = true)(body: Html)(implicit ctx: Context)
       <div class="auth fright">
         @auth.userDropdown(me, playing)
       </div>
-      <div id="message_notifications_parent" class="message_notifications fright @if(ctx.nbMessages == 0) {none}">
-        <a id="message_notifications_tag" class="toggle link data-count" data-count="@ctx.nbMessages" data-href="@routes.Message.preview">
-          <span class="hint--bottom-left" data-hint="@trans.inbox()">
-            <span data-icon="e"></span>
-          </span>
-        </a>
-        <div id="message_notifications" class="links dropdown">
-          <div id="message_notifications_display" class="content"></div>
-          <div class="title"><a href="@routes.Message.inbox(page=1)">@trans.inbox() »</a></div>
-        </div>
-      </div>
       <div class="challenge_notifications fright">
-        <a id="challenge_notifications_tag" class="toggle link none data-count" data-count="0">
+        <a id="challenge_notifications_tag" class="toggle link data-count" data-count="@ctx.nbChallenges">
           <span class="hint--bottom-left" data-hint="Challenges">
             <span data-icon="U"></span>
           </span>
         </a>
-        <div id="challenge_notifications" class="links dropdown"></div>
+        <div id="challenge_app" class="links dropdown">
+          <div class="initiating">@base.spinner()</div>
+        </div>
+      </div>
+      <div class="site_notifications fright">
+        <a id="site_notifications_tag" class="toggle link data-count" data-count="@ctx.nbNotifications">
+          <span class="hint--bottom-left" data-hint="Notifications">
+            <span data-icon=""></span>
+          </span>
+        </a>
+        <div id="notify_app" class="links dropdown">
+          <div class="initiating">@base.spinner()</div>
+        </div>
       </div>
       }.getOrElse {
       <a href="@routes.Auth.login" class="signin button fright text">@trans.signIn()</a>
@@ -141,25 +149,23 @@ withLangAnnotations: Boolean = true)(body: Html)(implicit ctx: Context)
       <a class="fright link text data-count" href="@routes.Report.list" data-count="@reportNbUnprocessed" data-icon="@icon.mod"></a>
       }
       }
-      <a id="reconnecting" class="fright link" onclick="location.reload();" data-icon="B">&nbsp;@trans.reconnecting()</a>
+      <a id="reconnecting" class="fright link" onclick="window.location.reload()" data-icon="B">&nbsp;@trans.reconnecting()</a>
     </div>
     <div id="fpmenu">@fpmenu()</div>
     <div class="content @ctx.is3d.fold("is3d", "is2d")">
       <div id="site_header">
-        @ctx.me.map { me =>
-        <div id="notifications">@notifications(me)</div>
-        }.getOrElse {
         <div id="notifications"></div>
-        }
-        <h1>
-          <a id="site_title" href="@routes.Lobby.home">@if(ctx.kid){<span title="Kid mode" class="kiddo">😊</span>}lichess<span class="extension">.org</span></a>
-        </h1>
-        @baseline
-        @menu.map { side =>
-        <div class="side_menu">@side</div>
-        }
-        @side
-        @chat
+        <div class="board_left">
+          <h1>
+            <a id="site_title" href="@routes.Lobby.home">@if(ctx.kid){<span title="@trans.kidMode()" class="kiddo">😊</span>}lichess<span class="extension">.org</span></a>
+          </h1>
+          @baseline
+          @menu.map { side =>
+          <div class="side_menu">@side</div>
+          }
+          @side
+          @chat
+        </div>
         @underchat.map { g =>
         <div class="under_chat">@g</div>
         }
@@ -169,13 +175,15 @@ withLangAnnotations: Boolean = true)(body: Html)(implicit ctx: Context)
       </div>
     </div>
     @ctx.me.map { me =>
-    <div id="friend_box" data-preload="@ctx.friends.map(_.titleName).mkString(",")">
+    <div id="friend_box" data-preload="@ctx.onlineFriends.users.map(_.titleName).mkString(",")"
+      data-playing="@ctx.onlineFriends.playing.mkString(",")"
+      data-patrons="@ctx.onlineFriends.patrons.mkString(",")">
       <div class="title"><strong class="online"> </strong> @trans.onlineFriends()</div>
       <div class="content_wrap">
         <div class="content list"></div>
-        <div class="nobody">
+        <div class="nobody@if(ctx.onlineFriends.users.nonEmpty){ none}">
           <span>@trans.noFriendsOnline()</span>
-          <a class="find button" href="@routes.Relation.suggest(me.username)">
+          <a class="find button" href="@routes.User.opponents(me.username)">
             <span class="is3 text" data-icon="h">@trans.findFriends()</span>
           </a>
         </div>
@@ -185,14 +193,23 @@ withLangAnnotations: Boolean = true)(body: Html)(implicit ctx: Context)
     @jQueryTag
     @if(chessground) {@jsTag("vendor/chessground.min.js")}
     @if(ctx.requiresFingerprint) { @fingerprintTag }
-    @jsTag("deps.min.js")
     @momentjsTag
-    @jsTagCompiled("big.js")
-    @moreJs
-    @jsAt(s"trans/${lang.language}.js")
-    @if(lang.language != "en") {
     @momentLangTag
+    @if(isProd) {
+    @jsTagCompiled("lichess.js")
+    } else {
+    @jsTag("deps.min.js")
+    @jsTag("util.js")
+    @jsTag("socket.js")
+    @jsTag("main.js")
     }
-    @base.ga()
+    @if(withGtm) { @embedJs { dataLayer = []; } }
+    @moreJs
+    @if(lang.language != "en") {
+    @embedJs {
+    lichess_translations = @jsI18n()
+    }
+    }
+    @if(withGtm) {@gtm()} else {@ga()}
   </body>
 </html>

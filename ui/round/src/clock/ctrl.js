@@ -7,15 +7,14 @@ module.exports = function(data, onFlag, soundColor) {
   var emergSound = {
     play: $.sound.lowtime,
     last: null,
-    delay: 5000,
+    delay: 20000,
     playable: {
       white: true,
       black: true
     }
   };
 
-  this.data = data;
-  this.data.barTime = Math.max(this.data.initial, 2) + 5 * this.data.increment;
+  data.barTime = Math.max(data.initial, 2) + 5 * data.increment;
 
   function setLastUpdate() {
     lastUpdate = {
@@ -26,30 +25,37 @@ module.exports = function(data, onFlag, soundColor) {
   }
   setLastUpdate();
 
-  this.update = function(white, black) {
+  var update = function(white, black) {
     m.startComputation();
-    this.data.white = white;
-    this.data.black = black;
+    data.white = white;
+    data.black = black;
     setLastUpdate();
     m.endComputation();
-  }.bind(this);
+  };
 
-  this.tick = function(color) {
-    this.data[color] = Math.max(0, lastUpdate[color] - (new Date() - lastUpdate.at) / 1000);
-    if (this.data[color] === 0) onFlag();
+  var tick = function(color) {
+    data[color] = Math.max(0, lastUpdate[color] - (new Date() - lastUpdate.at) / 1000);
+    if (data[color] === 0) onFlag();
     m.redraw();
-    if (soundColor == color && this.data[soundColor] < this.data.emerg && emergSound.playable[soundColor]) {
+    if (soundColor == color && data[soundColor] < data.emerg && emergSound.playable[soundColor]) {
       if (!emergSound.last || (data.increment && new Date() - emergSound.delay > emergSound.last)) {
         emergSound.play();
         emergSound.last = new Date();
         emergSound.playable[soundColor] = false;
       }
-    } else if (soundColor == color && this.data[soundColor] > 2 * this.data.emerg && !emergSound.playable[soundColor]) {
+    } else if (soundColor == color && data[soundColor] > 1.5 * data.emerg && !emergSound.playable[soundColor]) {
       emergSound.playable[soundColor] = true;
     }
-  }.bind(this);
+  };
 
-  this.secondsOf = function(color) {
-    return this.data[color];
-  }.bind(this);
+  var secondsOf = function(color) {
+    return data[color];
+  };
+
+  return {
+    data: data,
+    update: update,
+    tick: tick,
+    secondsOf: secondsOf
+  };
 }

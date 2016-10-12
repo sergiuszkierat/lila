@@ -21,6 +21,7 @@ final class Env(
     val CollectionUser = config getString "collection.user"
     val CollectionNote = config getString "collection.note"
     val CollectionTrophy = config getString "collection.trophy"
+    val CollectionRanking = config getString "collection.ranking"
   }
   import settings._
 
@@ -34,50 +35,50 @@ final class Env(
 
   lazy val trophyApi = new TrophyApi(db(CollectionTrophy))
 
+  lazy val rankingApi = new RankingApi(db(CollectionRanking), mongoCache, lightUser)
+
   lazy val jsonView = new JsonView(isOnline)
 
   val forms = DataForm
 
   def lightUser(id: String): Option[lila.common.LightUser] = lightUserApi get id
 
+  def uncacheLightUser(id: String): Funit = lightUserApi invalidate id
+
   def isOnline(userId: String) = onlineUserIdMemo get userId
 
-  def countEnabled = cached.countEnabled
-
   def cli = new lila.common.Cli {
-    import tube.userTube
     def process = {
-      case "user" :: "typecheck" :: Nil =>
-        lila.db.Typecheck.apply[User]
       case "user" :: "email" :: userId :: email :: Nil =>
         UserRepo.email(User normalize userId, email) inject "done"
     }
   }
 
-  private val bus = system.lilaBus
-
-  bus.subscribe(system.actorOf(
-    Props(new Actor {
-      def receive = {
-        case User.Active(user) =>
-          if (!user.seenRecently) UserRepo setSeenAt user.id
-          onlineUserIdMemo put user.id
-      }
-    })), 'userActive)
+  system.lilaBus.subscribe(system.actorOf(Props(new Actor {
+    def receive = {
+      case lila.hub.actorApi.mod.MarkCheater(userId) => rankingApi remove userId
+      case lila.hub.actorApi.mod.MarkBooster(userId) => rankingApi remove userId
+      case User.Active(user) =>
+        if (!user.seenRecently) UserRepo setSeenAt user.id
+        onlineUserIdMemo put user.id
+    }
+  })), 'adjustCheater, 'adjustBooster, 'userActive)
 
   {
     import scala.concurrent.duration._
     import lila.hub.actorApi.WithUserIds
 
     scheduler.effect(3 seconds, "refresh online user ids") {
-      bus.publish(WithUserIds(onlineUserIdMemo.putAll), 'users)
+      system.lilaBus.publish(WithUserIds(onlineUserIdMemo.putAll), 'users)
     }
   }
 
   lazy val cached = new Cached(
+    userColl = userColl,
     nbTtl = CachedNbTtl,
     onlineUserIdMemo = onlineUserIdMemo,
-    mongoCache = mongoCache)
+    mongoCache = mongoCache,
+    rankingApi = rankingApi)
 }
 
 object Env {

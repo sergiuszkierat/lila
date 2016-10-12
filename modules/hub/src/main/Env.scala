@@ -6,25 +6,21 @@ import com.typesafe.config.Config
 final class Env(config: Config, system: ActorSystem) {
 
   object actor {
-    val game = select("actor.game.actor")
     val gameSearch = select("actor.game.search")
     val renderer = select("actor.renderer")
     val captcher = select("actor.captcher")
     val forum = select("actor.forum.actor")
     val forumSearch = select("actor.forum.search")
     val teamSearch = select("actor.team.search")
-    val messenger = select("actor.messenger")
-    val router = select("actor.router")
-    val ai = select("actor.ai")
-    val monitor = select("actor.monitor")
-    val tournamentOrganizer = select("actor.tournament.organizer")
+    val studySearch = select("actor.study.search")
+    val fishnet = select("actor.fishnet")
+    val tournamentApi = select("actor.tournament.api")
     val simul = select("actor.simul")
     val timeline = select("actor.timeline.user")
     val bookmark = select("actor.bookmark")
     val roundMap = select("actor.round.map")
     val lobby = select("actor.lobby")
     val relation = select("actor.relation")
-    val challenger = select("actor.challenger")
     val report = select("actor.report")
     val shutup = select("actor.shutup")
     val mod = select("actor.mod")
@@ -32,10 +28,11 @@ final class Env(config: Config, system: ActorSystem) {
     val analyser = select("actor.analyser")
     val moveBroadcast = select("actor.move_broadcast")
     val userRegister = select("actor.user_register")
+    val notification = select("actor.notify")
   }
 
   object channel {
-    val moveLat = select("channel.move_lat")
+    val roundMoveTime = select("channel.round.move_time")
   }
 
   object socket {
@@ -44,7 +41,6 @@ final class Env(config: Config, system: ActorSystem) {
     val tournament = select("socket.tournament")
     val simul = select("socket.simul")
     val site = select("socket.site")
-    val monitor = select("socket.monitor")
     val hub = select("socket.hub")
   }
 

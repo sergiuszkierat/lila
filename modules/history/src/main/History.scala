@@ -11,6 +11,8 @@ case class History(
     threeCheck: RatingsMap,
     atomic: RatingsMap,
     horde: RatingsMap,
+    racingKings: RatingsMap,
+    crazyhouse: RatingsMap,
     bullet: RatingsMap,
     blitz: RatingsMap,
     classical: RatingsMap,
@@ -29,6 +31,8 @@ case class History(
     case PerfType.ThreeCheck     => threeCheck
     case PerfType.Atomic         => atomic
     case PerfType.Horde          => horde
+    case PerfType.RacingKings    => racingKings
+    case PerfType.Crazyhouse     => crazyhouse
     case PerfType.Puzzle         => puzzle
     case x                       => sys error s"No history for perf $x"
   }
@@ -38,16 +42,16 @@ object History {
 
   import reactivemongo.bson._
   import lila.db.BSON
-  import BSON.Map.MapReader
+  import BSON.MapDocument.MapReader
 
-  private[history] implicit val BSONReader = new BSONDocumentReader[History] {
+  private[history] implicit val RatingsMapReader = new BSONDocumentReader[RatingsMap] {
+    def read(doc: BSONDocument): RatingsMap = doc.stream.flatMap {
+      case scala.util.Success((k, BSONInteger(v))) => parseIntOption(k) map (_ -> v)
+      case _                                       => none[(Int, Int)]
+    }.toList sortBy (_._1)
+  }
 
-    private implicit val ratingsMapReader = new BSONDocumentReader[RatingsMap] {
-      def read(doc: BSONDocument): RatingsMap = doc.stream.flatMap {
-        case scala.util.Success((k, BSONInteger(v))) => parseIntOption(k) map (_ -> v)
-        case _                                       => none[(Int, Int)]
-      }.toList sortBy (_._1)
-    }
+  private[history] implicit val HistoryBSONReader = new BSONDocumentReader[History] {
 
     def read(doc: BSONDocument): History = {
       def ratingsMap(key: String): RatingsMap = ~doc.getAs[RatingsMap](key)
@@ -59,6 +63,8 @@ object History {
         antichess = ratingsMap("antichess"),
         atomic = ratingsMap("atomic"),
         horde = ratingsMap("horde"),
+        racingKings = ratingsMap("racingKings"),
+        crazyhouse = ratingsMap("crazyhouse"),
         bullet = ratingsMap("bullet"),
         blitz = ratingsMap("blitz"),
         classical = ratingsMap("classical"),

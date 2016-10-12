@@ -16,6 +16,7 @@ case class Simul(
     createdAt: DateTime,
     hostId: String,
     hostRating: Int,
+    hostTitle: Option[String],
     hostGameId: Option[String], // game the host is focusing on
     startedAt: Option[DateTime],
     finishedAt: Option[DateTime],
@@ -60,7 +61,9 @@ case class Simul(
   def removePairing(userId: String) =
     copy(pairings = pairings filterNot (_ is userId)).finishIfDone
 
-  def startable = isCreated && applicants.count(_.accepted) > 1
+  def nbAccepted = applicants.count(_.accepted)
+
+  def startable = isCreated && nbAccepted > 1
 
   def start = startable option copy(
     status = SimulStatus.Started,
@@ -113,11 +116,20 @@ case class Simul(
   def isNotBrandNew = createdAt isBefore DateTime.now.minusSeconds(10)
 
   private def Created(s: => Simul): Simul = if (isCreated) s else this
+
+  def spotlightable =
+    isCreated &&
+      (hostRating >= 2400 || hostTitle.isDefined) &&
+      applicants.size < 80
 }
 
 object Simul {
 
   type ID = String
+
+  private def makeName(host: User) =
+    if (host.title.isDefined) host.titleUsername
+    else RandomName()
 
   def make(
     host: User,
@@ -125,7 +137,7 @@ object Simul {
     variants: List[Variant],
     color: String): Simul = Simul(
     _id = Random nextStringUppercase 8,
-    name = RandomName(),
+    name = makeName(host),
     status = SimulStatus.Created,
     clock = clock,
     hostId = host.id,
@@ -137,6 +149,7 @@ object Simul {
           daysPerTurn = none)
       }
     },
+    hostTitle = host.title,
     hostGameId = none,
     createdAt = DateTime.now,
     variants = variants,

@@ -22,14 +22,16 @@ final class Env(
     val ContextGitUrl = config getString "context.git.url"
     val ContextGitFile = config getString "context.git.file"
     val CdnDomain = config getString "cdn_domain"
+    val CallThreshold = config getInt "call.threshold"
   }
   import settings._
 
   // public settings
   val RequestHandlerProtocol = config getString "request_handler.protocol"
-  val CallThreshold = config getInt "call.threshold"
+  def hideCallsCookieName = HideCallsCookieName
+  def hideCallsCookieMaxAge = HideCallsCookieMaxAge
 
-  private[i18n] lazy val translationColl = db(CollectionTranslation)
+  private val translationColl = db(CollectionTranslation)
 
   lazy val pool = new I18nPool(
     langs = Lang.availables(play.api.Play.current).toSet,
@@ -61,9 +63,13 @@ final class Env(
     messages = messages,
     keys = keys)
 
+  lazy val repo = new TranslationRepo(translationColl)
+
   lazy val forms = new DataForm(
+    repo = repo,
     keys = keys,
-    captcher = captcher)
+    captcher = captcher,
+    callApi = callApi)
 
   def upstreamFetch = new UpstreamFetch(id => UpstreamUrlPattern format id)
 
@@ -74,12 +80,15 @@ final class Env(
 
   lazy val context = new Context(ContextGitUrl, ContextGitFile, keys)
 
-  def hideCallsCookieName = HideCallsCookieName
-  def hideCallsCookieMaxAge = HideCallsCookieMaxAge
+  private lazy val callApi = new CallApi(
+    hideCallsCookieName = hideCallsCookieName,
+    minGames = CallThreshold,
+    transInfos = transInfos)
+
+  def call = callApi.apply _
 
   def jsonFromVersion(v: Int): Fu[JsValue] = {
-    import tube.translationTube
-    TranslationRepo findFrom v map { ts => Json toJson ts }
+    repo findFrom v map { ts => Json toJson ts }
   }
 
   def cli = new lila.common.Cli {
@@ -102,7 +111,7 @@ object Env {
     config = lila.common.PlayApp loadConfig "i18n",
     db = lila.db.Env.current,
     system = PlayApp.system,
-    messages = PlayApp.messages,
+    messages = MessageDb.load,
     captcher = lila.hub.Env.current.actor.captcher,
     appPath = PlayApp withApp (_.path.getCanonicalPath)
   )

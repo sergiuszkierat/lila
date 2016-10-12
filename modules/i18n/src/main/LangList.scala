@@ -32,7 +32,7 @@ object LangList {
     "bn" -> "বাংলা",
     "bh" -> "भोजपुरी",
     "bi" -> "Bislama",
-    "bs" -> "bosanski jezik",
+    "bs" -> "bosanski",
     "br" -> "brezhoneg",
     "bg" -> "български език",
     "ca" -> "Català, valencià",
@@ -62,7 +62,7 @@ object LangList {
     //"frp" -> "arpitan",
     "ff" -> "Fulfulde, Pulaar, Pular",
     "gl" -> "Galego",
-    "ka" -> "ქართულ",
+    "ka" -> "ქართული",
     "kb" -> "Taqvaylit", // should be kab http://en.wikipedia.org/wiki/Kabyle_language
     "de" -> "Deutsch",
     "el" -> "Ελληνικά",

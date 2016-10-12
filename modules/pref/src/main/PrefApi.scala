@@ -4,10 +4,10 @@ import play.api.libs.json.Json
 import scala.concurrent.duration.Duration
 
 import lila.db.BSON
-import lila.db.Types._
+import lila.db.dsl._
+import lila.hub.actorApi.SendTo
 import lila.memo.AsyncCache
 import lila.user.User
-import lila.hub.actorApi.SendTo
 import reactivemongo.bson._
 
 final class PrefApi(
@@ -15,7 +15,7 @@ final class PrefApi(
     cacheTtl: Duration,
     bus: lila.common.Bus) {
 
-  private def fetchPref(id: String): Fu[Option[Pref]] = coll.find(BSONDocument("_id" -> id)).one[Pref]
+  private def fetchPref(id: String): Fu[Option[Pref]] = coll.find(BSONDocument("_id" -> id)).uno[Pref]
   private val cache = AsyncCache(fetchPref, timeToLive = cacheTtl)
 
   private implicit val prefBSONHandler = new BSON[Pref] {
@@ -56,7 +56,10 @@ final class PrefApi(
       puzzleDifficulty = r.getD("puzzleDifficulty", Pref.default.puzzleDifficulty),
       submitMove = r.getD("submitMove", Pref.default.submitMove),
       confirmResign = r.getD("confirmResign", Pref.default.confirmResign),
-      coachShare = r.getD("coachShare", Pref.default.coachShare),
+      insightShare = r.getD("insightShare", Pref.default.insightShare),
+      keyboardMove = r.getD("keyboardMove", Pref.default.keyboardMove),
+      pieceNotation = r.getD("pieceNotation", Pref.default.pieceNotation),
+      moveEvent = r.getD("moveEvent", Pref.default.moveEvent),
       tags = r.getD("tags", Pref.default.tags))
 
     def writes(w: BSON.Writer, o: Pref) = BSONDocument(
@@ -91,7 +94,10 @@ final class PrefApi(
       "puzzleDifficulty" -> o.puzzleDifficulty,
       "submitMove" -> o.submitMove,
       "confirmResign" -> o.confirmResign,
-      "coachShare" -> o.coachShare,
+      "insightShare" -> o.insightShare,
+      "keyboardMove" -> o.keyboardMove,
+      "moveEvent" -> o.moveEvent,
+      "pieceNotation" -> o.pieceNotation,
       "tags" -> o.tags)
   }
 
@@ -110,20 +116,17 @@ final class PrefApi(
   def getPref[A](userId: String, pref: Pref => A): Fu[A] = getPref(userId) map pref
 
   def followable(userId: String): Fu[Boolean] =
-    coll.find(BSONDocument("_id" -> userId), BSONDocument("follow" -> true)).one[BSONDocument] map {
+    coll.find(BSONDocument("_id" -> userId), BSONDocument("follow" -> true)).uno[BSONDocument] map {
       _ flatMap (_.getAs[Boolean]("follow")) getOrElse Pref.default.follow
     }
 
   def unfollowableIds(userIds: List[String]): Fu[Set[String]] =
-    coll.find(BSONDocument(
-      "_id" -> BSONDocument("$in" -> userIds),
+    coll.distinct[String, Set]("_id", ($inIds(userIds) ++ $doc(
       "follow" -> false
-    ), BSONDocument("_id" -> true)).cursor[BSONDocument]().collect[List]() map {
-      _.flatMap(_.getAs[String]("_id")).toSet
-    }
+    )).some)
 
   def followableIds(userIds: List[String]): Fu[Set[String]] =
-    unfollowableIds(userIds) map (uns => userIds.toSet diff uns)
+    unfollowableIds(userIds) map userIds.toSet.diff
 
   def followables(userIds: List[String]): Fu[List[Boolean]] =
     followableIds(userIds) map { followables => userIds map followables.contains }

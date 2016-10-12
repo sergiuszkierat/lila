@@ -14,22 +14,23 @@ import lila.user.{ User, Trophy, Trophies, TrophyApi }
 
 case class UserInfo(
     user: User,
-    ranks: Map[lila.rating.Perf.Key, Int],
-    nbUsers: Int,
+    ranks: lila.rating.UserRankMap,
     nbPlaying: Int,
     hasSimul: Boolean,
     crosstable: Option[Crosstable],
     nbBookmark: Int,
     nbImported: Int,
     ratingChart: Option[String],
-    nbFollowing: Int,
     nbFollowers: Int,
     nbBlockers: Option[Int],
     nbPosts: Int,
+    nbStudies: Int,
     playTime: User.PlayTime,
-    donor: Boolean,
     trophies: Trophies,
-    isStreamer: Boolean) {
+    isStreamer: Boolean,
+    isCoach: Boolean,
+    insightVisible: Boolean,
+    completionRate: Option[Double]) {
 
   def nbRated = user.count.rated
 
@@ -37,11 +38,21 @@ case class UserInfo(
 
   def percentRated: Int = math.round(nbRated / user.count.game.toFloat * 100)
 
+  def completionRatePercent = completionRate.map { cr => math.round(cr * 100) }
+
+  def isPublicMod = lila.security.Granter(_.PublicMod)(user)
+  def isDeveloper = lila.security.Granter(_.Developer)(user)
+
   def allTrophies = List(
-    donor option Trophy(
+    isPublicMod option Trophy(
       _id = "",
       user = user.id,
-      kind = Trophy.Kind.Donor,
+      kind = Trophy.Kind.Moderator,
+      date = org.joda.time.DateTime.now),
+    isDeveloper option Trophy(
+      _id = "",
+      user = user.id,
+      kind = Trophy.Kind.Developer,
       date = org.joda.time.DateTime.now),
     isStreamer option Trophy(
       _id = "",
@@ -54,51 +65,57 @@ case class UserInfo(
 object UserInfo {
 
   def apply(
-    countUsers: () => Fu[Int],
     bookmarkApi: BookmarkApi,
     relationApi: RelationApi,
     trophyApi: TrophyApi,
     gameCached: lila.game.Cached,
     crosstableApi: lila.game.CrosstableApi,
     postApi: PostApi,
+    studyRepo: lila.study.StudyRepo,
     getRatingChart: User => Fu[Option[String]],
     getRanks: String => Fu[Map[String, Int]],
-    isDonor: String => Fu[Boolean],
     isHostingSimul: String => Fu[Boolean],
-    isStreamer: String => Boolean)(user: User, ctx: Context): Fu[UserInfo] =
-    countUsers() zip
-      getRanks(user.id) zip
+    isStreamer: String => Boolean,
+    fetchIsCoach: User => Fu[Boolean],
+    insightShare: lila.insight.Share,
+    getPlayTime: User => Fu[User.PlayTime],
+    completionRate: User.ID => Fu[Option[Double]])(user: User, ctx: Context): Fu[UserInfo] =
+    getRanks(user.id) zip
       (gameCached nbPlaying user.id) zip
       gameCached.nbImportedBy(user.id) zip
       (ctx.me.filter(user!=) ?? { me => crosstableApi(me.id, user.id) }) zip
       getRatingChart(user) zip
-      relationApi.nbFollowing(user.id) zip
-      relationApi.nbFollowers(user.id) zip
-      (ctx.me ?? Granter(_.UserSpy) ?? { relationApi.nbBlockers(user.id) map (_.some) }) zip
+      relationApi.countFollowers(user.id) zip
+      (ctx.me ?? Granter(_.UserSpy) ?? { relationApi.countBlockers(user.id) map (_.some) }) zip
       postApi.nbByUser(user.id) zip
-      isDonor(user.id) zip
+      studyRepo.countByOwner(user.id) zip
       trophyApi.findByUser(user) zip
-      PlayTime(user) flatMap {
-        case ((((((((((((nbUsers, ranks), nbPlaying), nbImported), crosstable), ratingChart), nbFollowing), nbFollowers), nbBlockers), nbPosts), isDonor), trophies), playTime) =>
+      fetchIsCoach(user) zip
+      (user.count.rated >= 10).??(insightShare.grant(user, ctx.me)) zip
+      getPlayTime(user) zip
+      completionRate(user.id) zip
+      bookmarkApi.countByUser(user) flatMap {
+        case ((((((((((((((ranks, nbPlaying), nbImported), crosstable), ratingChart), nbFollowers), nbBlockers), nbPosts), nbStudies), trophies), isCoach), insightVisible), playTime), completionRate), nbBookmarks) =>
           (nbPlaying > 0) ?? isHostingSimul(user.id) map { hasSimul =>
             new UserInfo(
               user = user,
               ranks = ranks,
-              nbUsers = nbUsers,
               nbPlaying = nbPlaying,
               hasSimul = hasSimul,
               crosstable = crosstable,
-              nbBookmark = bookmarkApi countByUser user,
+              nbBookmark = nbBookmarks,
               nbImported = nbImported,
               ratingChart = ratingChart,
-              nbFollowing = nbFollowing,
               nbFollowers = nbFollowers,
               nbBlockers = nbBlockers,
               nbPosts = nbPosts,
+              nbStudies = nbStudies,
               playTime = playTime,
-              donor = isDonor,
               trophies = trophies,
-              isStreamer = isStreamer(user.id))
+              isStreamer = isStreamer(user.id),
+              isCoach = isCoach,
+              insightVisible = insightVisible,
+              completionRate = completionRate)
           }
       }
 }

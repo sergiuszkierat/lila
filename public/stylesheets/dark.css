@@ -1,27 +1,27 @@
 body.dark {
   background-color: #1a1a1a;
   background-image: linear-gradient(to bottom, #2c2c2c, #1a1a1a 116px);
-  color: #8c8c8c;
+  color: #929292;
 }
 body.dark a,
 body.dark a:visited,
 body.dark #powerTip > .actions a,
+body.dark group.radio label,
 body.dark .button {
-  color: #8a8a8a;
+  color: #8f8f8f;
 }
 body.dark #video .content_box_top form input,
+body.dark .study_box .list div.editing,
+body.dark .study_box .list div.config,
 body.dark input,
 body.dark textarea,
 body.dark div.analysis_menu > a.active,
-body.dark div.chat_menu > a {
+body.dark div.mchat .chat_tabs .tab {
   background: #1a1a1a;
-  color: #8a8a8a;
+  color: #8f8f8f;
 }
 body.dark div.analysis_menu > a.active {
   border-top-color: #1a1a1a;
-}
-body.dark div.chat_menu > a.active {
-  border-bottom-color: #262626;
 }
 body.dark .crosstable td {
   border-color: #1a1a1a;
@@ -30,10 +30,16 @@ body.dark #video_side .tag_list a.full:hover {
   background: #222;
   border-color: #444;
 }
+body.dark .fork,
+body.dark .study_tabs a,
+body.dark .lichess_ground .suggestion,
+body.dark .lichess_ground .pending,
+body.dark .lichess_ground .negotiation,
 body.dark #video .tag_list a {
   background: #363636;
-  color: #9a9a9a;
+  color: #aaa;
 }
+body.dark #adv_chart_loader,
 body.dark #video .tag_list a:hover {
   background: #3a3a3a;
   color: #a0a0a0;
@@ -45,12 +51,11 @@ body.dark #site_title {
   color: #acacac;
 }
 body.dark .mini_board,
-body.dark #chat div.top,
-body.dark #chat .messages,
-body.dark div.undertable_top,
+body.dark div.mchat div.top,
+body.dark .undertable_top,
 body.dark div.undertable_inner,
-body.dark div.undertable td,
-body.dark #chat form input,
+body.dark .undertable td,
+body.dark .study_invite input,
 body.dark #translation_call,
 body.dark div.game_config .optional_config,
 body.dark div.game_config .ratings,
@@ -64,11 +69,12 @@ body.dark div.table,
 body.dark div.separator,
 body.dark div.table_wrap > div.clock > div.time,
 body.dark #tournament_schedule .schedule,
-body.dark #tournament_side,
+body.dark #tournament_side .box,
 body.dark #tournament_side .player .stats,
 body.dark #tournament_side .player tr > *,
 body.dark #tournament_side .player tr:hover th,
 body.dark .lichess_ground .ceval_box,
+body.dark .lichess_ground .opening_box,
 body.dark div.shortcuts .title,
 body.dark div.content_box,
 body.dark div.content_box_inter,
@@ -77,6 +83,7 @@ body.dark div.content_box_inter a:hover,
 body.dark input.copyable,
 body.dark textarea.copyable,
 body.dark #site_header div.side_menu a.active,
+body.dark div.sub_ratings > a.active,
 body.dark div.game_row,
 body.dark div.side form.search input,
 body.dark #lichess_forum div.post,
@@ -85,7 +92,7 @@ body.dark #lichess_message div.thread_message,
 body.dark #lichess_message textarea,
 body.dark #lichess_message input,
 body.dark .content_box form input,
-body.dark div.progressbar,
+body.dark .progressbar,
 body.dark form.translation_form div.messages,
 body.dark form.translation_form input,
 body.dark #adv_chart,
@@ -97,8 +104,8 @@ body.dark #qa .question .comments,
 body.dark #qa .comments .comment,
 body.dark #qa .answer-wrap,
 body.dark #qa .tm-tag,
-body.dark table.slist,
-body.dark table.slist thead th,
+body.dark .slist,
+body.dark .slist thead th,
 body.dark #notifications > div,
 body.dark form.wide input[type="text"],
 body.dark form.wide textarea,
@@ -106,10 +113,14 @@ body.dark #team .team-left,
 body.dark #team .team-right,
 body.dark #team h2,
 body.dark #team.team_show div.content_box_top,
+body.dark #perfStat div.content_box_top,
+body.dark #perfStat .counter tr:first-child,
+body.dark #perfStat .result thead tr,
 body.dark .leaderboard_title,
 body.dark #friend_box,
 body.dark #friend_box .title,
 body.dark div.user_show div.user-infos,
+body.dark div.user_show .insight,
 body.dark div.game_config input[type="text"],
 body.dark #powerTip,
 body.dark #miniGame,
@@ -121,18 +132,21 @@ body.dark #hooks_wrap .table_wrap td,
 body.dark #hooks_wrap,
 body.dark #hooks_wrap div.tabs a,
 body.dark #hooks_wrap .hooks_chart > div.grid,
-body.dark #tournament_schedule .timeheader,
 body.dark div.vstext,
 body.dark div.user_show div.content_box_inter.tabs,
 body.dark #enterable_tournaments table.scheduled,
 body.dark div.user_show .mod_zone .listings,
-body.dark div.user_show .mod_zone .slist,
 body.dark div.user_show .note_zone,
 body.dark div.user_show .note_zone div,
+body.dark .lichess_ground .replay,
+body.dark .lichess_ground .areplay,
+body.dark .tview2 > index,
+body.dark .tview2 > index + move,
 body.dark div.analysis_menu,
 body.dark div.analysis_menu > a,
-body.dark .lichess_ground .replay,
-body.dark .lichess_ground .analyse .meta,
+body.dark .explorer_box,
+body.dark .explorer_box .config .choices span,
+body.dark .lichess_ground .areplay interrupt,
 body.dark div.content_box.prefs form li,
 body.dark div.content_box.prefs fieldset,
 body.dark #claim_draw_zone,
@@ -146,73 +160,100 @@ body.dark div.doc_box h2,
 body.dark div.training div.box,
 body.dark div.force_resign_zone,
 body.dark div.negotiation,
-body.dark div.side_box div.game_infos,
-body.dark #challenge_notifications div.notification,
-body.dark #message_notifications div.notification,
+body.dark div.side_box .game_infos,
 body.dark #video .content_box_top,
 body.dark #simul .half,
-body.dark div.search_status,
-body.dark div.chat_menu > a {
+body.dark .donation,
+body.dark .donation a,
+body.dark .studies .study,
+body.dark .study_metadata h2 .views,
+body.dark .study_invite .users,
+body.dark .study_metadata h2 .liking,
+body.dark #notify_app .pager.prev,
+body.dark div.mchat .presets span,
+body.dark div.mchat input.lichess_say,
+body.dark #tournament .controls,
+body.dark div.mchat .chat_tabs .tab {
   border-color: #3d3d3d;
 }
 body.dark .crosstable td:nth-last-child(3) {
   border-right-color: #3d3d3d;
 }
-body.dark #modal-wrap {
+body.dark .tview2 > index,
+body.dark .tview2 > interrupt,
+body.dark .explorer_box .config .choices span:hover,
+body.dark #perfStat .counter tr.full td:last-child,
+body.dark div.lichess_overboard .close,
+body.dark #modal-wrap,
+body.dark #modal-wrap .close {
   background-color: #303030;
 }
 body.dark #opening .meter ul,
 body.dark #opening .meter li.dubious .step,
 body.dark .ui-slider,
-body.dark div.progressbar,
-body.dark #translation_call div.progressbar,
-body.dark #themepicker div.theme:hover {
+body.dark .progressbar,
+body.dark #translation_call .progressbar,
+body.dark #themepicker div.theme:hover,
+body.dark div.lichess_overboard .close:hover,
+body.dark #modal-wrap .close:hover {
   background-color: #505050;
 }
+
+body.dark hr,
+body.dark .fork move,
+body.dark .tview2 lines,
+body.dark #adv_chart_loader,
+body.dark .pull-quote p,
+body.dark .pull-quote p:after,
+body.dark #powerTip > .info .title,
+body.dark #tournament_schedule .timeheader,
 body.dark #opening .meter .step {
   border-color: #505050;
 }
 
+body.dark #tournament_side .featured .vstext strong,
+body.dark div.search_status,
 body.dark #opening .meter .step,
 body.dark #hooks_wrap div.tabs a,
 body.dark #top div.auth .links a:hover,
-body.dark #top .language_links button:hover,
-body.dark #challenge_notifications > div.notification:hover,
-body.dark #message_notifications div.notification:hover {
+body.dark #top .language_links button:hover {
   background-color: #3e3e3e;
   color: #b0b0b0;
 }
 body.dark #top a.toggle:hover,
-body.dark #top #sound_state:hover {
+body.dark #top #sound_state:hover,
+body.dark #top a.signin,
+body.dark #hooks_wrap .hook_filter .checkable {
   color: #c0c0c0;
 }
 body.dark div.user_show .trophy.icon3d,
 body.dark #timeline a,
-body.dark #chat span,
-body.dark #chat a.user_link,
-body.dark div.undertable a.user_link,
+body.dark .undertable a.user_link,
 body.dark #team .forum a.user_link,
 body.dark div.user_show div.content_box_top > span,
-body.dark span.progress > .zero,
-body.dark div.undertable_top span.title {
-  color: #777;
+body.dark .undertable_top span.title {
+  color: #838383;
 }
 body.dark .crosstable td a,
 body.dark #promotion_choice {
   background: rgba(0, 0, 0, 0.7);
 }
-body.dark #chat .messages,
+body.dark .tview2,
+body.dark .explorer_box .title,
+body.dark .explorer_box thead,
+body.dark .explorer_box tr:nth-child(even),
+body.dark div.mchat .messages,
 body.dark div.side_box,
 body.dark div.box,
 body.dark div.table,
 body.dark div.table_wrap > div.clock > div.time,
 body.dark #friend_box .content a:hover,
 body.dark div.undertable_inner,
-body.dark div.table .loader:before,
-body.dark div.table .loader:after,
-body.dark div.chat_menu > a.active {
+body.dark .donation a,
+body.dark div.mchat .chat_tabs .tab.active {
   background: #262626;
 }
+body.dark div.sub_ratings > a.game:hover,
 body.dark #hooks_wrap .table_wrap td,
 body.dark #now_playing > a {
   background: rgba(40, 40, 40, 0.6);
@@ -221,15 +262,14 @@ body.dark #now_playing > a {
 body.dark #hooks_wrap .table_wrap tr.cancel td {
   background: rgba(0, 80, 0, 0.7);
 }
+body.dark #site_header div.side_menu a:hover,
+body.dark div.doc_box a.variant:hover,
 body.dark #hooks_wrap .table_wrap tr.join:hover td,
 body.dark #now_playing > a:hover,
-body.dark .lichess_ground .replay move.current,
-body.dark #tournament table.standing:not(.created) tbody tr:hover {
+body.dark .explorer_box tr:hover,
+body.dark .pv_box .pv[data-uci]:hover,
+body.dark #tournament table.standing:not(.created):not(.loading) tbody tr:hover {
   background: rgba(27, 51, 68, 0.7);
-}
-body.dark #top a.signin,
-body.dark #hooks_wrap .hook_filter .checkable {
-  color: #c0c0c0;
 }
 body.dark #hooks_wrap,
 body.dark #hooks_wrap div.tabs a:hover,
@@ -250,27 +290,30 @@ body.dark div.table_not_started {
   background: none;
 }
 body.dark .lichess_ground .replay index,
-body.dark .lichess_ground .ceval_box pearl,
-body.dark .lichess_ground .analyse .meta,
 body.dark .lichess_ground .replay move:not(.empty):hover,
-body.dark #top .dropdown,
-body.dark #top .shown a.toggle,
-body.dark div.analysis_menu > a,
+body.dark .lichess_ground .ceval_box pearl,
+body.dark .lichess_ground .opening_box,
+body.dark #challenge_app div.challenge,
+body.dark #challenge_app div.empty,
+body.dark #challenge_app div.initiating,
+body.dark #notify_app .site_notification,
+body.dark #notify_app div.empty,
 body.dark div.lichess_overboard,
+body.dark div.analysis_menu > a,
 body.dark div.content_box,
+body.dark .content_box .pull-quote p:after,
 body.dark div.content_box_inter a.active,
 body.dark #site_header div.side_menu a.active,
-body.dark #tournament_side,
+body.dark div.sub_ratings > a.game.active,
+body.dark #tournament_side .box,
 body.dark table.translations tbody tr,
 body.dark form.translation_form div.message,
 body.dark #lichess_forum table.forum_table thead tr:nth-child(odd),
-body.dark #video_side .tag_list a.checked,
-body.dark div.lichess_overboard .loader:before,
-body.dark div.lichess_overboard .loader:after,
-body.dark div.content_box .loader:before,
-body.dark div.content_box .loader:after {
+body.dark #video_side .tag_list a.checked {
   background-color: #2b2b2b;
 }
+body.dark #perfStat .counter tr,
+body.dark #perfStat .result tr,
 body.dark #video .card .info,
 body.dark #video .card .reveal,
 body.dark #timeline,
@@ -286,7 +329,7 @@ body.dark div.game_row:nth-child(odd),
 body.dark #lichess_forum table.forum_table tr:nth-child(odd),
 body.dark #lichess_message tr:nth-child(even),
 body.dark div.content_box_inter,
-body.dark table.slist tbody tr:nth-child(even),
+body.dark .slist tbody tr:nth-child(even),
 body.dark #team .forum li:nth-child(odd),
 body.dark table.translations tbody tr:nth-child(odd),
 body.dark form.translation_form div.message:nth-child(even),
@@ -296,11 +339,16 @@ body.dark div.game_config .ratings,
 body.dark #tournament_side .player h2,
 body.dark #tournament_side .player .stats,
 body.dark #tournament_side .pairings tr:hover,
+body.dark #top .shown a.toggle,
+body.dark #top .dropdown,
+body.dark #challenge_app div.challenge,
+body.dark #notify_app .site_notification,
 body.dark #friend_box,
 body.dark #powerTip,
 body.dark #miniGame {
   background: #343434;
 }
+body.dark .tview2 line move,
 body.dark #top .language_links button.accepted,
 body.dark #lichess_forum div.post .message,
 body.dark #lichess_blog,
@@ -336,9 +384,10 @@ body.dark #chat div.top,
 body.dark div.side_box .top,
 body.dark div.box .top,
 body.dark #friend_box .title,
-body.dark div.undertable_top,
+body.dark .undertable_top,
 body.dark .button,
 body.dark .button:visited,
+body.dark group.radio label,
 body.dark .ui-state-default,
 body.dark #translation_call,
 body.dark #notifications > div,
@@ -347,29 +396,40 @@ body.dark div.user_show div.content_box_inter.tabs,
 body.dark #qa .answers-header,
 body.dark #video .card .info,
 body.dark #video .card .reveal,
-body.dark table.slist thead {
-  background: rgb(40, 40, 40);
+body.dark #tournament .controls,
+body.dark .slist thead {
   background: linear-gradient(to bottom, rgba(40, 40, 40, 1), rgba(34, 34, 34, 1) 100%);
   text-shadow: 0 1px 0 #000;
 }
+body.dark .button.frameless {
+  background: none;
+}
 body.dark .button,
 body.dark a.button,
-body.dark .ui-button,
+body.dark #challenge_app .owner,
+body.dark group.radio,
+body.dark group.radio label,
 body.dark .ui-slider-handle,
 body.dark .ui-widget-content,
 body.dark .lichess_ground .replay .moves {
   border-color: #323232;
 }
+body.dark #notify_app .site_notification,
+body.dark .lichess_ground .negotiation a,
+body.dark group.radio label:hover,
 body.dark .button:hover,
-body.dark a.button:hover,
-body.dark .ui-state-hover {
+body.dark a.button:hover {
   border-color: #383838;
   background: rgb(44, 44, 44);
-  background: -moz-linear-gradient(top, rgba(44, 44, 44, 1), rgba(40, 40, 40, 1) 100%);
-  background: -webkit-gradient(linear, left top, left bottom, color-stop(0%, rgba(44, 44, 44, 1)), color-stop(100%, rgba(40, 40, 40, 1)));
-  background: -webkit-linear-gradient(top, rgba(44, 44, 44, 1), rgba(40, 40, 40, 1) 100%);
-  background: -ms-linear-gradient(top, rgba(44, 44, 44, 1), rgba(40, 40, 40, 1) 100%);
   background: linear-gradient(to bottom, rgba(44, 44, 44, 1), rgba(40, 40, 40, 1) 100%);
+}
+body.dark .fbt.active-soft,
+body.dark .fbt.active-soft:hover {
+  color: #ccc !important;
+  text-shadow: 0 1px 0 #000 !important;
+  background: #444 !important;
+  border-color: #404040 !important;
+  box-shadow: 0 3px 4px rgba(0, 0, 0, 0.35) inset !important;
 }
 body.dark #hooks_wrap .hooks_chart .plot {
   color: #aaa;
@@ -378,11 +438,8 @@ body.dark #hooks_wrap .hooks_chart .plot {
 body.dark #hooks_wrap .hooks_chart > span.label {
   text-shadow: 0 0 3px #000;
 }
-body.dark .loader {
-  box-shadow: inset 0 0 0 1em #444;
-}
-body.dark .loader:before,
-body.dark .loader:after {
+
+body.dark .pull-quote p:after {
   background: #1a1a1a;
 }
 body.dark div.training > .side div.fail,
@@ -427,10 +484,9 @@ body.dark div.user_show div.user-infos.scroll-shadow-hard {
   background-size: 100% 20px, 100% 20px, 100% 10px, 100% 10px;
   background-attachment: local, local, scroll, scroll;
 }
-body.dark div.side_box div.game_infos .bookmark {
-  background: radial-gradient(ellipse at center, rgba(38, 38, 38, 1), rgba(38, 38, 38, 1) 25%, rgba(38, 38, 38, 0) 100%);
-}
-body.dark div.game_row:hover {
+body.dark div.game_row:hover,
+body.dark .studies .study:hover,
+body.dark .coaches .coach:hover {
   background: rgba(27, 51, 68, 0.5)!important;
 }
 body.dark .is.color-icon.white::before {
@@ -531,9 +587,30 @@ body.dark div.eval_gauge .black {
 body.dark div.eval_gauge tick {
   border-color: #a0a0a0;
 }
-body.dark .square-spin {
-  background: #666;
-  border-color: #aaa;
+body.dark .tview2 > index {
+  color: #6a6a6a;
+}
+body.dark .tview2 move {
+  color: #aaa;
+}
+body.dark .tview2 move.active {
+  color: #ff7729;
+}
+body.dark .tview2 comment {
+  color: #999;
+}
+body.dark .tview2 line comment {
+  color: #888;
+}
+body.dark .tview2 lines lines::before,
+body.dark .tview2 lines line::before {
+  border-color: #606060;
+}
+body.dark div.side_box .game_infos .variant-link {
+  border-color: #8c8c8c;
+}
+body.dark .spinner.monochrome circle {
+  stroke: #333;
 }
 body.dark input.cmn-toggle-round + label {
   background-color: #888;

@@ -17,6 +17,7 @@ object Environment
     with scalalib.OrnicarOption
     with lila.BooleanSteroids
     with lila.OptionSteroids
+    with lila.JodaTimeSteroids
     with StringHelper
     with JsonHelper
     with AssetHelper
@@ -31,12 +32,9 @@ object Environment
     with UserHelper
     with ForumHelper
     with I18nHelper
-    with BookmarkHelper
-    with NotificationHelper
     with SecurityHelper
     with TeamHelper
     with AnalysisHelper
-    with IRCHelper
     with TournamentHelper
     with SimulHelper {
 
@@ -48,10 +46,19 @@ object Environment
 
   def netDomain = apiEnv.Net.Domain
   def netBaseUrl = apiEnv.Net.BaseUrl
+  val isGloballyCrawlable = apiEnv.Net.Crawlable
 
   def isProd = apiEnv.isProd
 
   def apiVersion = lila.api.Mobile.Api.currentVersion
+
+  def explorerEndpoint = apiEnv.ExplorerEndpoint
+
+  def tablebaseEndpoint = apiEnv.TablebaseEndpoint
+
+  def contactEmail = apiEnv.Net.Email
+
+  def contactEmailLink = Html(s"""<a href="mailto:$contactEmail">$contactEmail</a>""")
 
   def globalCasualOnlyMessage = Env.setup.CasualOnly option {
     "Due to temporary maintenance on the servers, only casual games are available."
@@ -63,9 +70,17 @@ object Environment
   val closingBrace = "}"
 
   object icon {
-    val dev = Html("&#xe000;")
-    val donator = Html("&#xe001;")
+    // val dev = Html("&#xe000;")
     val mod = Html("&#xe002;")
+  }
+
+  val nonPuzzlePerfTypeNameIcons = {
+    import play.api.libs.json.Json
+    Html {
+      Json stringify {
+        Json toJson lila.rating.PerfType.nonPuzzleIconByName
+      }
+    }
   }
 
   def NotForKids[Html](f: => Html)(implicit ctx: lila.api.Context) =

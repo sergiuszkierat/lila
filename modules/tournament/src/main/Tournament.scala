@@ -8,7 +8,7 @@ import lila.game.{ PovRef, PerfPicker }
 import lila.user.User
 
 case class Tournament(
-    id: String,
+    id: Tournament.ID,
     name: String,
     status: Status,
     system: System,
@@ -18,20 +18,26 @@ case class Tournament(
     position: StartingPosition,
     mode: Mode,
     `private`: Boolean,
+    password: Option[String] = None,
+    conditions: Condition.All,
     schedule: Option[Schedule],
     nbPlayers: Int,
     createdAt: DateTime,
     createdBy: String,
     startsAt: DateTime,
-    winnerId: Option[String] = None) {
+    winnerId: Option[String] = None,
+    featuredId: Option[String] = None,
+    spotlight: Option[Spotlight] = None) {
 
   def isCreated = status == Status.Created
   def isStarted = status == Status.Started
   def isFinished = status == Status.Finished
 
+  def isPrivate = `private`
+
   def fullName =
-    if (isMarathon) name
-    else if (scheduled && clock.hasIncrement) s"$name Inc $system"
+    if (isMarathonOrUnique) name
+    else if (isScheduled && clock.hasIncrement) s"$name Inc $system"
     else s"$name $system"
 
   def isMarathon = schedule.map(_.freq) exists {
@@ -39,7 +45,11 @@ case class Tournament(
     case _ => false
   }
 
-  def scheduled = schedule.isDefined
+  def isUnique = schedule.map(_.freq) contains Schedule.Freq.Unique
+
+  def isMarathonOrUnique = isMarathon || isUnique
+
+  def isScheduled = schedule.isDefined
 
   def finishesAt = startsAt plusMinutes minutes
 
@@ -49,11 +59,17 @@ case class Tournament(
 
   def secondsToFinish = (finishesAt.getSeconds - nowSeconds).toInt max 0
 
-  def isAlmostFinished = secondsToFinish < math.max(30, math.min(clock.limit / 2, 120))
+  def pairingsClosed = secondsToFinish < math.max(30, math.min(clock.limit / 2, 120))
 
-  def isStillWorthEntering = isMarathon || secondsToFinish > minutes * 60 / 2
+  def isStillWorthEntering = isMarathonOrUnique || {
+    secondsToFinish > (minutes * 60 / 3).atMost(20 * 60)
+  }
 
   def isRecentlyFinished = isFinished && (nowSeconds - finishesAt.getSeconds) < 30 * 60
+
+  def isRecentlyStarted = isStarted && (nowSeconds - startsAt.getSeconds) < 15
+
+  def isNowOrSoon = startsAt.isBefore(DateTime.now plusMinutes 15) && !isFinished
 
   def duration = new Duration(minutes * 60 * 1000)
 
@@ -78,16 +94,22 @@ case class Tournament(
   def berserkable = system.berserkable && clock.chessClock.berserkable
 
   def clockStatus = secondsToFinish |> { s => "%02d:%02d".format(s / 60, s % 60) }
+
+  def schedulePair = schedule map { this -> _ }
+
+  override def toString = s"$id $startsAt $fullName $minutes minutes, $clock"
 }
 
 case class EnterableTournaments(tours: List[Tournament], scheduled: List[Tournament])
 
 object Tournament {
 
+  type ID = String
+
   val minPlayers = 2
 
   def make(
-    createdBy: User,
+    createdByUserId: String,
     clock: TournamentClock,
     minutes: Int,
     system: System,
@@ -95,6 +117,7 @@ object Tournament {
     position: StartingPosition,
     mode: Mode,
     `private`: Boolean,
+    password: Option[String],
     waitMinutes: Int) = Tournament(
     id = Random nextStringUppercase 8,
     name = if (position.initial) GreatPlayer.randomName else position.shortName,
@@ -102,13 +125,15 @@ object Tournament {
     system = system,
     clock = clock,
     minutes = minutes,
-    createdBy = createdBy.id,
+    createdBy = createdByUserId,
     createdAt = DateTime.now,
     nbPlayers = 0,
     variant = variant,
     position = position,
     mode = mode,
     `private` = `private`,
+    password = password,
+    conditions = Condition.All.empty,
     schedule = None,
     startsAt = DateTime.now plusMinutes waitMinutes)
 
@@ -126,6 +151,7 @@ object Tournament {
     position = sched.position,
     mode = Mode.Rated,
     `private` = false,
+    conditions = sched.conditions,
     schedule = Some(sched),
     startsAt = sched.at)
 }

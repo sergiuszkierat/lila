@@ -10,7 +10,38 @@ import lila.common.Form._
 
 final class DataForm {
 
-  val clockTimes: Seq[Double] = Seq(1 / 2d, 3 / 4d, 3 / 2d) ++ (0d to 7d by 1d)
+  import DataForm._
+
+  lazy val create = Form(mapping(
+    "clockTime" -> numberInDouble(clockTimePrivateChoices),
+    "clockIncrement" -> numberIn(clockIncrementPrivateChoices),
+    "minutes" -> numberIn(minutePrivateChoices),
+    "waitMinutes" -> numberIn(waitMinuteChoices),
+    "variant" -> number.verifying(validVariantIds contains _),
+    "position" -> nonEmptyText.verifying(positions contains _),
+    "mode" -> optional(number.verifying(Mode.all map (_.id) contains _)),
+    "private" -> optional(text.verifying("on" == _)),
+    "password" -> optional(nonEmptyText)
+  )(TournamentSetup.apply)(TournamentSetup.unapply)
+    .verifying("Invalid clock", _.validClock)
+    .verifying("Increase tournament duration, or decrease game clock", _.validTiming)
+  ) fill TournamentSetup(
+    clockTime = clockTimeDefault,
+    clockIncrement = clockIncrementDefault,
+    minutes = minuteDefault,
+    waitMinutes = waitMinuteDefault,
+    variant = chess.variant.Standard.id,
+    position = StartingPosition.initial.eco,
+    `private` = None,
+    password = None,
+    mode = Mode.Rated.id.some)
+}
+
+object DataForm {
+
+  import chess.variant._
+
+  val clockTimes: Seq[Double] = Seq(0d, 1 / 2d, 3 / 4d, 1d, 3 / 2d) ++ (2d to 7d by 1d)
   val clockTimesPrivate: Seq[Double] = clockTimes ++ (10d to 30d by 5d) ++ (40d to 60d by 10d)
   val clockTimeDefault = 2d
   private def formatLimit(l: Double) =
@@ -28,13 +59,13 @@ final class DataForm {
 
   val minutes = (20 to 60 by 5) ++ (70 to 120 by 10)
   val minutesPrivate = minutes ++ (150 to 360 by 30)
-  val minuteDefault = 40
+  val minuteDefault = 45
   val minuteChoices = options(minutes, "%d minute{s}")
   val minutePrivateChoices = options(minutesPrivate, "%d minute{s}")
 
-  val waitMinutes = Seq(1, 2, 5, 10, 15, 20, 30, 45, 60, 90, 120)
+  val waitMinutes = Seq(1, 2, 3, 5, 10, 15, 20, 30, 45, 60)
   val waitMinuteChoices = options(waitMinutes, "%d minute{s}")
-  val waitMinuteDefault = 2
+  val waitMinuteDefault = 5
 
   val positions = StartingPosition.allWithInitial.map(_.eco)
   val positionChoices = StartingPosition.allWithInitial.map { p =>
@@ -42,28 +73,9 @@ final class DataForm {
   }
   val positionDefault = StartingPosition.initial.eco
 
-  lazy val create = Form(mapping(
-    "clockTime" -> numberInDouble(clockTimePrivateChoices),
-    "clockIncrement" -> numberIn(clockIncrementPrivateChoices),
-    "minutes" -> numberIn(minutePrivateChoices),
-    "waitMinutes" -> numberIn(waitMinuteChoices),
-    "variant" -> number.verifying(Set(chess.variant.Standard.id, chess.variant.Chess960.id, chess.variant.KingOfTheHill.id,
-      chess.variant.ThreeCheck.id, chess.variant.Antichess.id, chess.variant.Atomic.id, chess.variant.Horde.id) contains _),
-    "position" -> nonEmptyText.verifying(positions contains _),
-    "mode" -> optional(number.verifying(Mode.all map (_.id) contains _)),
-    "private" -> optional(text.verifying("on" == _))
-  )(TournamentSetup.apply)(TournamentSetup.unapply)
-    .verifying("Invalid clock", _.validClock)
-    .verifying("Increase tournament duration, or decrease game clock", _.validTiming)
-  ) fill TournamentSetup(
-    clockTime = clockTimeDefault,
-    clockIncrement = clockIncrementDefault,
-    minutes = minuteDefault,
-    waitMinutes = waitMinuteDefault,
-    variant = chess.variant.Standard.id,
-    position = StartingPosition.initial.eco,
-    `private` = None,
-    mode = Mode.Rated.id.some)
+  val validVariants = List(Standard, Chess960, KingOfTheHill, ThreeCheck, Antichess, Atomic, Horde, RacingKings, Crazyhouse)
+
+  val validVariantIds = validVariants.map(_.id).toSet
 }
 
 private[tournament] case class TournamentSetup(
@@ -74,11 +86,14 @@ private[tournament] case class TournamentSetup(
     variant: Int,
     position: String,
     mode: Option[Int],
-    `private`: Option[String]) {
+    `private`: Option[String],
+    password: Option[String]) {
 
   def validClock = (clockTime + clockIncrement) > 0
 
   def validTiming = (minutes * 60) >= (3 * estimatedGameDuration)
+
+  def isPrivate = `private`.isDefined
 
   private def estimatedGameDuration = 60 * clockTime + 30 * clockIncrement
 }

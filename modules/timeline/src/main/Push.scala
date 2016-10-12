@@ -35,14 +35,15 @@ private[timeline] final class Push(
           (users foreach { u =>
             lobbySocket ! ReloadTimeline(u)
           })
+        lila.mon.timeline.notification(users.size)
       }
   }
 
   private def propagate(propagations: List[Propagation]): Fu[List[String]] =
     propagations.map {
       case Users(ids)    => fuccess(ids)
-      case Followers(id) => getFollowerIds(id) map (_.toList)
-      case Friends(id)   => getFriendIds(id) map (_.toList)
+      case Followers(id) => getFollowerIds(id)
+      case Friends(id)   => getFriendIds(id)
       case StaffFriends(id) => getFriendIds(id) flatMap UserRepo.byIds map {
         _ filter Granter(_.StaffForum) map (_.id)
       }
@@ -54,15 +55,13 @@ private[timeline] final class Push(
       }
     }
 
-  private def makeEntry(users: List[String], data: Atom): Fu[Entry] =
-    Entry.make(users, data).fold(
-      fufail[Entry]("[timeline] invalid entry data " + data)
-    ) { entry =>
-        entryRepo.findRecent(entry.typ, DateTime.now minusMinutes 50) flatMap { entries =>
-          entries.exists(_ similarTo entry) fold (
-            fufail[Entry]("[timeline] a similar entry already exists"),
-            entryRepo insert entry inject entry
-          )
-        }
-      }
+  private def makeEntry(users: List[String], data: Atom): Fu[Entry] = {
+    val entry = Entry.make(data)
+    entryRepo.findRecent(entry.typ, DateTime.now minusMinutes 50) flatMap { entries =>
+      entries.exists(_ similarTo entry) fold (
+        fufail[Entry]("[timeline] a similar entry already exists"),
+        entryRepo insert Entry.ForUsers(entry, users) inject entry
+      )
+    }
+  }
 }

@@ -1,10 +1,9 @@
 package lila.app
 package templating
 
-import scala.util.Random.shuffle
-
 import controllers._
 import play.api.i18n.{ Lang, Messages }
+import play.api.libs.json.JsObject
 import play.api.mvc.{ RequestHeader, Call }
 import play.twirl.api.Html
 
@@ -26,8 +25,14 @@ trait I18nHelper {
   def transKey(key: String, args: Seq[Any] = Nil)(implicit lang: Lang): String =
     i18nEnv.translator.transTo(key, args)(lang)
 
-  def i18nJsObject(keys: I18nKey*)(implicit lang: Lang) =
+  def i18nJsObjectMessage(keys: Seq[I18nKey])(implicit lang: Lang): JsObject =
+    i18nEnv.jsDump.keysToMessageObject(keys, lang)
+
+  def i18nJsObject(keys: I18nKey*)(implicit lang: Lang): JsObject =
     i18nEnv.jsDump.keysToObject(keys, lang)
+
+  def i18nOptionJsObject(keys: Option[I18nKey]*)(implicit lang: Lang): JsObject =
+    i18nEnv.jsDump.keysToObject(keys.flatten, lang)
 
   def langName(lang: Lang): Option[String] = langName(lang.language)
   def langName(lang: String): Option[String] = LangList name lang
@@ -35,25 +40,14 @@ trait I18nHelper {
   def shortLangName(lang: Lang): Option[String] = shortLangName(lang.language)
   def shortLangName(lang: String): Option[String] = langName(lang) map (_ takeWhile (','!=))
 
-  def translationCall(implicit ctx: UserContext) =
-    if (ctx.isAnon || ctx.req.cookies.get(hideCallsCookieName).isDefined) None
-    else (~ctx.me.map(_.count.game) >= i18nEnv.CallThreshold) ?? shuffle(
-      (ctx.req.acceptLanguages map transInfos.get).flatten filter (_.nonComplete)
-    ).headOption
+  def translationCall(implicit ctx: UserContext) = i18nEnv.call(ctx.me, ctx.req)
 
   def transValidationPattern(trans: String) =
     (trans contains "%s") option ".*%s.*"
 
-  def langFallbackLinks(implicit ctx: UserContext) = Html {
-    pool.preferredNames(ctx.req, 3).map {
-      case (code, name) => """<a class="lang_fallback" lang="%s" href="%s">%s</a>""".format(
-        code, langUrl(Lang(code))(I18nDomain(ctx.req.domain)), name)
-    }.mkString("").replace(uriPlaceholder, ctx.req.uri)
-  }
-
   private lazy val langAnnotationsBase: String =
     pool.names.keySet diff Set("fp", "kb", "le", "tp", "pi", "io") map { code =>
-      s"""<link rel="alternate" hreflang="$code" href="http://$code.lichess.org%"/>"""
+      s"""<link rel="alternate" hreflang="$code" href="//$code.lichess.org%"/>"""
     } mkString ""
 
   def langAnnotations(implicit ctx: UserContext) = Html {

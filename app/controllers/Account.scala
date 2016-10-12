@@ -5,9 +5,8 @@ import play.api.mvc._, Results._
 import lila.api.Context
 import lila.app._
 import lila.common.LilaCookie
-import lila.db.api.$find
+import lila.common.PimpedJson._
 import lila.security.Permission
-import lila.user.tube.userTube
 import lila.user.{ User => UserModel, UserRepo }
 import views._
 
@@ -32,19 +31,35 @@ object Account extends LilaController {
       }
   }
 
-  def info = Auth { implicit ctx =>
-    me =>
-      negotiate(
-        html = notFound,
-        api = _ => lila.game.GameRepo urgentGames me map { povs =>
-          Env.current.bus.publish(lila.user.User.Active(me), 'userActive)
-          Ok {
-            import play.api.libs.json._
-            Env.user.jsonView(me, extended = true) ++ Json.obj(
-              "nowPlaying" -> JsArray(povs take 20 map Env.api.lobbyApi.nowPlaying))
-          }
-        }
-      )
+  def info = Open { implicit ctx =>
+    negotiate(
+      html = notFound,
+      api = _ => ctx.me match {
+        case None => fuccess(unauthorizedApiResult)
+        case Some(me) =>
+          relationEnv.api.countFollowers(me.id) zip
+            relationEnv.api.countFollowing(me.id) zip
+            Env.pref.api.getPref(me) zip
+            lila.game.GameRepo.urgentGames(me) zip
+            Env.challenge.api.countInFor(me.id) map {
+              case ((((nbFollowers, nbFollowing), prefs), povs), nbChallenges) =>
+                Env.current.bus.publish(lila.user.User.Active(me), 'userActive)
+                Ok {
+                  import play.api.libs.json._
+                  import lila.pref.JsonView._
+                  Env.user.jsonView(me) ++ Json.obj(
+                    "prefs" -> prefs,
+                    "nowPlaying" -> JsArray(povs take 20 map Env.api.lobbyApi.nowPlaying),
+                    "nbFollowing" -> nbFollowing,
+                    "nbFollowers" -> nbFollowers,
+                    "kid" -> me.kid.option(true),
+                    "troll" -> me.troll.option(true),
+                    "nbChallenges" -> nbChallenges
+                  ).noNull
+                }
+            }
+      }
+    ) map ensureSessionId(ctx.req)
   }
 
   def passwd = Auth { implicit ctx =>
@@ -59,7 +74,7 @@ object Account extends LilaController {
         fuccess(html.account.passwd(me, err))
       } { data =>
         for {
-          ok ← UserRepo.checkPassword(me.id, data.oldPasswd)
+          ok ← UserRepo.authenticateById(me.id, data.oldPasswd).map(_.isDefined)
           _ ← ok ?? UserRepo.passwd(me.id, data.newPasswd1)
         } yield {
           val content = html.account.passwd(me, forms.passwd.fill(data), ok.some)
@@ -91,7 +106,7 @@ object Account extends LilaController {
           } { data =>
             val email = Env.security.emailAddress.validate(data.email) err s"Invalid email ${data.email}"
             for {
-              ok ← UserRepo.checkPassword(me.id, data.passwd)
+              ok ← UserRepo.authenticateById(me.id, data.passwd).map(_.isDefined)
               _ ← ok ?? UserRepo.email(me.id, email)
               form <- emailForm(me)
             } yield {
@@ -113,18 +128,23 @@ object Account extends LilaController {
       FormFuResult(Env.security.forms.closeAccount) { err =>
         fuccess(html.account.close(me, err))
       } { password =>
-        UserRepo.checkPassword(me.id, password) flatMap {
+        UserRepo.authenticateById(me.id, password).map(_.isDefined) flatMap {
           case false => BadRequest(html.account.close(me, Env.security.forms.closeAccount)).fuccess
-          case true =>
-            (UserRepo disable me) >>
-              relationEnv.api.unfollowAll(me.id) >>
-              Env.team.api.quitAll(me.id) >>
-              (Env.security disconnect me.id) inject {
-                Redirect(routes.User show me.username) withCookies LilaCookie.newSession
-              }
+          case true => doClose(me) inject {
+            Redirect(routes.User show me.username) withCookies LilaCookie.newSession
+          }
         }
       }
   }
+
+  private[controllers] def doClose(user: UserModel) =
+    (UserRepo disable user) >>-
+      env.onlineUserIdMemo.remove(user.id) >>
+      relationEnv.api.unfollowAll(user.id) >>
+      Env.team.api.quitAll(user.id) >>-
+      Env.challenge.api.removeByUserId(user.id) >>-
+      Env.tournament.api.withdrawAll(user) >>
+      (Env.security disconnect user.id)
 
   def kid = Auth { implicit ctx =>
     me =>

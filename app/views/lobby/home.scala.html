@@ -1,4 +1,4 @@
-@(data: play.api.libs.json.JsObject, userTimeline: List[lila.timeline.Entry], forumRecent: List[lila.forum.MiniForumPost], tours: List[Tournament], simuls: List[lila.simul.Simul], featured: Option[Game], leaderboard: List[(User, lila.rating.PerfType)], tournamentWinners: List[lila.tournament.Winner], puzzle: Option[lila.puzzle.DailyPuzzle], streams: List[lila.tv.StreamOnAir], lastPost: List[lila.blog.MiniPost], playban: Option[lila.playban.TempBan], currentGame: Option[lila.app.mashup.Preload.CurrentGame], nbRounds: Int)(implicit ctx: Context)
+@(data: play.api.libs.json.JsObject, userTimeline: List[lila.timeline.Entry], forumRecent: List[lila.forum.MiniForumPost], tours: List[Tournament], events: List[lila.event.Event], simuls: List[lila.simul.Simul], featured: Option[Game], leaderboard: List[User.LightPerf], tournamentWinners: List[lila.tournament.Winner], puzzle: Option[lila.puzzle.DailyPuzzle], streams: List[lila.tv.StreamOnAir], lastPost: List[lila.blog.MiniPost], playban: Option[lila.playban.TempBan], currentGame: Option[lila.app.mashup.Preload.CurrentGame], nbRounds: Int)(implicit ctx: Context)
 
 @underchat = {
 <div id="featured_game">
@@ -13,25 +13,21 @@
 @NotForKids {
 <div id="streams_on_air">@tv.streamsOnAir(streams)</div>
 }
-@tours.find(_.isMarathon).map { marathon =>
-<a id="marathon_promo" href="@routes.Tournament.show(marathon.id)" data-icon="\">
-  <span class="name">@marathon.fullName</span>
-  <span class="more">
-    @trans.nbConnectedPlayers(marathon.nbPlayers.localize) •
-    @if(marathon.isStarted) {
-    finishes@momentFromNow(marathon.finishesAt)
-    } else {
-    starts@momentFromNow(marathon.startsAt)
-    }
-  </span>
-</a>
+@events.map { e =>
+@event.homepageSpotlight(e)
+}
+@lila.tournament.Spotlight.select(tours, ctx.me).map { tour =>
+@tournament.homepageSpotlight(tour)
+}
+@simuls.find(_.spotlightable).take(2).map { s =>
+@simul.homepageSpotlight(s)
 }
 @ctx.me.map { u =>
 <div id="timeline" data-href="@routes.Timeline.home">
   @timeline.entries(userTimeline)
   <div class="links">
     @if(userTimeline.size >= 8) {
-    <a class="more" href="@routes.Timeline.more">@trans.more() »</a>
+    <a class="more" href="@routes.Timeline.home">@trans.more() »</a>
     }
   </div>
 </div>
@@ -40,13 +36,12 @@
 
 @baseline = {
 <a id="nb_connected_players" href="@routes.User.list">
-  @trans.nbConnectedPlayers("<strong>?</strong>")
+  @trans.nbConnectedPlayers("<strong>-,---</strong>")
 </a>
-<br />
 <a id="nb_games_in_play" href="@routes.Tv.games">
   @trans.nbGamesInPlay(s"<span>${nbRounds}</span>")
 </a>
-@if(lila.common.HTTPRequest.isMobile(ctx.req)) {
+@if(ctx.isMobileBrowser) {
 @if(lila.common.HTTPRequest.isAndroid(ctx.req)) {
 @mobile.googlePlayButton()
 } else {
@@ -62,6 +57,7 @@
 @embedJs {
 lichess = lichess || {};
 lichess.lobby = {
+perfIcons: @nonPuzzlePerfTypeNameIcons,
 data: @Html(J.stringify(data)),
 playban: @playban.fold(Html("null")){ pb =>
 @Html(J.stringify(J.obj("minutes" -> pb.mins, "remainingSeconds" -> (pb.remainingSeconds + 3))))
@@ -93,9 +89,9 @@ description = trans.freeOnlineChessGamePlayChessNowInACleanInterfaceNoRegistrati
   @translationCall.map(i18n.callBox(_))
 </div>
 <div class="lobby_and_ground@if(playban.isDefined){ playban}@if(currentGame.isDefined){ current_game}">
-  @playban.map(playbanInfo(_))
   @currentGame.map(currentGameInfo(_))
   <div id="hooks_wrap"></div>
+  @playban.map(playbanInfo(_))
   <div id="start_buttons" class="lichess_ground">
     <a class="fat button config_hook hint--bottom@if(playban.isDefined || currentGame.isDefined){ disabled}" href="@routes.Setup.hookForm" onclick="return false">@trans.createAGame()</a>
     <a class="fat button config_friend hint--bottom@if(currentGame.isDefined){ disabled}" href="@routes.Setup.friendForm(none)" onclick="return false">@trans.playWithAFriend()</a>
@@ -113,7 +109,7 @@ description = trans.freeOnlineChessGamePlayChessNowInACleanInterfaceNoRegistrati
 }
 <div class="undertable">
   <div class="undertable_top">
-    <a class="more hint--bottom" data-hint="@trans.seeAllTournaments()" href="@routes.Tournament.home">@trans.more() »</a>
+    <a class="more hint--bottom" data-hint="@trans.seeAllTournaments()" href="@routes.Tournament.home()">@trans.more() »</a>
     <span class="title text" data-icon="g">@trans.openTournaments()</span>
   </div>
   <div id="enterable_tournaments" class="enterable_list undertable_inner scroll-shadow-hard">
@@ -129,31 +125,31 @@ description = trans.freeOnlineChessGamePlayChessNowInACleanInterfaceNoRegistrati
     @simul.allCreated(simuls)
   </div>
 </div>
-<div class="clearfix">
-  <div class="leaderboard undertable half">
+<div class="leaderboards undertable">
+  <div class="leaderboard">
     <div class="user_top">
       <div class="undertable_top">
         <a class="more hint--bottom" data-hint="@trans.players()" href="@routes.User.list()">@trans.more() »</a>
-        <span class="title" data-icon="C"> @trans.todaysLeaders()</span>
+        <span class="title text" data-icon="C">@trans.leaderboard()</span>
       </div>
       <div class="undertable_inner scroll-shadow-hard">
         <table>
           <tbody>
-            @leaderboard.map {
-            case (u, pt) => {
+            @leaderboard.map { l =>
             <tr>
-              <td>@userLink(u)</td>
-              <td>@showPerfRating(u, pt, klass = "title")</td>
-              <td>@showProgress(u.perfs(pt).progress, withTitle = false)</td>
+              <td>@lightUserLink(l.user)</td>
+              @lila.rating.PerfType(l.perfKey).map { pt =>
+              <td data-icon="@pt.iconChar">@l.rating</td>
+              }
+              <td>@showProgress(l.progress, withTitle = false)</td>
             </tr>
-            }
             }
           </tbody>
         </table>
       </div>
     </div>
   </div>
-  <div class="leaderboard undertable half">
+  <div class="leaderboard">
     <div class="user_top">
       <div class="undertable_top">
         <a class="more hint--bottom" data-hint="@trans.players()" href="@routes.User.list()">@trans.more() »</a>
@@ -175,7 +171,7 @@ description = trans.freeOnlineChessGamePlayChessNowInACleanInterfaceNoRegistrati
   </div>
 </div>
 @NotForKids {
-<div class="new_posts undertable nomargin" data-url="@routes.ForumPost.recent">
+<div class="new_posts undertable" data-url="@routes.ForumPost.recent">
   <div class="undertable_top">
     <a class="more hint--bottom" data-hint="@trans.forum()" href="@routes.ForumCateg.index()">@trans.more() »</a>
     <span class="title" data-icon="d"> @trans.latestForumPosts()</span>
@@ -198,7 +194,7 @@ description = trans.freeOnlineChessGamePlayChessNowInACleanInterfaceNoRegistrati
     <div class="post">
       @defining(routes.Blog.show(post.id, post.slug)) { url =>
       <a class="image" href="@url">
-        <img src="@post.image" />
+        <img src="@post.image" width="60" height="60" />
       </a>
       <div class="text">
         @semanticDate(post.date)
@@ -211,4 +207,16 @@ description = trans.freeOnlineChessGamePlayChessNowInACleanInterfaceNoRegistrati
   </div>
 </div>
 }
+<div class="donation undertable">
+  <a href="@routes.Plan.index">
+    <i data-icon="@patronIconChar"></i>
+    <strong>Lichess Patron</strong>
+    <span>Directly support lichess</span>
+  </a>
+  <a href="@routes.Page.swag">
+    <i data-icon=""></i>
+    <strong>Swag Store</strong>
+    <span>Play chess in style</span>
+  </a>
+</div>
 }

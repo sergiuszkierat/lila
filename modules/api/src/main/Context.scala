@@ -3,20 +3,23 @@ package lila.api
 import play.api.libs.json.{ JsObject, JsArray }
 import play.api.mvc.{ Request, RequestHeader }
 
+import lila.common.HTTPRequest
+import lila.hub.actorApi.relation.OnlineFriends
 import lila.pref.Pref
 import lila.user.{ UserContext, HeaderUserContext, BodyUserContext }
 
 case class PageData(
-  friends: List[lila.common.LightUser],
+  onlineFriends: OnlineFriends,
   teamNbRequests: Int,
-  nbMessages: Int,
+  nbChallenges: Int,
+  nbNotifications: Int,
   pref: Pref,
   blindMode: Boolean,
   hasFingerprint: Boolean)
 
 object PageData {
 
-  val default = PageData(Nil, 0, 0, Pref.default, false, false)
+  val default = PageData(OnlineFriends.empty, 0, 0, 0, Pref.default, false, false)
 
   def anon(blindMode: Boolean) = default.copy(blindMode = blindMode)
 }
@@ -26,9 +29,11 @@ sealed trait Context extends lila.user.UserContextWrapper {
   val userContext: UserContext
   val pageData: PageData
 
-  def friends = pageData.friends
+  def onlineFriends = pageData.onlineFriends
+
   def teamNbRequests = pageData.teamNbRequests
-  def nbMessages = pageData.nbMessages
+  def nbChallenges = pageData.nbChallenges
+  def nbNotifications = pageData.nbNotifications
   def pref = pageData.pref
   def blindMode = pageData.blindMode
 
@@ -55,12 +60,16 @@ sealed trait Context extends lila.user.UserContextWrapper {
 
   def bgImg = ctxPref("bgImg") | Pref.defaultBgImg
 
-  def mobileApiVersion = Mobile.Api requestVersion req
+  lazy val mobileApiVersion = Mobile.Api requestVersion req
+
+  def isMobileApi = mobileApiVersion.isDefined
+
+  lazy val isMobileBrowser = HTTPRequest isMobile req
 
   def requiresFingerprint = isAuth && !pageData.hasFingerprint
 
   private def ctxPref(name: String): Option[String] =
-    userContext.req.session get name orElse { pref get name }
+    req.session get name orElse { pref get name }
 }
 
 sealed abstract class BaseContext(

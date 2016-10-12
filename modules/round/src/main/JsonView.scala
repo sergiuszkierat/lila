@@ -3,9 +3,12 @@ package lila.round
 import scala.concurrent.duration._
 import scala.math
 
+import org.apache.commons.lang3.StringEscapeUtils.escapeHtml4
 import play.api.libs.json._
 
+import lila.common.ApiVersion
 import lila.common.PimpedJson._
+import lila.game.JsonView._
 import lila.game.{ Pov, Game, PerfPicker, Source, GameRepo, CorrespondenceClock }
 import lila.pref.Pref
 import lila.user.{ User, UserRepo }
@@ -16,11 +19,11 @@ import chess.{ Color, Clock }
 import actorApi.SocketStatus
 
 final class JsonView(
-    chatApi: lila.chat.ChatApi,
     noteApi: NoteApi,
     userJsonView: lila.user.JsonView,
     getSocketStatus: String => Fu[SocketStatus],
     canTakeback: Game => Fu[Boolean],
+    divider: lila.game.Divider,
     baseAnimationDuration: Duration,
     moretimeSeconds: Int) {
 
@@ -32,15 +35,14 @@ final class JsonView(
   def playerJson(
     pov: Pov,
     pref: Pref,
-    apiVersion: Int,
+    apiVersion: ApiVersion,
     playerUser: Option[User],
     initialFen: Option[String],
     withBlurs: Boolean): Fu[JsObject] =
     getSocketStatus(pov.game.id) zip
       (pov.opponent.userId ?? UserRepo.byId) zip
-      canTakeback(pov.game) zip
-      getPlayerChat(pov.game, playerUser) map {
-        case (((socket, opponentUser), takebackable), chat) =>
+      canTakeback(pov.game) map {
+        case ((socket, opponentUser), takebackable) =>
           import pov._
           Json.obj(
             "game" -> gameJson(game, initialFen),
@@ -51,7 +53,7 @@ final class JsonView(
               "color" -> player.color.name,
               "version" -> socket.version,
               "spectator" -> false,
-              "user" -> playerUser.map { userJsonView(_, true) },
+              "user" -> playerUser.map { userJsonView(_, game.perfType) },
               "rating" -> player.rating,
               "ratingDiff" -> player.ratingDiff,
               "provisional" -> player.provisional.option(true),
@@ -60,13 +62,14 @@ final class JsonView(
               "proposingTakeback" -> player.isProposingTakeback.option(true),
               "onGame" -> (player.isAi || socket.onGame(player.color)),
               "checks" -> checkCount(game, player.color),
+              "berserk" -> player.berserk.option(true),
               "hold" -> (withBlurs option hold(player)),
               "blurs" -> (withBlurs option blurs(game, player))
             ).noNull,
             "opponent" -> Json.obj(
               "color" -> opponent.color.name,
               "ai" -> opponent.aiLevel,
-              "user" -> opponentUser.map { userJsonView(_, true) },
+              "user" -> opponentUser.map { userJsonView(_, game.perfType) },
               "rating" -> opponent.rating,
               "ratingDiff" -> opponent.ratingDiff,
               "provisional" -> opponent.provisional.option(true),
@@ -76,6 +79,7 @@ final class JsonView(
               "onGame" -> (opponent.isAi || socket.onGame(opponent.color)),
               "isGone" -> (!opponent.isAi && socket.isGone(opponent.color)),
               "checks" -> checkCount(game, opponent.color),
+              "berserk" -> opponent.berserk.option(true),
               "hold" -> (withBlurs option hold(opponent)),
               "blurs" -> (withBlurs option blurs(game, opponent))
             ).noNull,
@@ -106,41 +110,35 @@ final class JsonView(
                   case _ => false
                 }
               },
-              "confirmResign" -> (pref.confirmResign == Pref.ConfirmResign.YES).option(true)),
-            "chat" -> chat.map { c =>
-              JsArray(c.lines map {
-                case lila.chat.UserLine(username, text, _) => Json.obj(
-                  "u" -> username,
-                  "t" -> text)
-                case lila.chat.PlayerLine(color, text) => Json.obj(
-                  "c" -> color.name,
-                  "t" -> text)
-              })
-            },
+              "confirmResign" -> (pref.confirmResign == Pref.ConfirmResign.YES).option(true),
+              "moveEvent" -> pref.moveEvent,
+              "keyboardMove" -> (pref.keyboardMove == Pref.KeyboardMove.YES).option(true)),
             "possibleMoves" -> possibleMoves(pov),
-            "takebackable" -> takebackable).noNull
+            "possibleDrops" -> possibleDrops(pov),
+            "takebackable" -> takebackable,
+            "crazyhouse" -> pov.game.crazyData).noNull
       }
 
   def watcherJson(
     pov: Pov,
     pref: Pref,
-    apiVersion: Int,
+    apiVersion: ApiVersion,
     user: Option[User],
     tv: Option[OnTv],
     withBlurs: Boolean,
     initialFen: Option[String] = None,
-    withMoveTimes: Boolean) =
+    withMoveTimes: Boolean,
+    withDivision: Boolean) =
     getSocketStatus(pov.game.id) zip
-      getWatcherChat(pov.game, user) zip
       UserRepo.pair(pov.player.userId, pov.opponent.userId) map {
-        case ((socket, chat), (playerUser, opponentUser)) =>
+        case (socket, (playerUser, opponentUser)) =>
           import pov._
           Json.obj(
             "game" -> {
               gameJson(game, initialFen) ++ Json.obj(
                 "moveTimes" -> withMoveTimes.option(game.moveTimes),
+                "division" -> withDivision.option(divider(game, initialFen)),
                 "opening" -> game.opening,
-                "joinable" -> game.joinable,
                 "importedBy" -> game.pgnImport.flatMap(_.user)).noNull
             },
             "clock" -> game.clock.map(clockJson),
@@ -150,8 +148,8 @@ final class JsonView(
               "version" -> socket.version,
               "spectator" -> true,
               "ai" -> player.aiLevel,
-              "user" -> playerUser.map { userJsonView(_, true) },
-              "name" -> player.name,
+              "user" -> playerUser.map { userJsonView(_, game.perfType) },
+              "name" -> player.name.map(escapeHtml4),
               "rating" -> player.rating,
               "ratingDiff" -> player.ratingDiff,
               "provisional" -> player.provisional.option(true),
@@ -164,8 +162,8 @@ final class JsonView(
             "opponent" -> Json.obj(
               "color" -> opponent.color.name,
               "ai" -> opponent.aiLevel,
-              "user" -> opponentUser.map { userJsonView(_, true) },
-              "name" -> opponent.name,
+              "user" -> opponentUser.map { userJsonView(_, game.perfType) },
+              "name" -> opponent.name.map(escapeHtml4),
               "rating" -> opponent.rating,
               "ratingDiff" -> opponent.ratingDiff,
               "provisional" -> opponent.provisional.option(true),
@@ -191,16 +189,14 @@ final class JsonView(
             ),
             "tv" -> tv.map { onTv =>
               Json.obj("channel" -> onTv.channel, "flip" -> onTv.flip)
-            },
-            "chat" -> chat.map { c =>
-              JsArray(c.lines map {
-                case lila.chat.UserLine(username, text, _) => Json.obj(
-                  "u" -> username,
-                  "t" -> text)
-              })
             }
           ).noNull
       }
+
+  private implicit val userLineWrites = OWrites[lila.chat.UserLine] { l =>
+    val j = Json.obj("u" -> l.username, "t" -> l.text)
+    if (l.deleted) j + ("d" -> JsBoolean(true)) else j
+  }
 
   def userAnalysisJson(pov: Pov, pref: Pref, orientation: chess.Color, owner: Boolean) =
     (pov.game.pgnMoves.nonEmpty ?? GameRepo.initialFen(pov.game)) map { initialFen =>
@@ -224,10 +220,12 @@ final class JsonView(
           "color" -> color.name
         ),
         "opponent" -> Json.obj(
-          "color" -> opponent.color.name
+          "color" -> opponent.color.name,
+          "ai" -> opponent.aiLevel
         ),
         "orientation" -> orientation.name,
         "pref" -> Json.obj(
+          "blindfold" -> pref.isBlindfold,
           "animationDuration" -> animationDuration(pov, pref),
           "highlight" -> pref.highlight,
           "destination" -> pref.destination,
@@ -256,7 +254,8 @@ final class JsonView(
     "source" -> game.source.map(sourceJson),
     "status" -> game.status,
     "boosted" -> game.boosted.option(true),
-    "tournamentId" -> game.tournamentId).noNull
+    "tournamentId" -> game.tournamentId,
+    "createdAt" -> game.createdAt).noNull
 
   private def blurs(game: Game, player: lila.game.Player) = {
     val percent = game.playerBlurPercent(player.color)
@@ -273,16 +272,6 @@ final class JsonView(
       "sd" -> h.sd)
   }
 
-  private def getPlayerChat(game: Game, forUser: Option[User]): Fu[Option[lila.chat.MixedChat]] =
-    game.hasChat optionFu {
-      chatApi.playerChat find game.id map (_ forUser forUser)
-    }
-
-  private def getWatcherChat(game: Game, forUser: Option[User]): Fu[Option[lila.chat.UserChat]] =
-    forUser ?? { user =>
-      chatApi.userChat find s"${game.id}/w" map (_ forUser user.some) map (_.some)
-    }
-
   private def getUsers(game: Game) = UserRepo.pair(
     game.whitePlayer.userId,
     game.blackPlayer.userId)
@@ -295,6 +284,12 @@ final class JsonView(
   private def possibleMoves(pov: Pov) = (pov.game playableBy pov.player) option {
     pov.game.toChess.situation.destinations map {
       case (from, dests) => from.key -> dests.mkString
+    }
+  }
+
+  private def possibleDrops(pov: Pov) = (pov.game playableBy pov.player) ?? {
+    pov.game.toChess.situation.drops map { drops =>
+      JsString(drops.map(_.key).mkString)
     }
   }
 
@@ -331,12 +326,13 @@ object JsonView {
   }
 
   implicit val clockWriter: OWrites[Clock] = OWrites { c =>
+    import lila.common.Maths.truncateAt
     Json.obj(
       "running" -> c.isRunning,
       "initial" -> c.limit,
       "increment" -> c.increment,
-      "white" -> c.remainingTime(Color.White),
-      "black" -> c.remainingTime(Color.Black),
+      "white" -> truncateAt(c.remainingTime(Color.White), 2),
+      "black" -> truncateAt(c.remainingTime(Color.Black), 2),
       "emerg" -> c.emergTime)
   }
 
@@ -349,11 +345,17 @@ object JsonView {
       "emerg" -> c.emerg)
   }
 
-  implicit val openingWriter: OWrites[chess.Opening] = OWrites { o =>
+  implicit val openingWriter: OWrites[chess.opening.FullOpening.AtPly] = OWrites { o =>
     Json.obj(
-      "code" -> o.code,
-      "name" -> o.name,
-      "size" -> o.size
+      "eco" -> o.opening.eco,
+      "name" -> o.opening.name,
+      "ply" -> o.ply
     )
+  }
+
+  implicit val divisionWriter: OWrites[chess.Division] = OWrites { o =>
+    Json.obj(
+      "middle" -> o.middle,
+      "end" -> o.end)
   }
 }

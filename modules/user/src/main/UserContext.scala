@@ -12,15 +12,20 @@ sealed trait UserContext {
 
   def isAnon = !isAuth
 
-  def is(user: User): Boolean = me ?? (user ==)
+  def is(user: User): Boolean = me contains user
 
-  def userId = me map (_.id)
+  def userId = me.map(_.id)
 
-  def username = me map (_.username)
+  def username = me.map(_.username)
+
+  def usernameOrAnon = username | "Anonymous"
 
   def troll = me.??(_.troll)
 
   def ip = req.remoteAddress
+
+  def kid = me.??(_.kid)
+  def noKid = !kid
 }
 
 sealed abstract class BaseUserContext(val req: RequestHeader, val me: Option[User]) extends UserContext {
@@ -42,8 +47,6 @@ trait UserContextWrapper extends UserContext {
   val userContext: UserContext
   val req = userContext.req
   val me = userContext.me
-  val kid = me.??(_.kid)
-  val noKid = !kid
 }
 
 object UserContext {

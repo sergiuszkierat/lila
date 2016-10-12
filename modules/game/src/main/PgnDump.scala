@@ -1,12 +1,8 @@
 package lila.game
 
-import akka.actor._
-import akka.pattern.ask
 import chess.format.Forsyth
 import chess.format.pgn.{ Pgn, Tag, Parser, ParsedPgn }
 import chess.format.{ pgn => chessPgn }
-import chess.OpeningExplorer
-import makeTimeout.short
 import org.joda.time.format.DateTimeFormat
 
 import lila.common.LightUser
@@ -27,12 +23,16 @@ final class PgnDump(
     Pgn(ts, turns(moves2, fenSituation.map(_.fullMoveNumber) | 1))
   }
 
+  private val fileR = """[\s,]""".r
+
   def filename(game: Game): String = gameLightUsers(game) match {
-    case (wu, bu) => "lichess_pgn_%s_%s_vs_%s.%s.pgn".format(
-      dateFormat.print(game.createdAt),
-      player(game.whitePlayer, wu),
-      player(game.blackPlayer, bu),
-      game.id)
+    case (wu, bu) => fileR.replaceAllIn(
+      "lichess_pgn_%s_%s_vs_%s.%s.pgn".format(
+        dateFormat.print(game.createdAt),
+        player(game.whitePlayer, wu),
+        player(game.blackPlayer, bu),
+        game.id
+      ), "_")
   }
 
   private def gameUrl(id: String) = s"$netBaseUrl/$id"
@@ -48,9 +48,9 @@ final class PgnDump(
     p.aiLevel.fold(u.fold(p.name | lila.user.User.anonymous)(_.name))("lichess AI level " + _)
 
   private val customStartPosition: Set[chess.variant.Variant] =
-    Set(chess.variant.Chess960, chess.variant.FromPosition, chess.variant.Horde)
+    Set(chess.variant.Chess960, chess.variant.FromPosition, chess.variant.Horde, chess.variant.RacingKings)
 
-  private def tags(
+  def tags(
     game: Game,
     initialFen: Option[String],
     imported: Option[ParsedPgn]): List[Tag] = gameLightUsers(game) match {
@@ -69,8 +69,8 @@ final class PgnDump(
       Tag("PlyCount", game.turns),
       Tag(_.Variant, game.variant.name.capitalize),
       Tag(_.TimeControl, game.clock.fold("-") { c => s"${c.limit}+${c.increment}" }),
-      Tag(_.ECO, game.opening.fold("?")(_.code)),
-      Tag(_.Opening, game.opening.fold("?")(_.name)),
+      Tag(_.ECO, game.opening.fold("?")(_.opening.eco)),
+      Tag(_.Opening, game.opening.fold("?")(_.opening.name)),
       Tag(_.Termination, {
         import chess.Status._
         game.status match {
@@ -79,6 +79,7 @@ final class PgnDump(
           case Timeout | Outoftime                           => "Time forfeit"
           case Resign | Draw | Stalemate | Mate | VariantEnd => "Normal"
           case Cheat                                         => "Rules infraction"
+          case UnknownFinish                                 => "Unknown"
         }
       })
     ) ::: customStartPosition(game.variant).??(List(

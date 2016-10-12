@@ -47,7 +47,7 @@ function renderTrainingBox(ctrl) {
 }
 
 function renderDifficulty(ctrl) {
-  return m('div.difficulty.buttonset', map(ctrl.data.difficulty.choices, function(dif) {
+  return m('div.difficulty', map(ctrl.data.difficulty.choices, function(dif) {
     var id = dif[0],
       name = dif[1];
     return m('a.button' + (id == ctrl.data.difficulty.current ? '.active' : ''), {
@@ -191,7 +191,7 @@ function renderViewTable(ctrl) {
       m('p', m.trust(ctrl.trans('ratingX', strong(ctrl.data.puzzle.rating)))),
       m('p', m.trust(ctrl.trans('playedXTimes', strong(ctrl.data.puzzle.attempts)))),
       m('p',
-        m('input.copyable[readonly][spellCheck=false]', {
+        m('input.copyable.autoselect[readonly][spellCheck=false]', {
           value: ctrl.data.puzzle.url
         })
       )
@@ -241,7 +241,7 @@ function renderViewControls(ctrl, fen) {
       var enabled = step != b[2] && b[2] >= 0 && b[2] < history.length;
       return m('a.button.' + b[0] + (enabled ? '' : '.disabled'), {
         'data-icon': b[1],
-        onclick: enabled ? partial(ctrl.jump, b[2]) : null
+        onmousedown: enabled ? partial(ctrl.jump, b[2]) : null
       });
     }))
   ]);
@@ -295,10 +295,6 @@ function wheel(ctrl, e) {
   return false;
 }
 
-function loading() {
-  return m('div.loader');
-}
-
 module.exports = function(ctrl) {
   return m('div#puzzle.training', [
     renderSide(ctrl),
@@ -311,7 +307,7 @@ module.exports = function(ctrl) {
           }
         },
         chessground.view(ctrl.chessground)),
-      m('div.right', ctrl.vm.loading ? loading() : (ctrl.data.mode == 'view' ? renderViewTable(ctrl) : renderPlayTable(ctrl)))
+      m('div.right', ctrl.vm.loading ? m.trust(lichess.spinnerHtml) : (ctrl.data.mode == 'view' ? renderViewTable(ctrl) : renderPlayTable(ctrl)))
     ]),
     m('div.underboard',
       m('div.center', [

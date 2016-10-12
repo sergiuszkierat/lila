@@ -8,8 +8,8 @@ module.exports = function(cfg, saveUrl) {
   var loading = m.prop(false);
 
   var keyOf = function(fc) {
-    return fc.map(function(step) {
-      return step.ply + ':' + step.uci;
+    return fc.map(function(node) {
+      return node.ply + ':' + node.uci;
     }).join(',');
   };
 
@@ -17,16 +17,34 @@ module.exports = function(cfg, saveUrl) {
     return fc1.length >= fc2.length && keyOf(fc1).indexOf(keyOf(fc2)) === 0;
   };
 
+  var findStartingWithNode = function(node) {
+    return forecasts.filter(function(fc) {
+      return contains(fc, [node]);
+    });
+  };
+
   var collides = function(fc1, fc2) {
-    for (var i = 0, max = Math.min(fc1.length, fc2.length); i < max; i++) {
-      if (fc1[i].uci !== fc2[i].uci) return i % 2 === 1;
-    }
-    return true;
+    var res = (function() {
+      for (var i = 0, max = Math.min(fc1.length, fc2.length); i < max; i++) {
+        if (fc1[i].uci !== fc2[i].uci) {
+          if (cfg.onMyTurn) return i !== 0 && i % 2 === 0;
+          return i % 2 === 1;
+        }
+      }
+      return true;
+    })();
+    return res;
   };
 
   var truncate = function(fc) {
+    if (cfg.onMyTurn)
+      return (fc.length % 2 !== 1 ? fc.slice(0, -1) : fc).slice(0, 30);
     // must end with player move
     return (fc.length % 2 !== 0 ? fc.slice(0, -1) : fc).slice(0, 30);
+  };
+
+  var isLongEnough = function(fc) {
+    return fc.length >= (cfg.onMyTurn ? 1 : 2);
   };
 
   var fixAll = function() {
@@ -45,9 +63,16 @@ module.exports = function(cfg, saveUrl) {
   };
   fixAll();
 
+  var reloadToLastPly = function() {
+    loading(true);
+    m.redraw();
+    if (window.history.replaceState) window.history.replaceState(null, null, '#last');
+    lichess.reload();
+  };
+
   var isCandidate = function(fc) {
     fc = truncate(fc);
-    if (fc.length < 2) return false;
+    if (!isLongEnough(fc)) return false;
     var collisions = forecasts.filter(function(f) {
       return contains(f, fc);
     });
@@ -56,13 +81,36 @@ module.exports = function(cfg, saveUrl) {
   };
 
   var save = function() {
+    if (cfg.onMyTurn) return;
     loading(true);
+    m.redraw();
     m.request({
       method: 'POST',
       url: saveUrl,
       data: forecasts
     }).then(function(data) {
-      if (data.reload) location.reload();
+      if (data.reload) reloadToLastPly();
+      else {
+        loading(false);
+        forecasts = data.steps || [];
+      }
+    });
+  };
+
+  var playAndSave = function(node) {
+    if (!cfg.onMyTurn) return;
+    loading(true);
+    m.redraw();
+    m.request({
+      method: 'POST',
+      url: saveUrl + '/' + node.uci,
+      data: findStartingWithNode(node).filter(function(fc) {
+        return fc.length > 1;
+      }).map(function(fc) {
+        return fc.slice(1);
+      })
+    }).then(function(data) {
+      if (data.reload) reloadToLastPly();
       else {
         loading(false);
         forecasts = data.steps || [];
@@ -71,11 +119,11 @@ module.exports = function(cfg, saveUrl) {
   };
 
   return {
-    addSteps: function(fc) {
+    addNodes: function(fc) {
       fc = truncate(fc);
       if (!isCandidate(fc)) return;
-      fc.forEach(function(step) {
-        delete step.variations;
+      fc.forEach(function(node) {
+        delete node.variations;
       });
       forecasts.push(fc);
       fixAll();
@@ -92,6 +140,10 @@ module.exports = function(cfg, saveUrl) {
       return forecasts;
     },
     truncate: truncate,
-    loading: loading
+    loading: loading,
+    onMyTurn: cfg.onMyTurn,
+    findStartingWithNode: findStartingWithNode,
+    playAndSave: playAndSave,
+    reloadToLastPly: reloadToLastPly
   };
 };

@@ -6,9 +6,19 @@ object HookRepo {
 
   private var hooks = Vector[Hook]()
 
-  def findCompatible(hook: Hook): List[Hook] = list filter (_ compatibleWith hook)
+  private val hardLimit = 150
 
-  def list = hooks.toList
+  def size = hooks.size
+
+  def findCompatible(hook: Hook): Vector[Hook] = hooks filter (_ compatibleWith hook)
+
+  def truncateIfNeeded = if (size >= hardLimit) {
+    logger.warn(s"Found ${size} hooks, cleaning up!")
+    cleanupOld
+    hooks = hooks.take(hardLimit / 2)
+  }
+
+  def vector = hooks
 
   def byId(id: String) = hooks find (_.id == id)
 
@@ -16,7 +26,7 @@ object HookRepo {
 
   def bySid(sid: String) = hooks find (_.sid == sid.some)
 
-  def notInUids(uids: Set[String]): List[Hook] = list.filterNot(h => uids(h.uid))
+  def notInUids(uids: Set[String]): Vector[Hook] = hooks.filterNot(h => uids(h.uid))
 
   def save(hook: Hook) {
     hooks = hooks.filterNot(_.id == hook.id) :+ hook
@@ -34,9 +44,9 @@ object HookRepo {
 
   // keeps hooks that hold true
   // returns removed hooks
-  private def partition(f: Hook => Boolean): List[Hook] = {
+  private def partition(f: Hook => Boolean): Vector[Hook] = {
     val (kept, removed) = hooks partition f
     hooks = kept
-    removed.toList
+    removed
   }
 }

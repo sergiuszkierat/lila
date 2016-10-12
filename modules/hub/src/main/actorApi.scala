@@ -2,8 +2,8 @@ package lila.hub
 package actorApi
 
 import lila.common.LightUser
+import org.joda.time.DateTime
 
-import akka.actor.ActorRef
 import play.api.libs.json._
 import play.twirl.api.Html
 
@@ -21,10 +21,9 @@ object SendTos {
     SendTos(userIds, Json.obj("t" -> typ, "d" -> data))
 }
 
-sealed abstract class RemindDeploy(val key: String)
-case object RemindDeployPre extends RemindDeploy("deployPre")
-case object RemindDeployPost extends RemindDeploy("deployPost")
-case class Deploy(event: RemindDeploy, html: String)
+sealed abstract class Deploy(val key: String)
+case object DeployPre extends Deploy("deployPre")
+case object DeployPost extends Deploy("deployPost")
 case class StreamsOnAir(html: String)
 
 package map {
@@ -33,12 +32,14 @@ case class Tell(id: String, msg: Any)
 case class TellIds(ids: Seq[String], msg: Any)
 case class TellAll(msg: Any)
 case class Ask(id: String, msg: Any)
+case class Exists(id: String)
 }
 
 case class WithUserIds(f: Iterable[String] => Unit)
 
 case object GetUids
-case object GetUserIds
+case class SocketUids(uids: Set[String])
+case class HasUserId(userId: String)
 
 package report {
 case class Cheater(userId: String, text: String)
@@ -61,11 +62,7 @@ case class RecordPublicChat(chatId: String, userId: String, text: String)
 package mod {
 case class MarkCheater(userId: String)
 case class MarkBooster(userId: String)
-}
-
-package setup {
-case class RemindChallenge(gameId: String, from: String, to: String)
-case class DeclineChallenge(gameId: String)
+case class ChatTimeout(mod: String, user: String, reason: String)
 }
 
 package captcha {
@@ -85,37 +82,33 @@ case object GetHostIds
 case class PlayerMove(gameId: String)
 }
 
+package slack {
+sealed trait Event
+case class Error(msg: String) extends Event
+case class Warning(msg: String) extends Event
+case class Info(msg: String) extends Event
+case class Victory(msg: String) extends Event
+}
+
 package timeline {
 case class ReloadTimeline(user: String)
 
 sealed abstract class Atom(val channel: String, val okForKid: Boolean)
-case class Follow(u1: String, u2: String) extends Atom(s"follow", true)
-case class TeamJoin(userId: String, teamId: String) extends Atom(s"teamJoin", false)
-case class TeamCreate(userId: String, teamId: String) extends Atom(s"teamCreate", false)
+case class Follow(u1: String, u2: String) extends Atom("follow", true)
+case class TeamJoin(userId: String, teamId: String) extends Atom("teamJoin", false)
+case class TeamCreate(userId: String, teamId: String) extends Atom("teamCreate", false)
 case class ForumPost(userId: String, topicId: Option[String], topicName: String, postId: String) extends Atom(s"forum:${~topicId}", false)
-case class NoteCreate(from: String, to: String) extends Atom(s"note", false)
-case class TourJoin(userId: String, tourId: String, tourName: String) extends Atom(s"tournament", true)
-case class QaQuestion(userId: String, id: Int, title: String) extends Atom(s"qa", true)
-case class QaAnswer(userId: String, id: Int, title: String, answerId: Int) extends Atom(s"qa", true)
-case class QaComment(userId: String, id: Int, title: String, commentId: String) extends Atom(s"qa", true)
-case class GameEnd(playerId: String, opponent: Option[String], win: Option[Boolean], perf: String) extends Atom(s"gameEnd", true)
-case class SimulCreate(userId: String, simulId: String, simulName: String) extends Atom(s"simulCreate", true)
-case class SimulJoin(userId: String, simulId: String, simulName: String) extends Atom(s"simulJoin", true)
-
-object atomFormat {
-  implicit val followFormat = Json.format[Follow]
-  implicit val teamJoinFormat = Json.format[TeamJoin]
-  implicit val teamCreateFormat = Json.format[TeamCreate]
-  implicit val forumPostFormat = Json.format[ForumPost]
-  implicit val noteCreateFormat = Json.format[NoteCreate]
-  implicit val tourJoinFormat = Json.format[TourJoin]
-  implicit val qaQuestionFormat = Json.format[QaQuestion]
-  implicit val qaAnswerFormat = Json.format[QaAnswer]
-  implicit val qaCommentFormat = Json.format[QaComment]
-  implicit val gameEndFormat = Json.format[GameEnd]
-  implicit val simulCreateFormat = Json.format[SimulCreate]
-  implicit val simulJoinFormat = Json.format[SimulJoin]
-}
+case class NoteCreate(from: String, to: String) extends Atom("note", false)
+case class TourJoin(userId: String, tourId: String, tourName: String) extends Atom("tournament", true)
+case class QaQuestion(userId: String, id: Int, title: String) extends Atom("qa", true)
+case class QaAnswer(userId: String, id: Int, title: String, answerId: Int) extends Atom("qa", true)
+case class QaComment(userId: String, id: Int, title: String, commentId: String) extends Atom("qa", true)
+case class GameEnd(playerId: String, opponent: Option[String], win: Option[Boolean], perf: String) extends Atom("gameEnd", true)
+case class SimulCreate(userId: String, simulId: String, simulName: String) extends Atom("simulCreate", true)
+case class SimulJoin(userId: String, simulId: String, simulName: String) extends Atom("simulJoin", true)
+case class StudyCreate(userId: String, studyId: String, studyName: String) extends Atom("studyCreate", true)
+case class StudyLike(userId: String, studyId: String, studyName: String) extends Atom("studyLike", true)
+case class PlanStart(userId: String) extends Atom("planStart", true)
 
 object propagation {
   sealed trait Propagation
@@ -148,36 +141,16 @@ package tv {
 case class Select(msg: JsObject)
 }
 
-package message {
-case class LichessThread(from: String, to: String, subject: String, message: String)
-}
-
-package router {
-case class Abs(route: Any)
-case class Nolang(route: Any)
-case class TeamShow(id: String)
-case class Pgn(gameId: String)
-case class Puzzle(id: Int)
+package notify {
+case class Notified(userId: String)
 }
 
 package forum {
 case class MakeTeam(id: String, name: String)
 }
 
-package ai {
-case class Analyse(
-  gameId: String,
-  uciMoves: List[String],
-  initialFen: Option[String],
-  requestedByHuman: Boolean,
-  variant: chess.variant.Variant)
+package fishnet {
 case class AutoAnalyse(gameId: String)
-}
-
-package monitor {
-case object AddRequest
-case object Update
-case class Move(micros: Int)
 }
 
 package round {
@@ -185,14 +158,20 @@ case class MoveEvent(
   gameId: String,
   fen: String,
   move: String,
-  piece: Char,
   color: chess.Color,
-  ip: String,
+  mobilePushable: Boolean,
   opponentUserId: Option[String],
   simulId: Option[String])
 case class NbRounds(nb: Int)
 case class Abort(gameId: String, byColor: String)
 case class Berserk(gameId: String, userId: String)
+case class IsOnGame(color: chess.Color)
+sealed trait SocketEvent
+object SocketEvent {
+  case class OwnerJoin(gameId: String, color: chess.Color, ip: String) extends SocketEvent
+  case class Stop(gameId: String) extends SocketEvent
+}
+case class FishnetPlay(uci: chess.format.Uci, currentFen: chess.format.FEN)
 }
 
 package evaluation {
@@ -208,7 +187,18 @@ case class Remove(gameId: String)
 package relation {
 case class ReloadOnlineFriends(userId: String)
 case class GetOnlineFriends(userId: String)
-case class OnlineFriends(users: List[LightUser])
+case class OnlineFriends(users: List[LightUser], playing: Set[String]) {
+  def patrons: List[String] = users collect {
+    case u if u.isPatron => u.id
+  }
+}
+object OnlineFriends {
+  val empty = OnlineFriends(Nil, Set.empty[String])
+}
 case class Block(u1: String, u2: String)
 case class UnBlock(u1: String, u2: String)
+}
+
+package plan {
+case class ChargeEvent(username: String, amount: Int, percent: Int, date: DateTime)
 }

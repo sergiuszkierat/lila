@@ -1,13 +1,16 @@
 package lila.round
 
 import scala.concurrent.duration._
+import scala.concurrent.Promise
 
 import akka.actor._
 import akka.pattern.{ ask, pipe }
 import chess.Color
+import chess.format.Uci
 import play.api.libs.json.{ JsObject, Json }
 
 import actorApi._, round._
+import lila.common.ApiVersion
 import lila.common.PimpedJson._
 import lila.game.{ Game, Pov, PovRef, PlayerRef, GameRepo }
 import lila.hub.actorApi.map._
@@ -31,96 +34,113 @@ private[round] final class SocketHandler(
     ref: PovRef,
     member: Member): Handler.Controller = {
 
-    def round(msg: Any) { roundMap ! Tell(gameId, msg) }
+    def send(msg: Any) { roundMap ! Tell(gameId, msg) }
 
-    member.playerIdOption.fold[Handler.Controller]({
-      case ("p", o) => o int "v" foreach { v => socket ! PingVersion(uid, v) }
-      case ("talk", o) => o str "d" foreach { text =>
-        messenger.watcher(gameId, member, text, socket)
-      }
-      case ("outoftime", _) => round(Outoftime)
-    }) { playerId =>
-      {
-        case ("p", o)            => o int "v" foreach { v => socket ! PingVersion(uid, v) }
+    def ping(o: JsObject) =
+      o int "v" foreach { v => socket ! PingVersion(uid, v) }
+
+    member.playerIdOption.fold[Handler.Controller](({
+      case ("p", o)         => ping(o)
+      case ("talk", o)      => o str "d" foreach { messenger.watcher(gameId, member, _) }
+      case ("outoftime", _) => send(Outoftime)
+    }: Handler.Controller) orElse lila.chat.Socket.in(
+      chatId = s"$gameId/w",
+      member = member,
+      socket = socket,
+      chat = messenger.chat
+    )) { playerId =>
+      ({
+        case ("p", o) => ping(o)
         case ("move", o) => parseMove(o) foreach {
-          case (orig, dest, prom, blur, lag) =>
+          case (move, blur, lag) =>
+            val promise = Promise[Unit]
+            promise.future onFailure {
+              case _: Exception => socket ! Resync(uid)
+            }
+            send(HumanPlay(playerId, move, blur, lag.millis, promise.some))
             member push ackEvent
-            round(HumanPlay(
-              playerId, member.ip, orig, dest, prom, blur, lag.millis, _ => socket ! Resync(uid)
-            ))
         }
-        case ("rematch-yes", _)  => round(RematchYes(playerId))
-        case ("rematch-no", _)   => round(RematchNo(playerId))
-        case ("takeback-yes", _) => round(TakebackYes(playerId))
-        case ("takeback-no", _)  => round(TakebackNo(playerId))
-        case ("draw-yes", _)     => round(DrawYes(playerId))
-        case ("draw-no", _)      => round(DrawNo(playerId))
-        case ("draw-claim", _)   => round(DrawClaim(playerId))
-        case ("resign", _)       => round(Resign(playerId))
-        case ("resign-force", _) => round(ResignForce(playerId))
-        case ("draw-force", _)   => round(DrawForce(playerId))
-        case ("abort", _)        => round(Abort(playerId))
-        case ("moretime", _)  => round(Moretime(playerId))
-        case ("outoftime", _) => round(Outoftime)
-        case ("bye", _)       => socket ! Bye(ref.color)
-        case ("challenge", o) => ((o str "d") |@| member.userId) apply {
-          case (to, from) => hub.actor.challenger ! lila.hub.actorApi.setup.RemindChallenge(gameId, from, to)
+        case ("drop", o) => parseDrop(o) foreach {
+          case (drop, blur, lag) =>
+            val promise = Promise[Unit]
+            promise.future onFailure {
+              case _: Exception => socket ! Resync(uid)
+            }
+            send(HumanPlay(playerId, drop, blur, lag.millis, promise.some))
+            member push ackEvent
         }
-        case ("talk", o) => o str "d" foreach { text =>
-          messenger.owner(gameId, member, text, socket)
-        }
+        case ("rematch-yes", _)  => send(RematchYes(playerId))
+        case ("rematch-no", _)   => send(RematchNo(playerId))
+        case ("takeback-yes", _) => send(TakebackYes(playerId))
+        case ("takeback-no", _)  => send(TakebackNo(playerId))
+        case ("draw-yes", _)     => send(DrawYes(playerId))
+        case ("draw-no", _)      => send(DrawNo(playerId))
+        case ("draw-claim", _)   => send(DrawClaim(playerId))
+        case ("resign", _)       => send(Resign(playerId))
+        case ("resign-force", _) => send(ResignForce(playerId))
+        case ("draw-force", _)   => send(DrawForce(playerId))
+        case ("abort", _)        => send(Abort(playerId))
+        case ("moretime", _)     => send(Moretime(playerId))
+        case ("outoftime", _)    => send(Outoftime)
+        case ("bye", _)          => socket ! Bye(ref.color)
+        case ("talk", o)         => o str "d" foreach { messenger.owner(gameId, member, _) }
         case ("hold", o) => for {
           d ← o obj "d"
           mean ← d int "mean"
           sd ← d int "sd"
-        } round(HoldAlert(playerId, mean, sd))
+        } send(HoldAlert(playerId, mean, sd, member.ip))
         case ("berserk", _) => member.userId foreach { userId =>
-          hub.actor.tournamentOrganizer ! Berserk(gameId, userId)
+          hub.actor.tournamentApi ! Berserk(gameId, userId)
+          member push ackEvent
         }
-      }
+      }: Handler.Controller) orElse lila.chat.Socket.in(
+        chatId = gameId,
+        member = member,
+        socket = socket,
+        chat = messenger.chat)
     }
   }
 
   def watcher(
     gameId: String,
     colorName: String,
-    version: Int,
     uid: String,
     user: Option[User],
     ip: String,
-    userTv: Option[String]): Fu[Option[JsSocketHandler]] =
+    userTv: Option[String],
+    apiVersion: ApiVersion): Fu[Option[JsSocketHandler]] =
     GameRepo.pov(gameId, colorName) flatMap {
-      _ ?? { join(_, none, version, uid, "", user, ip, userTv = userTv) map some }
+      _ ?? { join(_, none, uid, "", user, ip, userTv = userTv, apiVersion) map some }
     }
 
   def player(
     pov: Pov,
-    version: Int,
-    uid: String,
-    token: String,
-    user: Option[User],
-    ip: String): Fu[JsSocketHandler] =
-    join(pov, Some(pov.playerId), version, uid, token, user, ip, userTv = none)
-
-  private def join(
-    pov: Pov,
-    playerId: Option[String],
-    version: Int,
     uid: String,
     token: String,
     user: Option[User],
     ip: String,
-    userTv: Option[String]): Fu[JsSocketHandler] = {
+    apiVersion: ApiVersion): Fu[JsSocketHandler] =
+    join(pov, Some(pov.playerId), uid, token, user, ip, userTv = none, apiVersion)
+
+  private def join(
+    pov: Pov,
+    playerId: Option[String],
+    uid: String,
+    token: String,
+    user: Option[User],
+    ip: String,
+    userTv: Option[String],
+    apiVersion: ApiVersion): Fu[JsSocketHandler] = {
     val join = Join(
       uid = uid,
       user = user,
-      version = version,
       color = pov.color,
       playerId = playerId,
       ip = ip,
-      userTv = userTv)
+      userTv = userTv,
+      apiVersion = apiVersion)
     socketHub ? Get(pov.gameId) mapTo manifest[ActorRef] flatMap { socket =>
-      Handler(hub, socket, uid, join, user map (_.id)) {
+      Handler(hub, socket, uid, join) {
         case Connected(enum, member) =>
           (controller(pov.gameId, socket, uid, pov.ref, member), enum, member)
       }
@@ -129,12 +149,27 @@ private[round] final class SocketHandler(
 
   private def parseMove(o: JsObject) = for {
     d ← o obj "d"
+    move <- d str "u" flatMap Uci.Move.apply orElse parseOldMove(d)
+    blur = d int "b" contains 1
+  } yield (move, blur, parseLag(d))
+
+  private def parseOldMove(d: JsObject) = for {
     orig ← d str "from"
     dest ← d str "to"
     prom = d str "promotion"
-    blur = (d int "b") == Some(1)
-    lag = d int "lag"
-  } yield (orig, dest, prom, blur, ~lag)
+    move <- Uci.Move.fromStrings(orig, dest, prom)
+  } yield move
+
+  private def parseDrop(o: JsObject) = for {
+    d ← o obj "d"
+    role ← d str "role"
+    pos ← d str "pos"
+    drop <- Uci.Drop.fromStrings(role, pos)
+    blur = d int "b" contains 1
+  } yield (drop, blur, parseLag(d))
+
+  private def parseLag(d: JsObject): Int =
+    d.int("l") orElse d.int("lag") getOrElse 0
 
   private val ackEvent = Json.obj("t" -> "ack")
 }

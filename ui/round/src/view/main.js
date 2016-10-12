@@ -4,10 +4,11 @@ var chessground = require('chessground');
 var renderTable = require('./table');
 var renderPromotion = require('../promotion').view;
 var mod = require('game').view.mod;
-var partial = require('chessground').util.partial;
 var button = require('./button');
 var blind = require('../blind');
 var keyboard = require('../keyboard');
+var crazyView = require('../crazy/crazyView');
+var keyboardMove = require('../keyboardMove');
 var m = require('mithril');
 
 function materialTag(role) {
@@ -19,8 +20,10 @@ function materialTag(role) {
   };
 }
 
-function renderMaterial(ctrl, material, checks) {
+function renderMaterial(ctrl, material, checks, score) {
   var children = [];
+  if (score || score === 0)
+    children.push(m('score', score > 0 ? '+' + score : score));
   for (var role in material) {
     var piece = materialTag(role);
     var count = material[role];
@@ -36,15 +39,6 @@ function renderMaterial(ctrl, material, checks) {
     children.push(m('tomb', m('mono-piece.king[title=Check]')));
   }
   return m('div.cemetery', children);
-}
-
-function renderBerserk(ctrl, color, position) {
-  if (ctrl.data.game.turns > 1 || !game.playable(ctrl.data)) return;
-  if (!ctrl.vm.goneBerserk[color]) return;
-  return m('div', {
-    class: 'berserk_alert ' + position,
-    'data-icon': '`'
-  });
 }
 
 function wheel(ctrl, e) {
@@ -118,26 +112,37 @@ function blursAndHolds(ctrl) {
 }
 
 module.exports = function(ctrl) {
-  var material = ctrl.data.pref.showCaptured ? chessground.board.getMaterialDiff(ctrl.chessground.data) : emptyMaterialDiff;
+  var d = ctrl.data,
+    cgData = ctrl.chessground.data,
+    material, score;
+  var topColor = d[ctrl.vm.flip ? 'player' : 'opponent'].color;
+  var bottomColor = d[ctrl.vm.flip ? 'opponent' : 'player'].color;
+  if (d.pref.showCaptured) {
+    material = chessground.board.getMaterialDiff(cgData);
+    score = chessground.board.getScore(cgData) * (bottomColor === 'white' ? 1 : -1);
+  } else material = emptyMaterialDiff;
   return [
     m('div.top', [
-      m('div.lichess_game', {
+      m('div', {
+        class: 'lichess_game variant_' + d.game.variant.key,
         config: function(el, isUpdate) {
           if (isUpdate) return;
-          $('body').trigger('lichess.content_loaded');
+          lichess.pubsub.emit('content_loaded')();
         }
       }, [
-        ctrl.data.blind ? blindBoard(ctrl) : visualBoard(ctrl),
-        m('div.lichess_ground',
-          renderBerserk(ctrl, ctrl.data.opponent.color, 'top'),
-          renderMaterial(ctrl, material[ctrl.data.opponent.color], ctrl.data.player.checks),
+        d.blind ? blindBoard(ctrl) : visualBoard(ctrl),
+        m('div.lichess_ground', [
+          crazyView.pocket(ctrl, topColor, 'top') || renderMaterial(ctrl, material[topColor], d.player.checks),
           renderTable(ctrl),
-          renderMaterial(ctrl, material[ctrl.data.player.color], ctrl.data.opponent.checks),
-          renderBerserk(ctrl, ctrl.data.player.color, 'bottom'))
+          crazyView.pocket(ctrl, bottomColor, 'bottom') || renderMaterial(ctrl, material[bottomColor], d.opponent.checks, score)
+        ])
       ])
     ]),
     m('div.underboard', [
-      m('div.center', ctrl.chessground.data.premovable.current ? m('div.premove_alert', ctrl.trans('premoveEnabledClickAnywhereToCancel')) : null),
+      m('div.center', [
+        cgData.premovable.current || cgData.predroppable.current.key ? m('div.premove_alert', ctrl.trans('premoveEnabledClickAnywhereToCancel')) : null,
+        ctrl.keyboardMove ? keyboardMove.view(ctrl.keyboardMove) : null,
+      ]),
       blursAndHolds(ctrl)
     ])
   ];

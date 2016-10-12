@@ -1,4 +1,4 @@
-@(opening: lila.opening.Opening, identified: List[lila.opening.Identified], userInfos: Option[lila.opening.UserInfos], animationDuration: scala.concurrent.duration.Duration)(implicit ctx: Context)
+@(opening: lila.opening.Opening, identified: List[String], userInfos: Option[lila.opening.UserInfos], animationDuration: scala.concurrent.duration.Duration)(implicit ctx: Context)
 
 @evenMoreJs = {
 @helper.javascriptRouter("openingRoutes")(
@@ -49,6 +49,6 @@ url = s"$netBaseUrl${routes.Opening.show(opening.id).url}",
 description = s"Opening training #${opening.id}: " + opening.color.fold(
 trans.findTheBestMoveForWhite,
 trans.findTheBestMoveForBlack
-).str() + s". Played by ${opening.attempts} players.").some) {
+).str() + s" Played by ${opening.attempts} players.").some) {
 <div class="round cg-512">@miniBoardContent</div>
 }

@@ -2,7 +2,7 @@
 
 @import pov._
 
-@title = @{ s"${playerText(pov.player)} vs ${playerText(pov.opponent)} in $gameId : ${game.opening.fold(trans.analysis.str())(_.fullName)}" }
+@title = @{ s"${playerText(pov.player)} vs ${playerText(pov.opponent)} in $gameId : ${game.opening.fold(trans.analysis.str())(_.opening.ecoName)}" }
 
 @moreJs = {
 @embedJs {
@@ -14,34 +14,13 @@ orientation: "@pov.color.name"
 }
 }
 
-@moreCss = {
-@cssTag("analyse.css")
-}
-
-@underchat = {
-@views.html.game.watchers()
-<div class="shortcuts">
-  <p class="title text" data-icon="u">Keyboard Shortcuts</p>
-  <div class="inner">
-    <ul>
-      <li><strong>h</strong>/<strong>l</strong> or <strong>←</strong>/<strong>→</strong> move backward/forward</li>
-      <li><strong>j</strong>/<strong>k</strong> or <strong>↑</strong>/<strong>↓</strong> go to start/end</li>
-      <li><strong>c</strong> show/hide comments</li>
-      <li><strong>shift</strong> + <strong>h</strong>/<strong>l</strong> or <strong>←</strong>/<strong>→</strong> enter/exit variation</li>
-    </ul>
-    Press shift+click or right-click to draw circles and arrows on the board!<br />
-    You can also scroll over the board to move in the game.
-  </div>
-</div>
-}
-
 @analyse.layout(
 title = title,
-side = views.html.game.side(pov, initialFen, none, simul = simul).some,
-chat = base.chatDom(trans.spectatorRoom.str(), ctx.isAuth).some,
-underchat = underchat.some,
+side = views.html.game.side(pov, initialFen, none, simul = simul, bookmarked = false).some,
+chat = none,
+underchat = views.html.game.watchers().some,
 moreJs = moreJs,
-moreCss = moreCss,
+moreCss = cssTag("analyse.css"),
 openGraph = povOpenGraph(pov).some,
 chessground = true) {
 <div class="analyse cg-512">
@@ -57,13 +36,13 @@ chessground = true) {
       <div class="lichess_ground for_bot">
         <h1>@titleGame(pov.game)</h1>
         <p>@describePov(pov)</p>
-        <p>@pov.game.opening.map(_.fullName)</p>
+        <p>@pov.game.opening.map(_.opening.ecoName)</p>
       </div>
     </div>
   </div>
 </div>
-<div class="advice_summary" style="display:none">
-  @analysis.filter(_.done).map { a =>
+<div class="advice_summary">
+  @analysis.map { a =>
   <table>
     @for((color, pairs) <- a.summary) {
     <thead>
@@ -75,15 +54,15 @@ chessground = true) {
       </tr>
     </thead>
     <tbody>
-      @for((nag, nb) <- pairs) {
+      @for((judgment, nb) <- pairs) {
       <tr>
         <td><strong>@nb</strong></td>
-        <th>@nagName(nag)</th>
+        <th>@judgmentName(judgment)</th>
       </tr>
       }
       <tr>
-        <td><strong>@lila.analyse.Accuracy(pov.withColor(color), a)</strong></td>
-        <th>Average centipawn loss</th>
+        <td><strong>@lila.analyse.Accuracy.mean(pov.withColor(color), a)</strong></td>
+        <th>@trans.averageCentipawnLoss()</th>
       </tr>
       <tr><td class="spacerlol" colspan=2></td></tr>
     </tbody>
@@ -91,24 +70,24 @@ chessground = true) {
   </table>
   }
 </div>
-<div class="underboard_content" style="display:none">
+<div class="underboard_content">
   <div class="analysis_panels">
     <div class="panel fen_pgn">
-      <p><strong>FEN</strong><input type="input" readonly="true" spellcheck="false" class="copyable fen" /></p>
+      <p><strong>FEN</strong><input type="input" readonly="true" spellcheck="false" class="copyable autoselect fen" /></p>
       <p><strong>PGN</strong>
-        <a data-icon="x" rel="nofollow" href="@routes.Export.pgn(game.id)"> Download annotated</a>
+        <a data-icon="x" rel="nofollow" href="@routes.Export.pgn(game.id)"> @trans.downloadAnnotated()</a>
         @if(analysis.isDefined) {
         /
-        <a data-icon="x" rel="nofollow" href="@routes.Export.pgn(game.id)?as=raw"> Download raw</a>
+        <a data-icon="x" rel="nofollow" href="@routes.Export.pgn(game.id)?as=raw"> @trans.downloadRaw()</a>
         }
         @if(game.isPgnImport) {
         /
-        <a data-icon="x" rel="nofollow" href="@routes.Export.pgn(game.id)?as=imported"> Download imported</a>
+        <a data-icon="x" rel="nofollow" href="@routes.Export.pgn(game.id)?as=imported"> @trans.downloadImported()</a>
         }
         /
-        <a data-icon="x" target="_blank" rel="nofollow" href="@cdnUrl(routes.Export.pdf(game.id).url)"> Print-friendly PDF</a>
+        <a data-icon="x" target="_blank" rel="nofollow" href="@cdnUrl(routes.Export.pdf(game.id).url)"> @trans.printFriendlyPDF()</a>
       </p>
-      <div class="pgn">@Html(nl2br(escape(pgn)))</div>
+      <div class="pgn">@Html(nl2br(escapeHtml(pgn)))</div>
     </div>
     @cross.map { c =>
     <div class="panel crosstable">
@@ -118,7 +97,7 @@ chessground = true) {
   </div>
   <div class="analysis_menu">
     @if(cross.isDefined) {
-    <a data-panel="crosstable" class="crosstable">Crosstable</a>
+    <a data-panel="crosstable" class="crosstable">@trans.crosstable()</a>
     }
     <a data-panel="fen_pgn" class="fen_pgn">FEN &amp; PGN</a>
   </div>

@@ -7,7 +7,9 @@ module.exports = function(opts) {
   var controller = new ctrl(opts);
 
   m.module(opts.element, {
-    controller: function () { return controller; },
+    controller: function() {
+      return controller;
+    },
     view: view
   });
 

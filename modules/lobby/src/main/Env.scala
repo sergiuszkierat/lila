@@ -13,6 +13,7 @@ final class Env(
     onStart: String => Unit,
     blocking: String => Fu[Set[String]],
     playban: String => Fu[Option[lila.playban.TempBan]],
+    gameCache: lila.game.Cached,
     system: ActorSystem,
     scheduler: lila.common.Scheduler) {
 
@@ -29,14 +30,13 @@ final class Env(
     val CollectionSeekArchive = config getString "collection.seek_archive"
     val SeekMaxPerPage = config getInt "seek.max_per_page"
     val SeekMaxPerUser = config getInt "seek.max_per_user"
+    val MaxPlaying = config getInt "max_playing"
   }
   import settings._
 
   private val socket = system.actorOf(Props(new Socket(
     history = history,
-    router = hub.actor.router,
-    uidTtl = SocketUidTtl
-  )), name = SocketName)
+    uidTtl = SocketUidTtl)), name = SocketName)
 
   lazy val seekApi = new SeekApi(
     coll = db(CollectionSeek),
@@ -45,13 +45,18 @@ final class Env(
     maxPerPage = SeekMaxPerPage,
     maxPerUser = SeekMaxPerUser)
 
-  val lobby = system.actorOf(Props(new Lobby(
-    socket = socket,
-    seekApi = seekApi,
-    blocking = blocking,
-    playban = playban,
-    onStart = onStart
-  )), name = ActorName)
+  val lobby = Lobby.start(system, ActorName,
+    broomPeriod = BroomPeriod,
+    resyncIdsPeriod = ResyncIdsPeriod) {
+      new Lobby(
+        socket = socket,
+        seekApi = seekApi,
+        gameCache = gameCache,
+        maxPlaying = MaxPlaying,
+        blocking = blocking,
+        playban = playban,
+        onStart = onStart)
+    }
 
   lazy val socketHandler = new SocketHandler(
     hub = hub,
@@ -63,26 +68,11 @@ final class Env(
 
   private val abortListener = new AbortListener(seekApi = seekApi)
 
-  system.actorOf(Props(new Actor {
-    system.lilaBus.subscribe(self, 'abortGame)
+  system.lilaBus.subscribe(system.actorOf(Props(new Actor {
     def receive = {
-      case lila.game.actorApi.AbortedBy(pov) if pov.game.isCorrespondence =>
-        abortListener recreateSeek pov
+      case lila.game.actorApi.AbortedBy(pov) => abortListener(pov)
     }
-  }))
-
-  {
-    import scala.concurrent.duration._
-
-    scheduler.once(10 seconds) {
-      scheduler.message(BroomPeriod) {
-        lobby -> lila.socket.actorApi.Broom
-      }
-      scheduler.message(ResyncIdsPeriod) {
-        lobby -> actorApi.Resync
-      }
-    }
-  }
+  })), 'abortGame)
 }
 
 object Env {
@@ -92,8 +82,9 @@ object Env {
     db = lila.db.Env.current,
     hub = lila.hub.Env.current,
     onStart = lila.game.Env.current.onStart,
-    blocking = lila.relation.Env.current.api.blocking,
+    blocking = lila.relation.Env.current.api.fetchBlocking,
     playban = lila.playban.Env.current.api.currentBan _,
+    gameCache = lila.game.Env.current.cached,
     system = lila.common.PlayApp.system,
     scheduler = lila.common.PlayApp.scheduler)
 }

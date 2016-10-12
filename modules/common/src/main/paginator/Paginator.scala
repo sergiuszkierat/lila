@@ -47,6 +47,15 @@ final class Paginator[A] private[paginator] (
    * Returns whether there is next page or not.
    */
   def hasNextPage: Boolean = nextPage.isDefined
+
+  def withCurrentPageResults[B](newResults: Seq[B]): Paginator[B] = new Paginator(
+    currentPage = currentPage,
+    maxPerPage = maxPerPage,
+    currentPageResults = newResults,
+    nbResults = nbResults)
+
+  def mapResults[B](f: A => B): Paginator[B] =
+    withCurrentPageResults(currentPageResults map f)
 }
 
 object Paginator {
@@ -56,6 +65,17 @@ object Paginator {
     currentPage: Int = 1,
     maxPerPage: Int = 10): Fu[Paginator[A]] =
     validate(adapter, currentPage, maxPerPage) | apply(adapter, 1, maxPerPage)
+
+  def empty[A]: Paginator[A] = new Paginator(0, 0, Nil, 0)
+
+  def fromList[A](
+    list: List[A],
+    currentPage: Int = 1,
+    maxPerPage: Int = 10): Paginator[A] = new Paginator(
+    currentPage = currentPage,
+    maxPerPage = maxPerPage,
+    currentPageResults = list.drop((currentPage - 1) * maxPerPage).take(maxPerPage),
+    nbResults = list.size)
 
   def validate[A](
     adapter: AdapterLike[A],

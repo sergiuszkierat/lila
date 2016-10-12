@@ -40,7 +40,7 @@ module.exports = function(cfg, router, i18n) {
         break;
       default:
         this.userFinalizeMove([orig, dest, promotion], newProgress);
-        if (newLines == 'win') {
+        if (newLines == 'win' || (Object.keys(newLines).length === 1 && newLines[Object.keys(newLines)[0]] == 'win')) {
           this.chessground.stop();
           xhr.attempt(this, true);
         } else setTimeout(partial(this.playOpponentNextMove, this.data.puzzle.id), 1000);
@@ -49,7 +49,7 @@ module.exports = function(cfg, router, i18n) {
     m.endComputation(); // give feedback ASAP, don't wait for delayed action
   }.bind(this);
 
-  var onMove = function(orig, dest, captured) {
+  var moveSound = function(orig, dest, captured) {
     $.sound[captured ? 'capture' : 'move']();
   }.bind(this);
 
@@ -57,7 +57,7 @@ module.exports = function(cfg, router, i18n) {
     if (id != this.data.puzzle.id) return;
     this.chessground.set({
       fen: this.data.chess.fen(),
-      lastMove: chess.lastMove(this.data.chess),
+      lastMove: chess.lastMove(this.data.chess).slice(0, 2),
       turnColor: this.data.puzzle.color,
       check: null,
       movable: {
@@ -74,7 +74,7 @@ module.exports = function(cfg, router, i18n) {
     this.data.progress = newProgress;
     this.chessground.set({
       fen: this.data.chess.fen(),
-      lastMove: move,
+      lastMove: move.slice(0, 2),
       turnColor: this.data.puzzle.opponentColor,
       check: null
     });
@@ -94,7 +94,7 @@ module.exports = function(cfg, router, i18n) {
       },
     },
     events: {
-      move: onMove
+      move: moveSound
     },
     animation: {
       enabled: true,
@@ -135,12 +135,12 @@ module.exports = function(cfg, router, i18n) {
   }.bind(this);
 
   this.playOpponentMove = function(move) {
-    onMove(move[0], move[1], this.chessground.data.pieces[move[1]]);
+    moveSound(move[0], move[1], this.chessground.data.pieces[move[1]]);
     m.startComputation();
     chess.move(this.data.chess, move);
     this.chessground.set({
       fen: this.data.chess.fen(),
-      lastMove: move,
+      lastMove: move.slice(0, 2),
       movable: {
         dests: this.data.chess.dests()
       },
@@ -157,7 +157,10 @@ module.exports = function(cfg, router, i18n) {
     var move = puzzle.getOpponentNextMove(this.data);
     this.playOpponentMove(puzzle.str2move(move));
     this.data.progress.push(move);
-    if (puzzle.getCurrentLines(this.data) == 'win') xhr.attempt(this, true);
+    if (puzzle.getCurrentLines(this.data) == 'win') {
+      this.chessground.stop();
+      xhr.attempt(this, true);
+    }
   }.bind(this);
 
   this.playInitialMove = function(id) {
@@ -168,8 +171,16 @@ module.exports = function(cfg, router, i18n) {
 
   this.jump = function(to) {
     var prevStep = this.data.replay.step;
+    var state = this.data.replay.history[to];
+    if (!state) return;
     chessground.anim(puzzle.jump, this.chessground.data)(this.data, to);
-    if (prevStep != this.data.replay.step) $.sound.move();
+    if (prevStep + 1 === to) {
+      // step forward, call moveSound
+      moveSound(state.move[0], state.move[1], state.capture);
+    } else if (prevStep - 1 === to) {
+      // step backward, just play move sound
+      $.sound.move();
+    }
   }.bind(this);
 
   this.router = router;

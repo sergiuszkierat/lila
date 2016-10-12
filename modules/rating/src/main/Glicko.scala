@@ -22,6 +22,16 @@ case class Glicko(
 
   def establishedIntRating = established option intRating
 
+  def refund(points: Int) = copy(rating = rating + points)
+
+  def sanityCheck =
+    rating > 0 &&
+      rating < 4000 &&
+      deviation > 0 &&
+      deviation < 1000 &&
+      volatility > 0 &&
+      volatility < 1
+
   override def toString = s"$intRating $intDeviation"
 }
 
@@ -59,6 +69,4 @@ case object Glicko {
     case object Loss extends Result(0) { def negate = Win }
     case object Draw extends Result(0.5) { def negate = Draw }
   }
-
-  lazy val tube = lila.db.BsTube(glickoBSONHandler)
 }

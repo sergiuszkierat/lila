@@ -2,13 +2,17 @@ package controllers
 
 import scala.concurrent.duration._
 
+import lila.common.HTTPRequest
 import lila.app._
 import lila.forum.CategRepo
+import play.api.libs.json._
 import views._
 
 object ForumTopic extends LilaController with ForumController {
 
-  private val CreateRateLimit = new lila.memo.RateLimit(2, 5 minutes)
+  private val CreateRateLimit = new lila.memo.RateLimit(2, 5 minutes,
+    name = "forum create topic",
+    key = "forum.topic")
 
   def form(categSlug: String) = Open { implicit ctx =>
     NotForKids {
@@ -21,7 +25,7 @@ object ForumTopic extends LilaController with ForumController {
   }
 
   def create(categSlug: String) = OpenBody { implicit ctx =>
-    CreateRateLimit(ctx.req.remoteAddress) {
+    CreateRateLimit(HTTPRequest lastRemoteAddress ctx.req) {
       CategGrantWrite(categSlug) {
         implicit val req = ctx.body
         OptionFuResult(CategRepo bySlug categSlug) { categ =>
@@ -69,5 +73,15 @@ object ForumTopic extends LilaController with ForumController {
         case (categ, topic, pag) => topicApi.toggleHide(categ, topic, me) inject
           routes.ForumTopic.show(categSlug, slug, pag.nbPages)
       }
+  }
+
+  /**
+   * Returns a list of the usernames of people participating in a forum topic conversation
+   */
+  def participants(topicId: String) = Auth { implicit ctx => me =>
+    postApi.userIds(topicId) map { ids =>
+      val usernames = Env.user.lightUserApi.getList(ids.sorted).map(_.titleName)
+      Ok(Json.toJson(usernames))
+    }
   }
 }

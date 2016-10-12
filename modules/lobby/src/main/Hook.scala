@@ -9,6 +9,7 @@ import actorApi.LobbyUser
 import lila.game.PerfPicker
 import lila.rating.RatingRange
 import lila.user.{ User, Perfs }
+import lila.common.PimpedJson._
 
 // realtime chess, volatile
 case class Hook(
@@ -36,7 +37,8 @@ case class Hook(
     compatibilityProperties == h.compatibilityProperties &&
       (realColor compatibleWith h.realColor) &&
       (memberOnly || h.memberOnly).fold(isAuth && h.isAuth, true) &&
-      ratingRangeCompatibleWith(h) && h.ratingRangeCompatibleWith(this)
+      ratingRangeCompatibleWith(h) && h.ratingRangeCompatibleWith(this) &&
+      (userId.isEmpty || userId != h.userId)
 
   private def ratingRangeCompatibleWith(h: Hook) = realRatingRange.fold(true) {
     range => h.rating ?? range.contains
@@ -46,7 +48,7 @@ case class Hook(
 
   lazy val realRatingRange: Option[RatingRange] = RatingRange noneIfDefault ratingRange
 
-  def userId = user map (_.id)
+  def userId = user.map(_.id)
   def isAuth = user.nonEmpty
   def username = user.fold(User.anonymous)(_.username)
   def rating = user flatMap { u => perfType map (_.key) flatMap u.ratingMap.get }
@@ -57,21 +59,16 @@ case class Hook(
   def render: JsObject = Json.obj(
     "id" -> id,
     "uid" -> uid,
-    "username" -> username,
+    "u" -> user.map(_.username),
     "rating" -> rating,
-    "variant" -> Json.obj(
-      "key" -> realVariant.key,
-      "short" -> realVariant.shortName,
-      "name" -> realVariant.name),
-    "mode" -> realMode.id,
+    "variant" -> realVariant.exotic.option(realVariant.key),
+    "ra" -> realMode.rated.option(1),
     "clock" -> clock.show,
-    "time" -> clock.estimateTotalTime,
-    "speed" -> speed.id,
-    "color" -> chess.Color(color).??(_.name),
-    "perf" -> Json.obj(
-      "icon" -> perfType.map(_.iconChar.toString),
-      "name" -> perfType.map(_.name))
-  )
+    "t" -> clock.estimateTotalTime,
+    "s" -> speed.id,
+    "c" -> chess.Color(color).map(_.name),
+    "perf" -> perfType.map(_.name)
+  ).noNull
 
   lazy val perfType = PerfPicker.perfType(speed, realVariant, none)
 

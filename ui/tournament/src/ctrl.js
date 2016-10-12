@@ -4,7 +4,7 @@ var xhr = require('./xhr');
 var pagination = require('./pagination');
 var util = require('chessground').util;
 var sound = require('./sound');
-var myCurrentGameId = require('./tournament').myCurrentGameId;
+var tour = require('./tournament');
 
 module.exports = function(env) {
 
@@ -17,10 +17,12 @@ module.exports = function(env) {
   this.vm = {
     page: this.data.standing.page,
     pages: {},
-    focusOnMe: !!this.data.me,
-    joinLoader: false,
+    lastPageDisplayed: null,
+    focusOnMe: tour.isIn(this),
+    joinSpinner: false,
     playerInfo: {
       id: null,
+      player: null,
       data: null
     },
     disableClicks: true
@@ -36,15 +38,15 @@ module.exports = function(env) {
       this.vm.playerInfo.data = data.playerInfo;
     this.loadPage(data.standing);
     if (this.vm.focusOnMe) this.scrollToMe();
-    startWatching();
+    data.featured && startWatching(data.featured.id);
     sound.end(this.data);
     sound.countDown(this.data);
-    this.vm.joinLoader = false;
+    this.vm.joinSpinner = false;
     redirectToMyGame();
   }.bind(this);
 
   var redirectToMyGame = function() {
-    var gameId = myCurrentGameId(this);
+    var gameId = tour.myCurrentGameId(this);
     if (gameId && lichess.storage.get('last-game') !== gameId)
       location.href = '/' + gameId;
   }.bind(this);
@@ -55,9 +57,9 @@ module.exports = function(env) {
   this.loadPage(this.data.standing);
 
   var setPage = function(page) {
-    // m.redraw.strategy('all');
     this.vm.page = page;
     xhr.loadPage(this, page)
+    m.redraw();
   }.bind(this);
 
   this.userSetPage = function(page) {
@@ -67,31 +69,29 @@ module.exports = function(env) {
 
   this.withdraw = function() {
     xhr.withdraw(this);
-    this.vm.joinLoader = true;
+    this.vm.joinSpinner = true;
     this.vm.focusOnMe = false;
   }.bind(this);
 
-  this.join = function() {
-    xhr.join(this);
-    this.vm.joinLoader = true;
+  this.join = function(password) {
+    if (!this.data.verdicts.accepted)
+      return this.data.verdicts.list.forEach(function(v) {
+        if (v.verdict !== 'ok') alert(v.verdict);
+      });
+    xhr.join(this, password);
+    this.vm.joinSpinner = true;
     this.vm.focusOnMe = true;
   }.bind(this);
 
-  var alreadyWatching = [];
-  var startWatching = function() {
-    var newIds = this.data.lastGames.map(function(p) {
-      return p.id;
-    }).filter(function(id) {
-      return alreadyWatching.indexOf(id) === -1;
-    });
-    if (newIds.length) {
+  var watchingGameId;
+  var startWatching = function(id) {
+    if (id !== watchingGameId) {
+      watchingGameId = id;
       setTimeout(function() {
-        this.socket.send("startWatching", newIds.join(' '));
+        this.socket.send("startWatching", id);
       }.bind(this), 1000);
-      newIds.forEach(alreadyWatching.push.bind(alreadyWatching));
     }
   }.bind(this);
-  startWatching();
 
   this.scrollToMe = function() {
     if (!this.data.me) return;
@@ -106,9 +106,11 @@ module.exports = function(env) {
     if (this.vm.focusOnMe) this.scrollToMe();
   }.bind(this);
 
-  this.showPlayerInfo = function(userId) {
+  this.showPlayerInfo = function(player) {
+    var userId = player.name.toLowerCase();
     this.vm.playerInfo = {
       id: this.vm.playerInfo.id === userId ? null : userId,
+      player: player,
       data: null
     };
     if (this.vm.playerInfo.id) xhr.playerInfo(this, this.vm.playerInfo.id);

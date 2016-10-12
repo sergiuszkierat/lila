@@ -36,6 +36,7 @@ trait Steroids
   with scalaz.syntax.ToShowOps
 
   with BooleanSteroids
+  with IntSteroids
   with OptionSteroids
   with ListSteroids
 
@@ -54,10 +55,15 @@ trait ListSteroids {
 
   import scala.util.{ Try, Success }
 
-  implicit class LilaPimpedTryList[A](list: List[Try[A]]) {
+  implicit final class LilaPimpedTryList[A](list: List[Try[A]]) {
     def sequence: Try[List[A]] = (Try(List[A]()) /: list) {
       (a, b) => a flatMap (c => b map (d => d :: c))
     } map (_.reverse)
+  }
+  implicit final class LilaPimpedList[A](list: List[A]) {
+    def sortLike[B](other: List[B], f: A => B): List[A] = list.sortWith {
+      case (x, y) => other.indexOf(f(x)) < other.indexOf(f(y))
+    }
   }
 }
 
@@ -67,7 +73,7 @@ trait BooleanSteroids {
    * Replaces scalaz boolean ops
    * so ?? works on Zero and not Monoid
    */
-  implicit class LilaPimpedBoolean(self: Boolean) {
+  implicit final class LilaPimpedBoolean(self: Boolean) {
 
     def ??[A](a: => A)(implicit z: Zero[A]): A = if (self) a else Zero[A].zero
 
@@ -81,13 +87,23 @@ trait BooleanSteroids {
   }
 }
 
+trait IntSteroids {
+
+  implicit final class LilaPimpedInt(self: Int) {
+
+    def atLeast(bottomValue: Int): Int = self max bottomValue
+
+    def atMost(topValue: Int): Int = self min topValue
+  }
+}
+
 trait OptionSteroids {
 
   /*
    * Replaces scalaz option ops
    * so ~ works on Zero and not Monoid
    */
-  implicit class LilaPimpedOption[A](self: Option[A]) {
+  implicit final class LilaPimpedOption[A](self: Option[A]) {
 
     import scalaz.std.{ option => o }
 

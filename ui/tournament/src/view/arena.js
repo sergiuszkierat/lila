@@ -4,6 +4,7 @@ var classSet = require('chessground').util.classSet;
 var util = require('./util');
 var ratio2percent = util.ratio2percent;
 var button = require('./button');
+var pagination = require('../pagination');
 
 var scoreTagNames = ['score', 'streak', 'double'];
 
@@ -35,7 +36,7 @@ function playerTr(ctrl, player) {
         'me': ctrl.userId === userId,
         'long': isLong
       }),
-      onclick: partial(ctrl.showPlayerInfo, userId)
+      onclick: partial(ctrl.showPlayerInfo, player)
     },
     children: [
       m('td', [
@@ -45,10 +46,10 @@ function playerTr(ctrl, player) {
         }) : rank(player),
         util.player(player, 'span')
       ]),
-      ctrl.data.startsAt ? m('td') : m('td', {
+      m('td', {
         class: 'sheet'
       }, player.sheet.scores.map(scoreTag)),
-      ctrl.data.startsAt ? null : m('td.total', m('strong',
+      m('td.total', m('strong',
         player.sheet.fire ? {
           class: 'is-gold',
           'data-icon': 'Q'
@@ -67,22 +68,23 @@ function podiumUsername(p) {
 }
 
 function podiumStats(p, data) {
-  var perf;
-  if (p.perf === 0) perf = m('span', ' =');
-  else if (p.perf > 0) perf = m('span.positive[data-icon=N]', p.perf);
-  else if (p.perf < 0) perf = m('span.negative[data-icon=M]', -p.perf);
+  var ratingDiff;
+  if (p.ratingDiff === 0) ratingDiff = m('span', ' =');
+  else if (p.ratingDiff > 0) ratingDiff = m('span.positive[data-icon=N]', p.ratingDiff);
+  else if (p.ratingDiff < 0) ratingDiff = m('span.negative[data-icon=M]', -p.ratingDiff);
   var nb = p.nb;
   return [
     m('span.rating.progress', [
-      p.rating + p.perf,
-      perf
+      p.rating + p.ratingDiff,
+      ratingDiff
     ]),
     m('table.stats', [
       m('tr', [m('th', 'Games played'), m('td', nb.game)]),
       nb.game ? [
         m('tr', [m('th', 'Win rate'), m('td', util.ratio2percent(nb.win / nb.game))]),
         m('tr', [m('th', 'Berserk rate'), m('td', util.ratio2percent(nb.berserk / nb.game))])
-      ] : null
+      ] : null,
+      p.performance ? m('tr', [m('th', 'Performance'), m('td', p.performance)]) : null
     ])
   ];
 }
@@ -95,6 +97,8 @@ function podiumPosition(p, data, pos) {
   ]);
 }
 
+var lastBody = null;
+
 module.exports = {
   podium: function(ctrl) {
     return m('div.podium', [
@@ -103,34 +107,25 @@ module.exports = {
       podiumPosition(ctrl.data.podium[2], ctrl.data, 'third')
     ]);
   },
-  standing: function(ctrl, pag) {
+  standing: function(ctrl, pag, klass) {
     var player = util.currentPlayer(ctrl, pag);
-    return [
-      m('thead',
-        m('tr', ctrl.data.startsAt ? [
-          m('th.large', ctrl.data.nbPlayers + ' ' + ctrl.trans('players')),
-          ctrl.userId ? m('th',
-            ctrl.data.me && !ctrl.data.me.withdraw ? button.withdraw(ctrl) : button.join(ctrl)
-          ) : m('th')
-        ] : [
-          m('th.large', [
-            ctrl.trans('standing'), (player && !player.withdraw) ? [
-              m('strong.player_rank', player.rank),
-              ' / ' + pag.nbResults
-            ] : ' (' + pag.nbResults + ')'
-          ]),
-          m('th.legend[colspan=2]', [
-            m('streak.nover', 'Streak starter'),
-            m('double.nover', 'Double points'),
-            button.joinWithdraw(ctrl)
-          ])
-        ])),
-      m('tbody', {
-        config: function() {
-          // reload user badges
-          $('body').trigger('lichess.content_loaded');
-        }
-      }, pag.currentPageResults.map(partial(playerTr, ctrl)))
-    ];
+    var tableBody = pag.currentPageResults ?
+      pag.currentPageResults.map(partial(playerTr, ctrl)) :
+      (lastBody ? lastBody : m.trust(lichess.spinnerHtml));
+    if (pag.currentPageResults) lastBody = tableBody;
+    return m('div.standing_wrap',
+      m('div.controls',
+        m('div.pager', pagination.renderPager(ctrl, pag)),
+        button.joinWithdraw(ctrl)
+      ),
+      m('table.slist.standing' + (klass ? '.' + klass : '') + (pag.currentPageResults ? '' : '.loading'), [
+        m('tbody', {
+          config: function() {
+            // reload user badges
+            lichess.pubsub.emit('content_loaded')();
+          }
+        }, tableBody)
+      ])
+    );
   }
 };

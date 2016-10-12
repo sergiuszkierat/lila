@@ -22,8 +22,6 @@ private[tournament] final class Socket(
     uidTimeout: Duration,
     socketTimeout: Duration) extends SocketActor[Member](uidTimeout) with Historical[Member, Messadata] {
 
-  private val joiningMemo = new ExpireSetMemo(uidTimeout)
-
   private val timeBomb = new TimeBomb(socketTimeout)
 
   private var delayedCrowdNotification = false
@@ -35,10 +33,16 @@ private[tournament] final class Socket(
 
   override def preStart() {
     super.preStart()
+    lilaBus.subscribe(self, Symbol(s"chat-$tournamentId"))
     TournamentRepo byId tournamentId map SetTournament.apply pipeTo self
   }
 
-  def receiveSpecific = {
+  override def postStop() {
+    super.postStop()
+    lilaBus.unsubscribe(self)
+  }
+
+  def receiveSpecific = ({
 
     case SetTournament(Some(tour)) =>
       clock = tour.clock.chessClock.some
@@ -56,7 +60,7 @@ private[tournament] final class Socket(
     case Reload => notifyReload
 
     case GetWaitingUsers =>
-      waitingUsers = waitingUsers.update(userIds, clock)
+      waitingUsers = waitingUsers.update(userIds.toSet, clock)
       sender ! waitingUsers
 
     case PingVersion(uid, v) => {
@@ -72,15 +76,9 @@ private[tournament] final class Socket(
       if (timeBomb.boom) self ! PoisonPill
     }
 
-    case lila.chat.actorApi.ChatLine(_, line) => line match {
-      case line: lila.chat.UserLine =>
-        notifyVersion("message", lila.chat.Line toJson line, Messadata(line.troll))
-      case _ =>
-    }
-
     case GetVersion => sender ! history.version
 
-    case Join(uid, user, version) =>
+    case Join(uid, user) =>
       val (enumerator, channel) = Concurrent.broadcast[JsValue]
       val member = Member(channel, user)
       addMember(uid, member)
@@ -91,25 +89,17 @@ private[tournament] final class Socket(
       quit(uid)
       notifyCrowd
 
-    case Joining(userId) => joiningMemo put userId
-
     case NotifyCrowd =>
       delayedCrowdNotification = false
-      notifyAll("crowd",
-        if (members.size > 20) JsNumber(members.size)
-        else JsArray {
-          val (anons, users) = members.values.map(_.userId flatMap lightUser).foldLeft(0 -> List[LightUser]()) {
-            case ((anons, users), Some(user)) => anons -> (user :: users)
-            case ((anons, users), None)       => (anons + 1) -> users
-          }
-          showSpectators(users, anons) map JsString.apply
-        }
-      )
+      notifyAll("crowd", showSpectators(lightUser)(members.values))
 
     case NotifyReload =>
       delayedReloadNotification = false
       notifyAll("reload")
-  }
+
+  }: Actor.Receive) orElse lila.chat.Socket.out(
+    send = (t, d, trollish) => notifyVersion(t, d, Messadata(trollish))
+  )
 
   def notifyCrowd {
     if (!delayedCrowdNotification) {
@@ -123,11 +113,9 @@ private[tournament] final class Socket(
       delayedReloadNotification = true
       // keep the delay low for immediate response to join/withdraw,
       // but still debounce to avoid tourney start message rush
-      context.system.scheduler.scheduleOnce(300 millis, self, NotifyReload)
+      context.system.scheduler.scheduleOnce(700 millis, self, NotifyReload)
     }
   }
-
-  override def userIds = (super.userIds ++ joiningMemo.keys).toList.distinct
 
   protected def shouldSkipMessageFor(message: Message, member: Member) =
     message.metadata.trollish && !member.troll

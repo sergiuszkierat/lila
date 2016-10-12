@@ -15,16 +15,18 @@
   <iframe
     frameborder="0"
     scrolling="no"
-    src="http://twitch.tv/@s.streamId/chat?popout="
+    src="https://twitch.tv/@s.streamId/chat?popout="
     height="418"></iframe>
   }
   case lila.tv.StreamerList.Hitbox => {
   <iframe
     width="330"
     height="392"
-    src="http://www.hitbox.tv/embedchat/@s.streamId"
+    src="//www.hitbox.tv/embedchat/@s.streamId"
     frameborder="0"
     allowfullscreen></iframe>
+  }
+  case lila.tv.StreamerList.Youtube => {
   }
   }
   }
@@ -47,28 +49,27 @@ title = title,
 side = side.some,
 moreCss = moreCss) {
 <div class="tv_stream">
-  <h2 class="stream_title">@s.name</h2>
+  <h2 class="stream_title"><a href="@s.url">@s.name</a></h2>
   @s.streamer.service match {
   case lila.tv.StreamerList.Twitch => {
-  <object
-    type="application/x-shockwave-flash"
+  <iframe
+    src="//player.twitch.tv/?channel=@s.streamId"
     width="694"
     height="418"
-    id="live_embed_player_flash"
-    data="http://www.twitch.tv/widgets/live_embed_player.swf?channel=@s.streamId"
-    bgcolor="transparent">
-    <param name="allowFullScreen" value="true" />
-    <param name="allowScriptAccess" value="always" />
-    <param name="allowNetworking" value="all" />
-    <param name="movie" value="http://www.twitch.tv/widgets/live_embed_player.swf" />
-    <param name="flashvars" value="hostname=www.twitch.tv&channel=@s.streamId&auto_play=true&start_volume=25" />
-  </object>
+    allowfullscreen autoplay></iframe>
   }
   case lila.tv.StreamerList.Hitbox => {
   <iframe
     width="694"
     height="391"
-    src="http://hitbox.tv/#!/embed/@s.streamId?autoplay=true"
+    src="//hitbox.tv/#!/embed/@s.streamId?autoplay=true"
+    frameborder="0" allowfullscreen></iframe>
+  }
+  case lila.tv.StreamerList.Youtube => {
+  <iframe
+    width="694"
+    height="391"
+    src="https://www.youtube.com/embed/@s.streamId?autoplay=1"
     frameborder="0" allowfullscreen></iframe>
   }
   }

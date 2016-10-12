@@ -22,8 +22,7 @@ case object GetVersion
 
 case class SendToFlag(flag: String, message: JsObject)
 
-case object PopulationGet
 case object PopulationTell
-case class NbMembers(nb: Int, pong: JsObject)
+case class NbMembers(nb: Int)
 
 case class StartWatching(uid: String, member: SocketMember, gameIds: Set[String])

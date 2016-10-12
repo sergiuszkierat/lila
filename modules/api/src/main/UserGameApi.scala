@@ -11,16 +11,16 @@ final class UserGameApi(bookmarkApi: lila.bookmark.BookmarkApi) {
 
   import lila.round.JsonView._
 
-  def filter(filterName: String, pag: Paginator[Game])(implicit ctx: Context): JsObject = {
-    val bookmarkedIds = ctx.userId ?? bookmarkApi.gameIds
-    implicit val gameWriter = Writes[Game] { g =>
-      write(g, bookmarkedIds(g.id))
+  def filter(filterName: String, pag: Paginator[Game])(implicit ctx: Context): Fu[JsObject] =
+    bookmarkApi.filterGameIdsBookmarkedBy(pag.currentPageResults, ctx.me) map { bookmarkedIds =>
+      implicit val gameWriter = Writes[Game] { g =>
+        write(g, bookmarkedIds(g.id))
+      }
+      Json.obj(
+        "filter" -> filterName,
+        "paginator" -> lila.common.paginator.PaginatorJson(pag)
+      )
     }
-    Json.obj(
-      "filter" -> filterName,
-      "paginator" -> lila.common.paginator.PaginatorJson(pag)
-    )
-  }
 
   private def write(g: Game, bookmarked: Boolean) = Json.obj(
     "id" -> g.id,
@@ -47,11 +47,10 @@ final class UserGameApi(bookmarkApi: lila.bookmark.BookmarkApi) {
     }),
     "fen" -> Forsyth.exportBoard(g.toChess.board),
     "lastMove" -> g.castleLastMoveTime.lastMoveString,
-    "opening" -> g.opening.map { o =>
-      Json.obj("code" -> o.code, "name" -> o.name)
-    },
+    "opening" -> g.opening,
     "winner" -> g.winnerColor.map(_.name),
     "bookmarks" -> g.bookmarks,
-    "bookmarked" -> bookmarked.option(true)
+    "bookmarked" -> bookmarked.option(true),
+    "analysed" -> g.metadata.analysed.option(true)
   ).noNull
 }

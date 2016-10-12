@@ -16,7 +16,7 @@ final class Env(
 
   lazy val forms = new DataForm(hub.actor.captcher)
 
-  lazy val api = new ReportApi
+  lazy val api = new ReportApi(reportColl)
 
   // api actor
   system.actorOf(Props(new Actor {
@@ -38,7 +38,7 @@ final class Env(
     }
   }), name = ActorName)
 
-  private[report] lazy val reportColl = db(CollectionReport)
+  lazy val reportColl = db(CollectionReport)
 }
 
 object Env {

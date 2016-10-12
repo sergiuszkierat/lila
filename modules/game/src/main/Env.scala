@@ -3,6 +3,7 @@ package lila.game
 import akka.actor._
 import akka.pattern.pipe
 import com.typesafe.config.Config
+import scala.concurrent.duration._
 
 import lila.common.PimpedConfig._
 
@@ -26,7 +27,6 @@ final class Env(
     val CollectionCrosstable = config getString "collection.crosstable"
     val JsPathRaw = config getString "js_path.raw"
     val JsPathCompiled = config getString "js_path.compiled"
-    val ActorName = config getString "actor.name"
     val UciMemoTtl = config duration "uci_memo.ttl"
     val netBaseUrl = config getString "net.base_url"
     val PdfExecPath = config getString "pdf.exec_path"
@@ -34,17 +34,23 @@ final class Env(
   }
   import settings._
 
-  private[game] lazy val gameColl = db(CollectionGame)
+  lazy val gameColl = db(CollectionGame)
+
+  lazy val playTime = new PlayTime(gameColl)
 
   lazy val pdfExport = PdfExport(PdfExecPath) _
 
   lazy val pngExport = PngExport(PngExecPath) _
 
+  lazy val divider = new Divider
+
   lazy val cached = new Cached(
+    coll = gameColl,
     mongoCache = mongoCache,
     defaultTtl = CachedNbTtl)
 
   lazy val paginator = new PaginatorBuilder(
+    coll = gameColl,
     cached = cached,
     maxPerPage = PaginatorMaxPerPage)
 
@@ -58,16 +64,20 @@ final class Env(
     netBaseUrl = netBaseUrl,
     getLightUser = getLightUser)
 
-  lazy val crosstableApi = new CrosstableApi(db(CollectionCrosstable))
+  lazy val crosstableApi = new CrosstableApi(
+    coll = db(CollectionCrosstable),
+    gameColl = gameColl,
+    system = system)
 
   // load captcher actor
   private val captcher = system.actorOf(Props(new Captcher), name = CaptcherName)
 
+  val recentGoodGameActor = system.actorOf(Props[RecentGoodGame], name = "recent-good-game")
+  system.lilaBus.subscribe(recentGoodGameActor, 'finishGame)
+
   scheduler.message(CaptcherDuration) {
     captcher -> actorApi.NewCaptcha
   }
-
-  def cli = new Cli(db, system = system)
 
   def onStart(gameId: String) = GameRepo game gameId foreach {
     _ foreach { game =>

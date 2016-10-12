@@ -1,11 +1,11 @@
 package lila.mod
 
-import lila.db.api._
-import lila.db.Implicits._
-import tube.modlogTube
-import play.api.libs.json.Json
+import lila.db.dsl._
 
-final class ModlogApi {
+final class ModlogApi(coll: Coll) {
+
+  import lila.db.BSON.BSONJodaDateTimeHandler
+  private implicit val ModlogBSONHandler = reactivemongo.bson.Macros.handler[Modlog]
 
   def streamConfig(mod: String) = add {
     Modlog(mod, none, Modlog.streamConfig)
@@ -78,20 +78,36 @@ final class ModlogApi {
     Modlog(mod, user.some, Modlog.deleteQaComment, details = Some(text take 140))
   }
 
-  def recent = $find($query($select.all) sort $sort.naturalDesc, 100)
+  def deleteTeam(mod: String, name: String, desc: String) = add {
+    Modlog(mod, none, Modlog.deleteTeam, details = s"$name / $desc".take(200).some)
+  }
 
-  def wasUnengined(userId: String) = $count.exists(Json.obj(
+  def terminateTournament(mod: String, name: String) = add {
+    Modlog(mod, none, Modlog.terminateTournament, details = name.some)
+  }
+
+  def chatTimeout(mod: String, user: String, reason: String) = add {
+    Modlog(mod, user.some, Modlog.chatTimeout, details = reason.some)
+  }
+
+  def recent = coll.find($empty).sort($sort naturalDesc).cursor[Modlog]().gather[List](100)
+
+  def wasUnengined(userId: String) = coll.exists($doc(
     "user" -> userId,
     "action" -> Modlog.unengine
   ))
 
-  def wasUnbooster(userId: String) = $count.exists(Json.obj(
+  def wasUnbooster(userId: String) = coll.exists($doc(
     "user" -> userId,
     "action" -> Modlog.unbooster
   ))
 
+  def userHistory(userId: String): Fu[List[Modlog]] =
+    coll.find($doc("user" -> userId)).sort($sort desc "date").cursor[Modlog]().gather[List](100)
+
   private def add(m: Modlog): Funit = {
-    play.api.Logger("ModApi").info(m.toString)
-    $insert(m)
+    lila.mon.mod.log.create()
+    lila.log("mod").info(m.toString)
+    coll.insert(m).void
   }
 }

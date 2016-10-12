@@ -1,84 +1,21 @@
 @(u: User, info: lila.app.mashup.UserInfo, games: Paginator[Game], filters: lila.app.mashup.GameFilterMenu, searchForm: Form[_], rel: Option[lila.relation.Relation], notes: List[lila.user.Note], followable: Boolean, blocked: Boolean)(implicit ctx: Context)
 
-@import lila.rating.PerfType
-
-@title = @{ s"${u.username} : ${userGameFilterTitleNoTag(info, filters.current)}${if(games.currentPage == 1) "" else " - page " + games.currentPage}" }
-
-@searchUrl = @{ routes.User.showFilter(u.username, "search") }
-
 @evenMoreJs = {
 @if(!u.lame || ctx.is(u) || isGranted(_.UserSpy)) {
 @if(filters.current.name == "search") {
 @jsTag("search.js")
 @jsTag("vendor/jquery.infinitescroll.min.js")
 }
-@jsTagCompiled("chart2.js")
 @info.ratingChart.map { ratingChart =>
-@embedJs(s"var lichess_rating_series = $ratingChart;")
+@jsTag("chart/ratingHistory.js")
+@embedJs(s"lichess.ratingHistoryChart($ratingChart);")
 }
 }
-}
-
-@showPerf(perf: lila.rating.Perf, perfType: PerfType, name: Option[String] = none) = {
-<div data-icon="@perfType.iconChar">
-  <h3 class="hint--top" data-hint="@perfType.title">
-    @if(lila.rating.PerfType.nonGame.contains(perfType)) {
-    @name.getOrElse(perfType.name).toUpperCase
-    } else {
-    <a href="@searchUrl?perf=@perfType.id">
-      @name.getOrElse(perfType.name).toUpperCase
-    </a>
-    }
-  </h3>
-  <div class="rating">
-    <strong class="hint--bottom" data-hint="Glicko rating ±@perf.glicko.intDeviation">@perf.glicko.intRating@if(perf.provisional){?}</strong>
-    <span class="hint--bottom">/ @perf.nb.localize @if(perfType.key == "puzzle") {@trans.puzzles()} else {@trans.games()}</span>
-    @showProgress(perf.progress)
-  </div>
-  <div class="rank" title="Rank is updated every 15 minutes">
-    @info.ranks.get(perfType.key).map { rank =>
-    Rank: @rank.localize@nth(rank)
-    }
-  </div>
-</div>
-}
-
-@side = {
-<div class="side sub_ratings">
-  @if(!u.lame || ctx.is(u) || isGranted(_.UserSpy)) {
-  @showPerf(u.perfs.bullet, PerfType.Bullet)
-  @showPerf(u.perfs.blitz, PerfType.Blitz)
-  @showPerf(u.perfs.classical, PerfType.Classical)
-  @showPerf(u.perfs.correspondence, PerfType.Correspondence)
-  <br />
-  @if(u.perfs.chess960.nonEmpty) {
-  @showPerf(u.perfs.chess960, PerfType.Chess960)
-  }
-  @if(u.perfs.kingOfTheHill.nonEmpty) {
-  @showPerf(u.perfs.kingOfTheHill, PerfType.KingOfTheHill)
-  }
-  @if(u.perfs.threeCheck.nonEmpty) {
-  @showPerf(u.perfs.threeCheck, PerfType.ThreeCheck)
-  }
-  @if(u.perfs.antichess.nonEmpty) {
-  @showPerf(u.perfs.antichess, PerfType.Antichess)
-  }
-  @if(u.perfs.atomic.nonEmpty) {
-  @showPerf(u.perfs.atomic, PerfType.Atomic)
-  }
-  @if(u.perfs.horde.nonEmpty) {
-  @showPerf(u.perfs.horde, PerfType.Horde)
-  }
-  <br />
-  }
-  @showPerf(u.perfs.puzzle, PerfType.Puzzle)
-  @showPerf(u.perfs.opening, PerfType.Opening)
-</div>
 }
 
 @user.layout(
-title = title,
-side = side.some,
+title =  s"${u.username} : ${userGameFilterTitleNoTag(info, filters.current)}${if(games.currentPage == 1) "" else " - page " + games.currentPage}",
+side = side(u, info.ranks, none).some,
 robots = false,
 evenMoreJs = evenMoreJs,
 openGraph = lila.app.ui.OpenGraph(
@@ -86,8 +23,18 @@ image = staticUrl("images/large_tile.png").some,
 title = u.titleUsernameWithBestRating,
 url = s"$netBaseUrl${routes.User.show(u.username).url}",
 description = describeUser(u)).some) {
-<div class="content_box no_padding user_show">
+<div data-username="@u.username" class="content_box no_padding user_show @filters.current.name@if(ctx.is(u)){ myself}">
   <div class="content_box_top">
+    @if(u.plan.active) {
+    <a href="@routes.Plan.index" class="trophy award patron icon3d hint--left" data-hint="Patron since @showDate(u.plan.sinceDate)">
+      <span data-icon="@patronIconChar"></span>
+    </a>
+    }
+    @if(info.isCoach) {
+    <a href="@routes.Coach.show(u.username)" class="trophy award icon3d coach hint--left" data-hint="Lichess coach">
+      <span data-icon=":"></span>
+    </a>
+    }
     @info.allTrophies.map { trophy =>
     <a @trophy.kind.url.map { url =>
       href="@url"
@@ -107,44 +54,28 @@ description = describeUser(u)).some) {
       <span data-icon="-"></span>
     </a>
     }
-    @if(!u.lame) {
-    @info.ranks.map {
-    case (perf, rank) if rank == 1 => {
-    <span class="trophy perf hint--left" data-hint="@PerfType.name(perf) Champion!">
-      <img src="@staticUrl("images/trophy/Big-Gold-Cup.png")" height=80 />
-    </span>
-    }
-    case (perf, rank) if rank <= 10 => {
-    <span class="trophy perf hint--left" data-hint="@PerfType.name(perf) Top 10!">
-      <img src="@staticUrl("images/trophy/Big-Silver-Cup.png")" height=80 />
-    </span>
-    }
-    case (perf, rank) if rank <= 50 => {
-    <span class="trophy perf hint--left" data-hint="@PerfType.name(perf) Top 50 player!">
-      <img src="@staticUrl("images/trophy/Fancy-Gold.png")" height=80 />
-    </span>
-    }
-    case (perf, rank) if rank <= 100 => {
-    <span class="trophy perf hint--left" data-hint="@PerfType.name(perf) Top 100 player!">
-      <img src="@staticUrl("images/trophy/Gold-Cup.png")" height=80 />
-    </span>
-    }
-    case _ => {}
-    }
-    }
-    <h1 class="lichess_title"><span@if(isOnline(u.id)) { class="connected" title="Online" } else { title="Offline" } data-icon="r"></span> @u.titleUsername</h1>
+    @perfTrophies(u, info.ranks)
+    <h1 class="lichess_title user_link @if(isOnline(u.id)){online}else{offline}">
+      @if(u.isPatron) {
+      <a href="@routes.Plan.index">@Html(patronIcon)</a>@u.titleUsername
+      } else {
+      @Html(lineIcon)@u.titleUsername
+      }
+    </h1>
     @if(u.disabled) {
     <span class="staff">CLOSED</span>
     }
   </div>
   <div class="social content_box_inter">
-    <a class="intertab" href="@routes.Relation.following(u.username)">@splitNumber(trans.nbFollowing(info.nbFollowing))</a>
     <a class="intertab" href="@routes.Relation.followers(u.username)">@splitNumber(trans.nbFollowers(info.nbFollowers))</a>
     @info.nbBlockers.map { nb =>
     <a class="intertab">@splitNumber(nb + " Blockers")</a>
     }
-    <span class="intertab">@splitNumber(u.toints + " " + trans.tournamentPoints())</span>
-    <a class="intertab" href="@routes.ForumPost.search("user:" + u.username, 1)">@splitNumber(trans.nbForumPosts(info.nbPosts))</a>
+    <a href="@routes.UserTournament.path(u.username, "recent")" class="intertab tournament_stats" data-toints="@u.toints">@splitNumber(u.toints + " " + trans.tournamentPoints())</a>
+    <a href="@routes.Study.byOwnerDefault(u.username)" class="intertab">@splitNumber(info.nbStudies + " studies")</a>
+    <a class="intertab" @NotForKids {
+      href="@routes.ForumPost.search("user:" + u.username, 1)"
+      }>@splitNumber(trans.nbForumPosts(info.nbPosts))</a>
     @NotForKids {
     @if(ctx.isAuth && !ctx.is(u)) {
     <a class="intertab note_zone_toggle">@splitNumber(notes.size + " Notes")</a>
@@ -155,7 +86,7 @@ description = describeUser(u)).some) {
       <a class="button hint--bottom-left" href="@routes.Account.profile" data-hint="@trans.editProfile()">
         <span data-icon="%"></span>
       </a>
-      <a class="button hint--bottom-left" href="@routes.Relation.blocks" data-hint="@trans.listBlockedPlayers()">
+      <a class="button hint--bottom-left" href="@routes.Relation.blocks()" data-hint="@trans.listBlockedPlayers()">
         <span data-icon="k"></span>
       </a>
       }
@@ -202,14 +133,19 @@ description = describeUser(u)).some) {
   @if(filters.current.name == "search") {
   @search.user(u, searchForm)
   } else {
-  <div class="meat">
+  <div class="meat@if(info.insightVisible){ with_insights}">
     @info.ratingChart.ifTrue(!u.lame || ctx.is(u) || isGranted(_.UserSpy)).map { ratingChart =>
     <div class="rating_history">
-      <span>Chart loading&#8230;</span>
+      @base.spinner()
     </div>
+    }.getOrElse {
+    @if(ctx.is(u)) {
+    @newPlayer(u)
     }
+    }
+    @defining(u.profileOrDefault) { profile =>
     <div class="user-infos scroll-shadow-hard">
-      @if(ctx.me.fold(true)(u !=)) {
+      @if(!ctx.is(u)) {
       @if(u.engine) {
       <div class="warning engine_warning">
         <span data-icon="j" class="is4"></span>
@@ -224,26 +160,27 @@ description = describeUser(u)).some) {
       }
       } else {
       @u.title.flatMap(lila.user.User.titlesMap.get).map { title =>
-      <p data-icon="E" class="honorific title"> @title</p>
+      <p data-icon="E" class="honorific title text">@title</p>
       }
       }
-      @u.profile.map { p =>
       @NotForKids {
-      @p.nonEmptyRealName.map { name =>
+      @profile.nonEmptyRealName.map { name =>
       <strong class="name">@name</strong>
       }
-      @p.nonEmptyBio.map { bio =>
-      <p class="bio">@Html(addLinks(shorten(bio, 400).body))</p>
-      }
+      @profile.nonEmptyBio.ifTrue(!u.troll || ctx.is(u)).map { bio =>
+      <p class="bio">@Html(addUserProfileLinks(addLinks(shorten(bio, 400).body)))</p>
       }
       }
       <div class="stats">
+        @profile.officialRating.map { r =>
+        <div>@r.name.toUpperCase rating: <strong>@r.rating</strong></div>
+        }
         @NotForKids {
-        @u.profileOrDefault.nonEmptyLocation.map { l =>
+        @profile.nonEmptyLocation.map { l =>
         <span class="location">@l</span>,
         }
         }
-        @u.profileOrDefault.countryInfo.map {
+        @profile.countryInfo.map {
         case (code, name) => {
         <span class="country"><img class="flag" src="@staticUrl(s"images/flags/$code.png")" /> @name</span>
         }
@@ -253,9 +190,17 @@ description = describeUser(u)).some) {
         }
         <p class="thin">@trans.memberSince() @showDate(u.createdAt)</p>
         @u.seenAt.map { seen =>
-        <p class="thin">@trans.lastLogin() @momentFormat(seen)</p>
+        <p class="thin">@trans.lastSeenActive(momentFromNow(seen))</p>
         }
-        <a href="@routes.User.opponents(u.username)">@trans.favoriteOpponents()</a>
+        @info.completionRatePercent.map { c =>
+        <p class="thin">Game completion rate: @c%</p>
+        }
+        @if(ctx is u) {
+        <a href="@routes.Account.profile" title="@trans.editProfile()">
+          Profile completion: @profile.completionPercent%
+        </a>
+        }
+        <!-- <a href="@routes.User.opponents(u.username)">@trans.favoriteOpponents()</a> -->
         <br />
         <br />
         <p>@trans.tpTimeSpentPlaying(showPeriod(info.playTime.totalPeriod))</p>
@@ -263,16 +208,24 @@ description = describeUser(u)).some) {
         <p>@trans.tpTimeSpentOnTV(showPeriod(tvPeriod))</p>
         }
         <div class="teams">
-          @teamIds(u.id).sortBy(t => !myTeam(t)).map { teamId =>
+          @teamIds(u.id).toList.sortBy(t => !myTeam(t)).map { teamId =>
           @teamLink(teamId, myTeam(teamId).option("mine"))
           }
         </div>
       </div>
     </div>
+    }
+    @if(info.insightVisible) {
+    <a class="insight" href="@routes.Insight.index(u.username)">
+      <span class="icon" data-icon="7"></span>
+      <strong>Chess Insights</strong>
+      <em>Analytics from @if(ctx.is(u)){your}else{@u.username's} games</em>
+    </a>
+    }
   </div>
   }
-  @if(u.hasGames || info.nbImported > 0) {
-  <div class="content_box_inter tabs">
+  @if(u.hasGames || info.nbImported > 0 || info.nbBookmark > 0) {
+  <div class="content_box_inter tabs" id="games">
     @filters.list.map { f =>
     <a class="intertab@{ (filters.current == f).??(" active") }" href="@routes.User.showFilter(u.username, f.name)">
       @userGameFilterTitle(info, f)

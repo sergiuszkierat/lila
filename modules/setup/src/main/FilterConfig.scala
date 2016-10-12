@@ -37,7 +37,9 @@ object FilterConfig {
     chess.variant.ThreeCheck,
     chess.variant.Antichess,
     chess.variant.Atomic,
-    chess.variant.Horde)
+    chess.variant.Horde,
+    chess.variant.RacingKings,
+    chess.variant.Crazyhouse)
 
   val modes = Mode.all
   val speeds = Speed.all
@@ -72,6 +74,4 @@ object FilterConfig {
       "s" -> o.speed.map(_.id),
       "e" -> o.ratingRange.toString)
   }
-
-  private[setup] val tube = lila.db.BsTube(filterConfigBSONHandler)
 }

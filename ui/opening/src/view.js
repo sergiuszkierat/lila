@@ -68,7 +68,7 @@ function renderViewTable(ctrl) {
         }, m('span[data-icon=U]'))
       ]),
       m('p',
-        m('input.copyable[readonly][spellCheck=false]', {
+        m('input.copyable.autoselect[readonly][spellCheck=false]', {
           value: ctrl.data.opening.url
         })
       )
@@ -261,26 +261,21 @@ function progress(ctrl) {
   ]);
 }
 
-var loading = m('div.loader.fast');
-
 module.exports = function(ctrl) {
   var percent = Math.ceil(ctrl.vm.figuredOut.length * 100 / ctrl.data.opening.goal) + '%';
   return m('div#opening.training', [
     renderSide(ctrl),
     m('div.board_and_ground', [
       m('div', chessground.view(ctrl.chessground)),
-      m('div.right', ctrl.vm.loading ? loading : (
+      m('div.right', ctrl.vm.loading ? m.trust(lichess.spinnerHtml) : (
         ctrl.data.play ? renderPlayTable(ctrl) : renderViewTable(ctrl)
       ))
     ]),
     m('div.underboard',
       m('div.center', [
         progress(ctrl),
-        m('table.identified', ctrl.data.opening.identified.map(function(ident) {
-          return m('tr', [
-            m('td', ident.name),
-            m('td', ident.moves)
-          ]);
+        m('ul.identified', ctrl.data.opening.identified.map(function(name) {
+          return m('li', name);
         })), (ctrl.data.user && ctrl.data.user.history) ? renderHistory(ctrl) : null,
         ctrl.data.play ? null : renderContinueLinks(ctrl)
       ])

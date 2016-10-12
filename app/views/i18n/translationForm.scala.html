@@ -11,7 +11,7 @@ side = side.some) {
 
 <h1 class="lichess_title">@info.codeAndName</h1>
 <div class="progressbar flashy @info.complete.fold("green", "")">
-  <div style="width: @info.percent%"></div>
+  <div class="current" style="width: @info.percent%"></div>
 </div>
 <br />
 Please translate the following English words and phrases below.<br />
@@ -62,7 +62,7 @@ No need to submit a complete translation. You can just translate some sentences,
     value="@form("comment").value"
     name="@form("comment").name"
     id="@form("comment").id"
-    placeholder="Briefly describe your changes, in english" />
+    placeholder="Briefly describe your changes, in English" />
     @errMsg(form("comment"))
   </div>
   <br />

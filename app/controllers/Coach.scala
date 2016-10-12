@@ -1,94 +1,115 @@
 package controllers
 
+import play.api.mvc._, Results._
+
 import lila.api.Context
 import lila.app._
-import play.api.libs.json.Json
-import play.api.mvc.Result
+import lila.coach.{ Coach => CoachModel, CoachProfileForm, CoachReviewForm, CoachPager }
+import lila.user.{ User => UserModel, UserRepo }
 import views._
 
 object Coach extends LilaController {
 
-  private def env = Env.coach
+  private val api = Env.coach.api
 
-  def opening(username: String, colorStr: String) = Open { implicit ctx =>
-    chess.Color(colorStr).fold(notFound) { color =>
-      Accessible(username) { user =>
-        env.statApi.count(user.id) map { nbPeriods =>
-          Ok(html.coach.opening(user, color, nbPeriods))
-        }
-      }
+  def allDefault(page: Int) = all(CoachPager.Order.Login.key, page)
+
+  def all(o: String, page: Int) = Open { implicit ctx =>
+    val order = CoachPager.Order(o)
+    Env.coach.pager(order, page) map { pager =>
+      Ok(html.coach.index(pager, order))
     }
   }
 
-  def openingJson(username: String, colorStr: String) = Open { implicit ctx =>
-    chess.Color(colorStr).fold(notFoundJson(s"No such color: $colorStr")) { color =>
-      AccessibleJson(username) { user =>
-        WithRange { range =>
-          env.statApi.fetchRangeForOpenings(user.id, range) flatMap {
-            _.fold(notFoundJson(s"Data not generated yet")) { period =>
-              env.jsonView.opening(period, color) map { data =>
-                Ok(data)
+  def show(username: String) = Open { implicit ctx =>
+      OptionFuResult(api find username) { c =>
+        WithVisibleCoach(c) {
+          Env.study.api.publicByIds {
+            c.coach.profile.studyIds.map(_.value)
+          } flatMap Env.study.pager.withChaptersAndLiking(ctx.me) flatMap { studies =>
+            api.reviews.approvedByCoach(c.coach) flatMap { reviews =>
+              ctx.me.?? { api.reviews.isPending(_, c.coach) } map { isPending =>
+                lila.mon.coach.pageView.profile(c.coach.id.value)()
+                Ok(html.coach.show(c, reviews, studies, reviewApproval = isPending))
               }
             }
           }
         }
       }
-    }
   }
 
-  def move(username: String) = Open { implicit ctx =>
-    Accessible(username) { user =>
-      env.statApi.count(user.id) map { nbPeriods =>
-        Ok(html.coach.move(user, nbPeriods))
-      }
-    }
-  }
-
-  def moveJson(username: String) = Open { implicit ctx =>
-    AccessibleJson(username) { user =>
-      WithRange { range =>
-        env.statApi.fetchRangeForMoves(user.id, range) flatMap {
-          _.fold(notFoundJson(s"Data not generated yet")) { period =>
-            env.jsonView.move(period) map { data =>
-              Ok(data)
-            }
-          }
+  def review(username: String) = AuthBody { implicit ctx =>
+    me =>
+      OptionFuResult(api find username) { c =>
+        WithVisibleCoach(c) {
+          implicit val req = ctx.body
+          lila.coach.CoachReviewForm.form.bindFromRequest.fold(
+            err => Redirect(routes.Coach.show(c.user.username)).fuccess,
+            data => api.reviews.add(me, c.coach, data) map { review =>
+              Redirect(routes.Coach.show(c.user.username))
+            })
         }
       }
-    }
   }
 
-  def refresh(username: String) = Open { implicit ctx =>
-    Accessible(username) { user =>
-      env.aggregator(user) inject Ok
-    }
+  def approveReview(id: String) = SecureBody(_.Coach) { implicit ctx =>
+    me =>
+      OptionFuResult(api.reviews.byId(id)) { review =>
+        api.byId(review.coachId).map(_ ?? (_ is me)) flatMap {
+          case false => notFound
+          case true  => api.reviews.approve(review, getBool("v")) inject Ok
+        }
+      }
   }
 
-  private def WithRange(f: Range => Fu[Result])(implicit ctx: Context): Fu[Result] =
-    get("range").flatMap {
-      _.split('-') match {
-        case Array(a, b) => (parseIntOption(a) |@| parseIntOption(b))(Range.apply)
-        case _           => none
-      }
-    }.fold(notFoundJson("No range provided"))(f)
+  private def WithVisibleCoach(c: CoachModel.WithUser)(f: Fu[Result])(implicit ctx: Context) =
+    if (c.coach.isListed || ctx.me.??(c.coach.is) || isGranted(_.Admin)) f
+    else notFound
 
-  private def Accessible(username: String)(f: lila.user.User => Fu[Result])(implicit ctx: Context) =
-    lila.user.UserRepo named username flatMap {
-      case None => notFound
-      case Some(u) => env.share.grant(u, ctx.me) flatMap {
-        case true                          => f(u)
-        case false if isGranted(_.UserSpy) => f(u)
-        case false                         => fuccess(Forbidden(html.coach.forbidden(u)))
+  def edit = Secure(_.Coach) { implicit ctx =>
+    me =>
+      OptionFuResult(api findOrInit me) { c =>
+        api.reviews.pendingByCoach(c.coach) map { reviews =>
+          NoCache(Ok(html.coach.edit(c, CoachProfileForm edit c.coach, reviews)))
+        }
       }
-    }
+  }
 
-  private def AccessibleJson(username: String)(f: lila.user.User => Fu[Result])(implicit ctx: Context) =
-    lila.user.UserRepo named username flatMap {
-      case None => notFoundJson(s"No such user: $username")
-      case Some(u) => env.share.grant(u, ctx.me) flatMap {
-        case true                          => f(u)
-        case false if isGranted(_.UserSpy) => f(u)
-        case false                         => fuccess(Forbidden(Json.obj("error" -> s"User $username data is protected")))
+  def editApply = SecureBody(_.Coach) { implicit ctx =>
+    me =>
+      OptionFuResult(api findOrInit me) { c =>
+        implicit val req = ctx.body
+        CoachProfileForm.edit(c.coach).bindFromRequest.fold(
+          form => fuccess(BadRequest),
+          data => api.update(c, data) inject Ok
+        )
       }
-    } map (_ as JSON)
+  }
+
+  def picture = Secure(_.Coach) { implicit ctx =>
+    me =>
+      OptionResult(api findOrInit me) { c =>
+        NoCache(Ok(html.coach.picture(c)))
+      }
+  }
+
+  def pictureApply = AuthBody(BodyParsers.parse.multipartFormData) { implicit ctx =>
+    me =>
+      OptionFuResult(api findOrInit me) { c =>
+        implicit val req = ctx.body
+        ctx.body.body.file("picture") match {
+          case Some(pic) => api.uploadPicture(c, pic) recover {
+            case e: lila.common.LilaException => BadRequest(html.coach.picture(c, e.message.some))
+          } inject Redirect(routes.Coach.edit)
+          case None => fuccess(Redirect(routes.Coach.edit))
+        }
+      }
+  }
+
+  def pictureDelete = Secure(_.Coach) { implicit ctx =>
+    me =>
+      OptionFuResult(api findOrInit me) { c =>
+        api.deletePicture(c) inject Redirect(routes.Coach.edit)
+      }
+  }
 }

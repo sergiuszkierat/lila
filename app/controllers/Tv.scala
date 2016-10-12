@@ -30,21 +30,23 @@ object Tv extends LilaController {
   }
 
   private def lichessTv(channel: lila.tv.Tv.Channel)(implicit ctx: Context) =
-    OptionFuResult(Env.tv.tv getGame channel) { game =>
-      val flip = getBool("flip")
-      val pov = flip.fold(Pov second game, Pov first game)
-      val onTv = lila.round.OnTv(channel.key, flip)
-      negotiate(
-        html = {
-          Env.api.roundApi.watcher(pov, lila.api.Mobile.Api.currentVersion, tv = onTv.some) zip
-            Env.game.crosstableApi(game) zip
-            Env.tv.tv.getChampions map {
-              case ((data, cross), champions) =>
-                Ok(html.tv.index(channel, champions, pov, data, cross, flip))
-            }
-        },
-        api = apiVersion => Env.api.roundApi.watcher(pov, apiVersion, tv = onTv.some) map { Ok(_) }
-      )
+    OptionFuResult(Env.tv.tv getGameAndHistory channel) {
+      case (game, history) =>
+        val flip = getBool("flip")
+        val pov = flip.fold(Pov second game, Pov first game)
+        val onTv = lila.round.OnTv(channel.key, flip)
+        negotiate(
+          html = {
+            Env.api.roundApi.watcher(pov, lila.api.Mobile.Api.currentVersion, tv = onTv.some) zip
+              Env.game.crosstableApi(game) zip
+              Env.tv.tv.getChampions map {
+                case ((data, cross), champions) => NoCache {
+                  Ok(html.tv.index(channel, champions, pov, data, cross, flip, history))
+                }
+              }
+          },
+          api = apiVersion => Env.api.roundApi.watcher(pov, apiVersion, tv = onTv.some) map { Ok(_) }
+        )
     }
 
   def games = gamesChannel(lila.tv.Tv.Channel.Best.key)
@@ -56,20 +58,24 @@ object Tv extends LilaController {
   private def lichessGames(channel: lila.tv.Tv.Channel)(implicit ctx: Context) =
     Env.tv.tv.getChampions zip
       Env.tv.tv.getGames(channel, 9) map {
-        case (champs, games) =>
+        case (champs, games) => NoCache {
           Ok(html.tv.games(channel, games map lila.game.Pov.first, champs))
+        }
       }
 
   def streamIn(id: String) = Open { implicit ctx =>
-    Env.tv.streamsOnAir flatMap { streams =>
-      streams find (_.id == id) match {
-        case None    => notFound
-        case Some(s) => fuccess(Ok(html.tv.stream(s, streams filterNot (_.id == id))))
+    OptionFuResult(Env.tv.streamerList find id) { streamer =>
+      Env.tv.streamsOnAir.all flatMap { streams =>
+        val others = streams.filter(_.id != id)
+        streams find (_.id == id) match {
+          case None    => fuccess(Ok(html.tv.notStreaming(streamer, others)))
+          case Some(s) => fuccess(Ok(html.tv.stream(s, others)))
+        }
       }
     }
   }
 
-  def streamOut = Action.async {
+  def feed = Action.async {
     import makeTimeout.short
     import akka.pattern.ask
     import lila.round.TvBroadcast
@@ -82,17 +88,19 @@ object Tv extends LilaController {
   }
 
   def streamConfig = Auth { implicit ctx =>
-    me =>
-      Env.tv.streamerList.store.get.map { text =>
-        Ok(html.tv.streamConfig(Env.tv.streamerList.form.fill(text)))
-      }
+    me => for {
+      text <- Env.tv.streamerList.store.get
+      streamers <- Env.tv.streamerList.get
+    } yield Ok(html.tv.streamConfig(streamers, Env.tv.streamerList.form.fill(text)))
   }
 
   def streamConfigSave = SecureBody(_.StreamConfig) { implicit ctx =>
     me =>
       implicit val req = ctx.body
       FormFuResult(Env.tv.streamerList.form) { err =>
-        fuccess(html.tv.streamConfig(err))
+        Env.tv.streamerList.get map { streamers =>
+          html.tv.streamConfig(streamers, err)
+        }
       } { text =>
         Env.tv.streamerList.store.set(text) >>
           Env.mod.logApi.streamConfig(me.id) inject Redirect(routes.Tv.streamConfig)
@@ -104,12 +112,12 @@ object Tv extends LilaController {
       val bg = get("bg", req) | "light"
       val theme = get("theme", req) | "brown"
       val url = s"""${req.domain + routes.Tv.frame}?bg=$bg&theme=$theme"""
-      s"""document.write("<iframe src='http://$url&embed=" + document.domain + "' class='lichess-tv-iframe' allowtransparency='true' frameBorder='0' style='width: 224px; height: 264px;' title='Lichess free online chess'></iframe>");"""
+      s"""document.write("<iframe src='//$url&embed=" + document.domain + "' class='lichess-tv-iframe' allowtransparency='true' frameBorder='0' style='width: 224px; height: 264px;' title='Lichess free online chess'></iframe>");"""
     } as JAVASCRIPT withHeaders (CACHE_CONTROL -> "max-age=86400")
   }
 
   def frame = Action.async { req =>
-    Env.tv.tv.getBest map {
+    Env.tv.tv.getBestGame map {
       case None => NotFound
       case Some(game) => Ok(views.html.tv.embed(
         Pov first game,

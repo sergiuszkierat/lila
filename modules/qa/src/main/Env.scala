@@ -9,11 +9,11 @@ final class Env(
     hub: lila.hub.Env,
     detectLanguage: DetectLanguage,
     mongoCache: lila.memo.MongoCache.Builder,
+    notifyApi: lila.notify.NotifyApi,
     db: lila.db.Env) {
 
   private val CollectionQuestion = config getString "collection.question"
   private val CollectionAnswer = config getString "collection.answer"
-  private val NotifierSender = config getString "notifier.sender"
 
   private lazy val questionColl = db(CollectionQuestion)
 
@@ -24,8 +24,7 @@ final class Env(
     notifier = notifier)
 
   private lazy val notifier = new Notifier(
-    sender = NotifierSender,
-    messenger = hub.actor.messenger,
+    notifyApi = notifyApi,
     timeline = hub.actor.timeline)
 
   lazy val search = new Search(questionColl)
@@ -40,5 +39,6 @@ object Env {
     hub = lila.hub.Env.current,
     detectLanguage = DetectLanguage(lila.common.PlayApp loadConfig "detectlanguage"),
     mongoCache = lila.memo.Env.current.mongoCache,
+    notifyApi = lila.notify.Env.current.api,
     db = lila.db.Env.current)
 }

@@ -9,16 +9,20 @@ var renderStatus = require('game').view.status;
 var router = require('game').router;
 var m = require('mithril');
 
-var emptyMove = m('move', '...');
+var emptyMove = m('move.empty', '...');
+var nullMove = m('move.empty', '');
 
 function renderMove(step, curPly, orEmpty) {
-  return step ? {
+  if (!step) return orEmpty ? emptyMove : nullMove;
+  var san = step.san.replace('x', 'х');
+  if (san[0] === 'P') san = san.slice(1);
+  return {
     tag: 'move',
     attrs: step.ply !== curPly ? {} : {
       class: 'active'
     },
-    children: [step.san]
-  } : (orEmpty ? emptyMove : null)
+    children: [san]
+  };
 }
 
 function renderResult(ctrl) {
@@ -104,44 +108,62 @@ function analyseButton(ctrl) {
     m('a', attrs, [
       m('span', {
         'data-icon': 'A',
-        class: ctrl.data.forecastCount ? 'text' : null
+        class: ctrl.data.forecastCount ? 'text' : ''
       }),
       ctrl.data.forecastCount
     ]),
     showInfo ? m('div.forecast-info.info.none', [
-      m('strong.title.text[data-icon=]', 'New feature'),
-      m('span.content', 'Use the analysis board to create conditional premoves!')
+      m('strong.title.text[data-icon=]', 'Speed up your game!'),
+      m('span.content', [
+        'Use the analysis board to create conditional premoves.',
+        m('br'),
+        'Now available on your turn!'
+      ])
     ]) : null
   ];
 }
 
+var flipIcon = m('span[data-icon=B]');
+
 function renderButtons(ctrl) {
-  var firstPly = round.firstPly(ctrl.data);
-  var lastPly = round.lastPly(ctrl.data);
+  var d = ctrl.data;
+  var firstPly = round.firstPly(d);
+  var lastPly = round.lastPly(d);
   var flipAttrs = {
     class: 'button flip hint--top' + (ctrl.vm.flip ? ' active' : ''),
     'data-hint': ctrl.trans('flipBoard'),
+    'data-act': 'flip'
   };
-  if (ctrl.data.tv) flipAttrs.href = '/tv/' + ctrl.data.tv.channel + (ctrl.data.tv.flip ? '' : '?flip=1');
-  else if (ctrl.data.player.spectator) flipAttrs.href = router.game(ctrl.data, ctrl.data.opponent.color);
-  else flipAttrs.onclick = ctrl.flip;
-  return m('div.buttons', [
-    m('a', flipAttrs, m('span[data-icon=B]')), [
-      ['first', 'W', firstPly],
-      ['prev', 'Y', ctrl.vm.ply - 1],
-      ['next', 'X', ctrl.vm.ply + 1],
-      ['last', 'V', lastPly]
-    ].map(function(b) {
-      var enabled = ctrl.vm.ply !== b[2] && b[2] >= firstPly && b[2] <= lastPly;
+  return m('div.buttons', {
+    config: util.bindOnce('mousedown', function(e) {
+      var ply = parseInt(e.target.getAttribute('data-ply'));
+      if (!isNaN(ply)) ctrl.userJump(ply);
+      else {
+        var action = e.target.getAttribute('data-act') || e.target.parentNode.getAttribute('data-act');
+        if (action === 'flip') {
+          if (d.tv) location.href = '/tv/' + d.tv.channel + (d.tv.flip ? '' : '?flip=1');
+          else if (d.player.spectator) location.href = router.game(d, d.opponent.color);
+          else ctrl.flip();
+        }
+      }
+    })
+  }, [
+    m('a', flipAttrs, flipIcon), [
+      ['W', firstPly],
+      ['Y', ctrl.vm.ply - 1],
+      ['X', ctrl.vm.ply + 1],
+      ['V', lastPly]
+    ].map(function(b, i) {
+      var enabled = ctrl.vm.ply !== b[1] && b[1] >= firstPly && b[1] <= lastPly;
       return m('a', {
-        class: 'button ' + b[0] + ' ' + classSet({
+        class: 'button ' + classSet({
           disabled: (ctrl.broken || !enabled),
-          glowed: b[0] === 'last' && ctrl.isLate() && !ctrl.vm.initializing
+          glowed: i === 3 && ctrl.isLate() && !ctrl.vm.initializing
         }),
-        'data-icon': b[1],
-        onclick: enabled ? partial(ctrl.jump, b[2]) : null
+        'data-icon': b[0],
+        'data-ply': enabled ? b[1] : '-'
       });
-    }), game.userAnalysable(ctrl.data) ? analyseButton(ctrl) : null
+    }), game.userAnalysable(d) ? analyseButton(ctrl) : null
   ]);
 }
 
@@ -158,29 +180,41 @@ function autoScroll(el, ctrl) {
   });
 }
 
+function racingKingsInit(d) {
+  if (d.game.variant.key === 'racingKings' && d.game.turns === 0 && !d.player.spectator)
+    return m('div.message', {
+      'data-icon': '',
+    }, [
+      "You have the " + d.player.color + " pieces",
+      d.player.color === 'white' ? [',', m('br'), m('strong', "it's your turn!")] : null
+    ]);
+}
+
 module.exports = function(ctrl) {
-  var h = ctrl.vm.ply + ctrl.stepsHash(ctrl.data.steps) + ctrl.data.game.status.id + ctrl.data.game.winner + ctrl.vm.flip;
+  var d = ctrl.data;
+  var h = ctrl.vm.ply + ctrl.stepsHash(d.steps) + d.game.status.id + d.game.winner + ctrl.vm.flip;
   if (ctrl.vm.replayHash === h) return {
     subtree: 'retain'
   };
   ctrl.vm.replayHash = h;
+  var message = (d.game.variant.key === 'racingKings' && d.game.turns === 0) ? racingKingsInit : null;
   return m('div.replay', [
     renderButtons(ctrl),
-    ctrl.replayEnabledByPref() ? m('div.moves', {
-      config: function(el, isUpdate) {
+    racingKingsInit(ctrl.data) || (ctrl.replayEnabledByPref() ? m('div.moves', {
+      config: function(el, isUpdate, ctx) {
         if (isUpdate) return;
+        util.bindOnce('mousedown', function(e) {
+          var turn = parseInt($(e.target).siblings('index').text());
+          var ply = 2 * turn - 2 + $(e.target).index();
+          if (ply) ctrl.userJump(ply);
+        })(el, isUpdate, ctx);
         var scrollNow = partial(autoScroll, el, ctrl);
         ctrl.vm.autoScroll = {
           now: scrollNow,
           throttle: util.throttle(300, false, scrollNow)
         };
         scrollNow();
-      },
-      onmousedown: function(e) {
-        var turn = parseInt($(e.target).siblings('index').text());
-        var ply = 2 * turn - 2 + $(e.target).index();
-        if (ply) ctrl.jump(ply);
       }
-    }, renderMoves(ctrl)) : renderResult(ctrl)
+    }, renderMoves(ctrl)) : renderResult(ctrl))
   ]);
 }

@@ -5,7 +5,6 @@ import chess.{ Game => ChessGame, Board, Situation, Clock, Speed }
 
 import lila.game.Game
 import lila.lobby.Color
-import lila.tournament.{ System => TournamentSystem }
 
 private[setup] trait Config {
 
@@ -48,11 +47,6 @@ private[setup] trait Config {
   def makeDaysPerTurn: Option[Int] = (timeMode == TimeMode.Correspondence) option days
 }
 
-trait GameGenerator { self: Config =>
-
-  def game: Game
-}
-
 trait Positional { self: Config =>
 
   import chess.format.Forsyth, Forsyth.SituationPlus
@@ -68,12 +62,12 @@ trait Positional { self: Config =>
   def fenGame(builder: ChessGame => Game): Game = {
     val baseState = fen ifTrue (variant == chess.variant.FromPosition) flatMap Forsyth.<<<
     val (chessGame, state) = baseState.fold(makeGame -> none[SituationPlus]) {
-      case sit@SituationPlus(Situation(board, color), turns) =>
+      case sit@SituationPlus(Situation(board, color), _) =>
         val game = ChessGame(
           board = board,
           player = color,
-          turns = turns,
-          startedAtTurn = turns,
+          turns = sit.turns,
+          startedAtTurn = sit.turns,
           clock = makeClock)
         if (Forsyth.>>(game) == Forsyth.initial) makeGame(chess.variant.Standard) -> none
         else game -> baseState
@@ -94,9 +88,6 @@ trait Positional { self: Config =>
 object Config extends BaseConfig
 
 trait BaseConfig {
-  val systems = List(TournamentSystem.Arena.id)
-  val systemDefault = TournamentSystem.default
-
   val variants = List(chess.variant.Standard.id, chess.variant.Chess960.id)
   val variantDefault = chess.variant.Standard
 
@@ -104,11 +95,14 @@ trait BaseConfig {
   val aiVariants = variants :+
     chess.variant.KingOfTheHill.id :+
     chess.variant.ThreeCheck.id :+
+    chess.variant.Atomic.id :+
+    chess.variant.Horde.id :+
+    chess.variant.RacingKings.id :+
     chess.variant.FromPosition.id
   val variantsWithVariants =
-    variants :+ chess.variant.KingOfTheHill.id :+ chess.variant.ThreeCheck.id :+ chess.variant.Antichess.id :+ chess.variant.Atomic.id :+ chess.variant.Horde.id
+    variants :+ chess.variant.Crazyhouse.id :+ chess.variant.KingOfTheHill.id :+ chess.variant.ThreeCheck.id :+ chess.variant.Antichess.id :+ chess.variant.Atomic.id :+ chess.variant.Horde.id :+ chess.variant.RacingKings.id
   val variantsWithFenAndVariants =
-    variants :+ chess.variant.KingOfTheHill.id :+ chess.variant.ThreeCheck.id :+ chess.variant.Antichess.id :+ chess.variant.Atomic.id :+ chess.variant.Horde.id :+ chess.variant.FromPosition.id
+    variantsWithVariants :+ chess.variant.FromPosition.id
 
   val speeds = Speed.all map (_.id)
 

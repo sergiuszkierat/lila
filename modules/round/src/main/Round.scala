@@ -1,17 +1,17 @@
 package lila.round
 
-import scala.concurrent.duration._
-
 import akka.actor._
 import akka.pattern.{ ask, pipe }
+import org.joda.time.DateTime
+import scala.concurrent.duration._
 
 import actorApi._, round._
 import chess.Color
-import lila.game.{ Game, GameRepo, Pov, PovRef, PlayerRef, Event, Progress }
+import lila.game.{ Game, Pov, Event }
+import lila.hub.actorApi.DeployPost
 import lila.hub.actorApi.map._
-import lila.hub.actorApi.{ Deploy, RemindDeployPost }
+import lila.hub.actorApi.round.FishnetPlay
 import lila.hub.SequentialActor
-import lila.i18n.I18nKey.{ Select => SelectI18nKey }
 import makeTimeout.large
 
 private[round] final class Round(
@@ -24,7 +24,6 @@ private[round] final class Round(
     drawer: Drawer,
     forecastApi: ForecastApi,
     socketHub: ActorRef,
-    monitorMove: Int => Unit,
     moretimeDuration: Duration,
     activeTtl: Duration) extends SequentialActor {
 
@@ -35,8 +34,11 @@ private[round] final class Round(
   }
 
   override def postStop() {
-    context.system.lilaBus unsubscribe self
+    super.postStop()
+    context.system.lilaBus.unsubscribe(self)
   }
+
+  implicit val proxy = new GameProxy(gameId)
 
   object lags { // player lag in millis
     var white = 0
@@ -48,6 +50,8 @@ private[round] final class Round(
     }
   }
 
+  var takebackSituation = Round.TakebackSituation()
+
   def process = {
 
     case ReceiveTimeout => fuccess {
@@ -55,25 +59,22 @@ private[round] final class Round(
     }
 
     case p: HumanPlay =>
-      handle(p.playerId) { pov =>
-        pov.game.outoftimePlayer(lags.get) match {
-          case None =>
-            lags.set(pov.color, p.lag.toMillis.toInt)
-            player.human(p, self)(pov)
-          case Some(ootp) => outOfTime(pov.game)(ootp)
+      p.trace.finishFirstSegment()
+      handleHumanPlay(p) { pov =>
+        if (pov.game outoftime lags.get) finisher.outOfTime(pov.game)
+        else {
+          lags.set(pov.color, p.lag.toMillis.toInt)
+          reportNetworkLag(pov)
+          player.human(p, self)(pov)
         }
-      } >>- monitorMove((nowMillis - p.atMillis).toInt)
-
-    case p: ImportPlay =>
-      handle(p.playerId) { pov =>
-        player.importMove(p)(pov)
+      } >>- {
+        p.trace.finish()
+        lila.mon.round.move.full.count()
       }
 
-    case AiPlay => handle { game =>
-      game.playableByAi ?? {
-        player ai game map (_.events)
-      }
-    }
+    case FishnetPlay(uci, currentFen) => handle { game =>
+      player.fishnet(game, uci, currentFen, self)
+    } >>- lila.mon.round.move.full.count()
 
     case Abort(playerId) => handle(playerId) { pov =>
       pov.game.abortable ?? finisher.abort(pov)
@@ -83,7 +84,7 @@ private[round] final class Round(
       pov.game.resignable ?? finisher.other(pov.game, _.Resign, Some(!pov.color))
     }
 
-    case ResignColor(color) => handle(color) { pov =>
+    case ResignAi => handleAi(proxy.game) { pov =>
       pov.game.resignable ?? finisher.other(pov.game, _.Resign, Some(!pov.color))
     }
 
@@ -92,7 +93,7 @@ private[round] final class Round(
         messenger.system(pov.game, (_.untranslated(
           s"${pov.color.name.capitalize} is going berserk!"
         )))
-        GameRepo.save(progress) >> GameRepo.goBerserk(pov) inject progress.events
+        proxy.save(progress) >> proxy.invalidating(_ goBerserk pov) inject progress.events
       }
     }
 
@@ -119,18 +120,18 @@ private[round] final class Round(
     }
 
     case Outoftime => handle { game =>
-      game.outoftimePlayer(lags.get) ?? outOfTime(game)
+      game.outoftime(lags.get) ?? finisher.outOfTime(game)
     }
 
     // exceptionally we don't block nor publish events
     // if the game is abandoned, then nobody is around to see it
     // we can also terminate this actor
     case Abandon => fuccess {
-      GameRepo game gameId foreach { gameOption =>
-        gameOption filter (_.abandoned) foreach { game =>
+      proxy withGame { game =>
+        game.abandoned ?? {
+          self ! PoisonPill
           if (game.abortable) finisher.other(game, _.Aborted)
           else finisher.other(game, _.Resign, Some(!game.player.color))
-          self ! PoisonPill
         }
       }
     }
@@ -145,26 +146,39 @@ private[round] final class Round(
       }
     }
 
-    case Threefold => GameRepo game gameId flatMap {
-      _ ?? drawer.autoThreefold map {
+    case Threefold => proxy withGame { game =>
+      drawer autoThreefold game map {
         _ foreach { pov =>
           self ! DrawClaim(pov.player.id)
         }
       }
     }
 
-    case HoldAlert(playerId, mean, sd) => handle(playerId) { pov =>
+    case HoldAlert(playerId, mean, sd, ip) => handle(playerId) { pov =>
       !pov.player.hasHoldAlert ?? {
-        loginfo(s"hold alert http://lichess.org/${pov.gameId}/${pov.color.name}#${pov.game.turns} ${pov.player.userId | "anon"} mean: $mean SD: $sd")
-        GameRepo.setHoldAlert(pov, mean, sd) inject List[Event]()
+        lila.log("cheat").info(s"hold alert $ip https://lichess.org/${pov.gameId}/${pov.color.name}#${pov.game.turns} ${pov.player.userId | "anon"} mean: $mean SD: $sd")
+        lila.mon.cheat.holdAlert()
+        proxy.bypass(_.setHoldAlert(pov, mean, sd)) inject List.empty[Event]
       }
     }
 
-    case RematchYes(playerRef)  => handle(playerRef)(rematcher.yes)
-    case RematchNo(playerRef)   => handle(playerRef)(rematcher.no)
+    case RematchYes(playerRef) => handle(playerRef)(rematcher.yes)
+    case RematchNo(playerRef)  => handle(playerRef)(rematcher.no)
 
-    case TakebackYes(playerRef) => handle(playerRef)(takebacker.yes)
-    case TakebackNo(playerRef)  => handle(playerRef)(takebacker.no)
+    case TakebackYes(playerRef) => handle(playerRef) { pov =>
+      takebacker.yes(takebackSituation)(pov) map {
+        case (events, situation) =>
+          takebackSituation = situation
+          events
+      }
+    }
+    case TakebackNo(playerRef) => handle(playerRef) { pov =>
+      takebacker.no(takebackSituation)(pov) map {
+        case (events, situation) =>
+          takebackSituation = situation
+          events
+      }
+    }
 
     case Moretime(playerRef) => handle(playerRef) { pov =>
       pov.game.clock.ifTrue(pov.game moretimeable !pov.color) ?? { clock =>
@@ -173,22 +187,20 @@ private[round] final class Round(
         messenger.system(pov.game, (_.untranslated(
           "%s + %d seconds".format(!pov.color, moretimeDuration.toSeconds)
         )))
-        GameRepo save progress inject progress.events
+        proxy save progress inject progress.events
       }
     }
 
     case ForecastPlay(lastMove) => handle { game =>
       forecastApi.nextMove(game, lastMove) map { mOpt =>
         mOpt foreach { move =>
-          self ! HumanPlay(
-            game.player.id, "127.0.0.1", move.orig.key, move.dest.key, move.promotion.map(_.name), false, 0.seconds, _ => ()
-          )
+          self ! HumanPlay(game.player.id, move, false, 0.seconds)
         }
         Nil
       }
     }
 
-    case Deploy(RemindDeployPost, _) => handle { game =>
+    case DeployPost => handle { game =>
       game.clock.filter(_ => game.playable) ?? { clock =>
         val freeSeconds = 15
         val newClock = clock.giveTime(Color.White, freeSeconds).giveTime(Color.Black, freeSeconds)
@@ -198,7 +210,7 @@ private[round] final class Round(
         Color.all.foreach { c =>
           messenger.system(game, (_.untranslated(s"$c + $freeSeconds seconds")))
         }
-        GameRepo save progress inject progress.events
+        proxy save progress inject progress.events
       }
     }
 
@@ -207,40 +219,75 @@ private[round] final class Round(
       messenger.system(game, (_.untranslated("Sorry for the inconvenience!")))
       game.playable ?? finisher.other(game, _.Aborted)
     }
+
+    case AbortForce => handle { game =>
+      game.playable ?? finisher.other(game, _.Aborted)
+    }
   }
 
-  private def outOfTime(game: Game)(p: lila.game.Player) =
-    finisher.other(game, _.Outoftime, Some(!p.color) filterNot { color =>
-      game.toChess.board.variant.insufficientWinningMaterial(game.toChess.situation, color)
-    })
+  private def reportNetworkLag(pov: Pov) =
+    if (pov.game.turns == 20 || pov.game.turns == 21) List(lags.white, lags.black).foreach { lag =>
+      if (lag > 0) lila.mon.round.move.networkLag(lag)
+    }
 
   protected def handle[A](op: Game => Fu[Events]): Funit =
-    handleGame(GameRepo game gameId)(op)
+    handleGame(proxy.game)(op)
 
   protected def handle(playerId: String)(op: Pov => Fu[Events]): Funit =
-    handlePov(GameRepo pov PlayerRef(gameId, playerId))(op)
+    handlePov((proxy playerPov playerId))(op)
+
+  protected def handleHumanPlay(p: HumanPlay)(op: Pov => Fu[Events]): Funit =
+    handlePov {
+      p.trace.segment("fetch", "db") {
+        proxy playerPov p.playerId
+      }
+    }(op)
 
   protected def handle(color: Color)(op: Pov => Fu[Events]): Funit =
-    handlePov(GameRepo pov PovRef(gameId, color))(op)
+    handlePov(proxy pov color)(op)
 
   private def handlePov(pov: Fu[Option[Pov]])(op: Pov => Fu[Events]): Funit = publish {
     pov flatten "pov not found" flatMap { p =>
       if (p.player.isAi) fufail("player can't play AI") else op(p)
     }
-  }
+  } recover errorHandler("handlePov")
+
+  private def handleAi(game: Fu[Option[Game]])(op: Pov => Fu[Events]): Funit = publish {
+    game.map(_.flatMap(_.aiPov)) flatten "pov not found" flatMap op
+  } recover errorHandler("handleAi")
 
   private def handleGame(game: Fu[Option[Game]])(op: Game => Fu[Events]): Funit = publish {
     game flatten "game not found" flatMap op
-  }
+  } recover errorHandler("handleGame")
 
-  private def publish[A](op: Fu[Events]) = op addEffect { events =>
+  private def publish[A](op: Fu[Events]): Funit = op.addEffect { events =>
     if (events.nonEmpty) socketHub ! Tell(gameId, EventList(events))
     if (events exists {
       case e: Event.Move => e.threefold
       case _             => false
     }) self ! Threefold
-  } addFailureEffect {
-    case e: ClientErrorException =>
-    case e                       => logwarn(s"[round] ${gameId} $e")
-  } void
+  }.void recover errorHandler("publish")
+
+  private def errorHandler(name: String): PartialFunction[Throwable, Unit] = {
+    case e: ClientError  => lila.mon.round.error.client()
+    case e: FishnetError => lila.mon.round.error.fishnet()
+    case e: Exception    => logger.warn(s"$name: ${e.getMessage}")
+  }
+}
+
+object Round {
+
+  case class TakebackSituation(
+      nbDeclined: Int = 0,
+      lastDeclined: Option[DateTime] = none) {
+
+    def decline = TakebackSituation(nbDeclined + 1, DateTime.now.some)
+
+    def delaySeconds = (math.pow(nbDeclined min 10, 2) * 10).toInt
+
+    def offerable = lastDeclined.fold(true) { _ isBefore DateTime.now.minusSeconds(delaySeconds) }
+
+    def reset = TakebackSituation()
+  }
+
 }

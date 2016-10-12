@@ -3,13 +3,13 @@ package lila.playban
 import org.joda.time.DateTime
 import reactivemongo.bson._
 import reactivemongo.bson.Macros
-import reactivemongo.core.commands._
 import scala.concurrent.duration._
 
 import chess.Color
 import lila.db.BSON._
-import lila.db.Types.Coll
+import lila.db.dsl._
 import lila.game.{ Pov, Game, Player, Source }
+import lila.user.UserRepo
 
 final class PlaybanApi(
     coll: Coll,
@@ -26,57 +26,83 @@ final class PlaybanApi(
 
   private case class Blame(player: Player, outcome: Outcome)
 
-  private def blameable(game: Game) =
-    game.source.contains(Source.Lobby) &&
-      game.hasClock &&
-      !isRematch(game.id)
+  private def blameable(game: Game): Fu[Boolean] =
+    (game.source.contains(Source.Lobby) && game.hasClock && !isRematch(game.id)) ?? {
+      if (game.rated) fuccess(true)
+      else UserRepo.containsEngine(game.userIds) map (!_)
+    }
 
-  def abort(pov: Pov): Funit = blameable(pov.game) ?? {
-    if (pov.game olderThan 45) pov.game.playerWhoDidNotMove map { Blame(_, Outcome.NoPlay) }
-    else if (pov.game olderThan 15) none
-    else pov.player.some map { Blame(_, Outcome.Abort) }
-  } ?? {
-    case Blame(player, outcome) => player.userId.??(save(outcome))
+  private def IfBlameable[A: ornicar.scalalib.Zero](game: Game)(f: => Fu[A]): Fu[A] =
+    blameable(game) flatMap { _ ?? f }
+
+  def abort(pov: Pov, isOnGame: Set[Color]): Funit = IfBlameable(pov.game) {
+    {
+      if (pov.game olderThan 30) pov.game.playerWhoDidNotMove map { Blame(_, Outcome.NoPlay) }
+      else if (pov.game olderThan 15) none
+      else if (isOnGame(pov.opponent.color)) pov.player.some map { Blame(_, Outcome.Abort) }
+      else none
+    } ?? {
+      case Blame(player, outcome) => player.userId.??(save(outcome))
+    }
   }
 
-  def rageQuit(game: Game, quitterColor: Color): Funit = blameable(game) ?? {
+  def rageQuit(game: Game, quitterColor: Color): Funit = IfBlameable(game) {
     game.player(quitterColor).userId ?? save(Outcome.RageQuit)
   }
 
-  def goodFinish(game: Game): Funit = blameable(game) ?? {
+  def sittingOrGood(game: Game, sitterColor: Color): Funit = IfBlameable(game) {
+    (for {
+      userId <- game.player(sitterColor).userId
+      lmt <- game.lastMoveTimeInSeconds
+      seconds = nowSeconds - lmt
+      clock <- game.clock
+      // a tenth of the total time, at least 15s, at most 3 minutes
+      limit = (clock.estimateTotalTime / 10) max 15 min (3 * 60)
+      if seconds >= limit
+    } yield save(Outcome.Sitting)(userId)) | goodFinish(game)
+  }
+
+  def goodFinish(game: Game): Funit = IfBlameable(game) {
     game.userIds.map(save(Outcome.Good)).sequenceFu.void
   }
 
   def currentBan(userId: String): Fu[Option[TempBan]] = coll.find(
-    BSONDocument("_id" -> userId, "b.0" -> BSONDocument("$exists" -> true)),
-    BSONDocument("_id" -> false, "b" -> BSONDocument("$slice" -> -1))
-  ).one[BSONDocument].map {
+    $doc("_id" -> userId, "b.0" $exists true),
+    $doc("_id" -> false, "b" -> $doc("$slice" -> -1))
+  ).uno[Bdoc].map {
       _.flatMap(_.getAs[List[TempBan]]("b")).??(_.find(_.inEffect))
     }
 
-  def bans(userId: String): Fu[List[TempBan]] = coll.find(
-    BSONDocument("_id" -> userId, "b.0" -> BSONDocument("$exists" -> true)),
-    BSONDocument("_id" -> false, "b" -> true)
-  ).one[BSONDocument].map {
-      ~_.flatMap(_.getAs[List[TempBan]]("b"))
+  def completionRate(userId: String): Fu[Option[Double]] =
+    coll.primitiveOne[List[Outcome]]($id(userId), "o").map(~_) map { outcomes =>
+      outcomes.collect {
+        case Outcome.RageQuit | Outcome.Sitting => false
+        case Outcome.Good                       => true
+      } match {
+        case c if c.size >= 5 => Some(c.count(identity).toDouble / c.size)
+        case _                => none
+      }
     }
 
+  def bans(userId: String): Fu[List[TempBan]] =
+    coll.primitiveOne[List[TempBan]]($doc("_id" -> userId, "b.0" $exists true), "b").map(~_)
+
   def bans(userIds: List[String]): Fu[Map[String, Int]] = coll.find(
-    BSONDocument("_id" -> BSONDocument("$in" -> userIds)),
-    BSONDocument("b" -> true)
-  ).cursor[BSONDocument]().collect[List]().map {
+    $inIds(userIds),
+    $doc("b" -> true)
+  ).cursor[Bdoc]().gather[List]().map {
       _.flatMap { obj =>
         obj.getAs[String]("_id") flatMap { id =>
-          obj.getAs[BSONArray]("b") map { id -> _.stream.size }
+          obj.getAs[Barr]("b") map { id -> _.stream.size }
         }
       }.toMap
     }
 
   private def save(outcome: Outcome): String => Funit = userId => {
     coll.findAndUpdate(
-      selector = BSONDocument("_id" -> userId),
-      update = BSONDocument("$push" -> BSONDocument(
-        "o" -> BSONDocument(
+      selector = $id(userId),
+      update = $doc("$push" -> $doc(
+        "o" -> $doc(
           "$each" -> List(outcome),
           "$slice" -> -20)
       )),
@@ -85,19 +111,17 @@ final class PlaybanApi(
   } map2 UserRecordBSONHandler.read flatMap {
     case None         => fufail(s"can't find record for user $userId")
     case Some(record) => legiferate(record)
-  } logFailure "PlaybanApi"
+  } logFailure lila.log("playban")
 
   private def legiferate(record: UserRecord): Funit = record.newBan ?? { ban =>
     coll.update(
-      BSONDocument("_id" -> record.userId),
-      BSONDocument(
-        "$unset" -> BSONDocument("o" -> true),
-        "$push" -> BSONDocument(
-          "b" -> BSONDocument(
+      $id(record.userId),
+      $unset("o") ++
+        $push(
+          "b" -> $doc(
             "$each" -> List(ban),
             "$slice" -> -30)
         )
-      )
     ).void
   }
 }

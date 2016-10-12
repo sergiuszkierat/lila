@@ -18,16 +18,14 @@ final class Env(
     scheduler: lila.common.Scheduler,
     db: lila.db.Env,
     mongoCache: lila.memo.MongoCache.Builder,
-    flood: lila.security.Flood,
     hub: lila.hub.Env,
-    lightUser: String => Option[lila.common.LightUser],
+    lightUser: lila.common.LightUser.Getter,
     onGameStart: String => Unit,
     isOnline: String => Boolean) {
 
   private val settings = new {
     val CollectionSimul = config getString "collection.simul"
     val SequencerTimeout = config duration "sequencer.timeout"
-    val SequencerMapName = config getString "sequencer.map_name"
     val CreatedCacheTtl = config duration "created.cache.ttl"
     val HistoryMessageTtl = config duration "history.message.ttl"
     val UidTimeout = config duration "uid.timeout"
@@ -72,13 +70,9 @@ final class Env(
     hub = hub,
     socketHub = socketHub,
     chat = hub.actor.chat,
-    flood = flood,
     exists = repo.exists)
 
-  system.actorOf(Props(new Actor {
-    override def preStart() {
-      system.lilaBus.subscribe(self, 'finishGame, 'adjustCheater, 'moveEvent)
-    }
+  system.lilaBus.subscribe(system.actorOf(Props(new Actor {
     import akka.pattern.pipe
     def receive = {
       case lila.game.actorApi.FinishGame(game, _, _) => api finishGame game
@@ -92,7 +86,7 @@ final class Env(
           }
         }
     }
-  }), name = ActorName)
+  }), name = ActorName), 'finishGame, 'adjustCheater, 'moveEvent)
 
   def isHosting(userId: String): Fu[Boolean] = api.currentHostIds map (_ contains userId)
 
@@ -108,8 +102,8 @@ final class Env(
   private[simul] val simulColl = db(CollectionSimul)
 
   private val sequencerMap = system.actorOf(Props(ActorMap { id =>
-    new Sequencer(SequencerTimeout.some)
-  }), name = SequencerMapName)
+    new Sequencer(SequencerTimeout.some, logger = logger)
+  }))
 
   private lazy val simulCleaner = new SimulCleaner(repo, api, socketHub)
 
@@ -126,7 +120,6 @@ object Env {
     scheduler = lila.common.PlayApp.scheduler,
     db = lila.db.Env.current,
     mongoCache = lila.memo.Env.current.mongoCache,
-    flood = lila.security.Env.current.flood,
     hub = lila.hub.Env.current,
     lightUser = lila.user.Env.current.lightUser,
     onGameStart = lila.game.Env.current.onStart,

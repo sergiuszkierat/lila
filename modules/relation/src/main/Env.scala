@@ -3,6 +3,7 @@ package lila.relation
 import akka.actor._
 import akka.pattern.pipe
 import com.typesafe.config.Config
+import scala.concurrent.duration._
 
 import lila.common.PimpedConfig._
 
@@ -25,18 +26,17 @@ final class Env(
   }
   import settings._
 
+  private[relation] val coll = db(CollectionRelation)
+
   lazy val api = new RelationApi(
-    cached = cached,
+    coll = coll,
     actor = hub.actor.relation,
     bus = system.lilaBus,
-    getOnlineUserIds = getOnlineUserIds,
     timeline = hub.actor.timeline,
     reporter = hub.actor.report,
     followable = followable,
     maxFollow = MaxFollow,
     maxBlock = MaxBlock)
-
-  private lazy val cached = new Cached
 
   private[relation] val actor = system.actorOf(Props(new RelationActor(
     getOnlineUserIds = getOnlineUserIds,
@@ -44,17 +44,11 @@ final class Env(
     api = api
   )), name = ActorName)
 
-  {
-    import scala.concurrent.duration._
-
-    scheduler.once(10 seconds) {
-      scheduler.message(ActorNotifyFreq) {
-        actor -> actorApi.NotifyMovement
-      }
+  scheduler.once(15 seconds) {
+    scheduler.message(ActorNotifyFreq) {
+      actor -> actorApi.NotifyMovement
     }
   }
-
-  private[relation] lazy val relationColl = db(CollectionRelation)
 }
 
 object Env {

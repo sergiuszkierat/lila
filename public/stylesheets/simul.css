@@ -93,6 +93,10 @@
 #simul .half.accepted tr.me {
   border-right: 10px solid #d59120;
 }
+#simul .pull-quote {
+  margin-top: 30px;
+  width: 300px;
+}
 #simul .title_tag {
   float: right;
   font-size: 20px;
@@ -149,7 +153,7 @@
   margin-left: -0.5em;
 }
 .variant_icons.rich span:not(:first-child) {
-  margin-left: -0.7em;
+  margin-left: -1em;
 }
 div.side_box .game_infos {
   padding-left: 0;
@@ -171,10 +175,6 @@ div.side_box .game_infos {
 #simul .join_choice {
   display: none;
 }
-.join_choice .button {
-  display: block;
-  margin: 10px 0;
-}
 #simul_list table.slist {
   line-height: 2.3em;
 }
@@ -190,7 +190,6 @@ div.side_box .game_infos {
 }
 #simul_list table.slist .header:hover {
   transform: translateX(3px);
-  -webkit-transform: translateX(3px);
 }
 #simul_list table.slist .header a {
   padding: 1em;

@@ -2,12 +2,8 @@ package lila.db
 
 import scala.util.{ Try, Success, Failure }
 
-import play.api.data.validation.ValidationError
-import play.api.libs.json._
 import reactivemongo.bson._
 import reactivemongo.bson.utils.Converters
-
-import lila.common.PimpedJson._
 
 case class ByteArray(value: Array[Byte]) {
 
@@ -29,29 +25,14 @@ object ByteArray {
   def fromHexStr(hexStr: String): Try[ByteArray] =
     Try(ByteArray(Converters str2Hex hexStr))
 
-  implicit object ByteArrayBSONHandler extends BSONHandler[BSONBinary, ByteArray] {
-
+  implicit val ByteArrayBSONHandler = new BSONHandler[BSONBinary, ByteArray] {
     def read(bin: BSONBinary) = ByteArray(bin.byteArray)
-
     def write(ba: ByteArray) = BSONBinary(ba.value, subtype)
   }
 
-  implicit object JsByteArrayFormat extends OFormat[ByteArray] {
+  def parseBytes(s: List[String]) = ByteArray(s map parseByte toArray)
 
-    def reads(json: JsValue) = (for {
-      hexStr ← json str "$binary"
-      bytes ← fromHexStr(hexStr).toOption
-    } yield bytes) match {
-      case None     => JsError(s"error reading ByteArray from $json")
-      case Some(ba) => JsSuccess(ba)
-    }
-
-    def writes(byteArray: ByteArray) = Json.obj(
-      "$binary" -> byteArray.toHexStr,
-      "$type" -> binarySubType)
-  }
-
-  def parseByte(s: String): Byte = {
+  private def parseByte(s: String): Byte = {
     var i = s.length - 1
     var sum = 0
     var mult = 1
@@ -66,8 +47,6 @@ object ByteArray {
     }
     sum.toByte
   }
-
-  def parseBytes(s: List[String]) = ByteArray(s map parseByte toArray)
 
   def subtype = Subtype.GenericBinarySubtype
 

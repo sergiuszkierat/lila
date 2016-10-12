@@ -1,36 +1,133 @@
 var m = require('mithril');
 var makePool = require('./cevalPool');
+var dict = require('./cevalDict');
+var util = require('../util');
+var stockfishProtocol = require('./stockfishProtocol');
+var sunsetterProtocol = require('./sunsetterProtocol');
 
-module.exports = function(allow, emit) {
+module.exports = function(root, possible, variant, emit) {
 
-  var minDepth = 8;
-  var maxDepth = 18;
-  var storageKey = 'client-eval-enabled';
-  var allowed = m.prop(allow);
-  var enabled = m.prop(allow && lichess.storage.get(storageKey) === '1');
+  var pnaclSupported = navigator.mimeTypes['application/x-pnacl'];
+  var minDepth = 7;
+  var maxDepth = util.storedProp('ceval.max-depth', 18);
+  var multiPv = util.storedProp('ceval.multipv', 1);
+  var threads = util.storedProp('ceval.threads', Math.ceil((navigator.hardwareConcurrency || 1) / 2));
+  var hashSize = util.storedProp('ceval.hash-size', 128);
+  var showPvs = util.storedProp('ceval.show-pvs', false);
+  var curDepth = 0;
+  var enableStorage = lichess.storage.make('client-eval-enabled');
+  var allowed = m.prop(true);
+  var enabled = m.prop(possible() && allowed() && enableStorage.get() == '1');
   var started = false;
-  var pool = makePool({
-    path: '/assets/vendor/stockfish6.js', // Can't CDN because same-origin policy
-    minDepth: minDepth,
-    maxDepth: maxDepth
-  }, 3);
+  var hoveringUci = m.prop(null);
 
-  var start = function(path, steps) {
-    if (!enabled()) return;
-    var step = steps[steps.length -1];
-    if (step.ceval && step.ceval.depth >= maxDepth) return;
-    pool.start({
-      position: steps[0].fen,
-      moves: steps.slice(1).map(function(s) {
-        return fixCastle(s.uci, s.san);
-      }).join(' '),
-      path: path,
-      steps: steps,
-      ply: step.ply,
-      emit: function(res) {
-        if (enabled()) emit(res);
-      }
+  var pool;
+  if (variant.key !== 'crazyhouse') {
+    pool = makePool(stockfishProtocol, {
+      asmjs: '/assets/vendor/stockfish.js/stockfish.js',
+      pnacl: pnaclSupported && '/assets/vendor/stockfish.pexe/nacl/stockfish.nmf'
+    }, {
+      minDepth: minDepth,
+      maxDepth: maxDepth,
+      variant: variant,
+      multiPv: multiPv,
+      threads: pnaclSupported && threads,
+      hashSize: pnaclSupported && hashSize
     });
+  } else {
+    pool = makePool(sunsetterProtocol, {
+      asmjs: '/assets/vendor/Sunsetter/sunsetter.js'
+    });
+  }
+
+  // adjusts maxDepth based on nodes per second
+  var npsRecorder = (function() {
+    var values = [];
+    var applies = function(res) {
+      return res.eval.nps && res.eval.depth >= 16 &&
+        !res.eval.mate && Math.abs(res.eval.cp) < 500 &&
+        (res.work.currentFen.split(/\s/)[0].split(/[nbrqkp]/i).length - 1) >= 10;
+    }
+    return function(res) {
+      if (!applies(res)) return;
+      values.push(res.eval.nps);
+      if (values.length >= 5) {
+        var depth = 18,
+          knps = util.median(values) / 1000;
+        if (knps > 100) depth = 19;
+        if (knps > 150) depth = 20;
+        if (knps > 250) depth = 21;
+        if (knps > 500) depth = 22;
+        if (knps > 1000) depth = 23;
+        if (knps > 2000) depth = 24;
+        if (knps > 3500) depth = 25;
+        maxDepth(depth);
+        if (values.length > 20) values.shift();
+      }
+    };
+  })();
+
+  var onEmit = function(res) {
+    res.eval.maxDepth = res.work.maxDepth;
+    npsRecorder(res);
+    curDepth = res.eval.depth;
+    emit(res);
+  }
+
+  var start = function(path, steps, threatMode) {
+    if (!enabled() || !possible()) return;
+    var step = steps[steps.length - 1];
+
+    var existing = step[threatMode ? 'threat' : 'ceval'];
+    if (existing && existing.depth >= maxDepth()) return;
+
+    var work = {
+      initialFen: steps[0].fen,
+      moves: [],
+      currentFen: step.fen,
+      path: path,
+      ply: step.ply,
+      maxDepth: maxDepth(),
+      threatMode: threatMode,
+      emit: function(res) {
+        if (enabled()) onEmit(res);
+      }
+    };
+
+    if (threatMode) {
+      var c = step.ply % 2 === 1 ? 'w' : 'b';
+      var fen = step.fen.replace(/ (w|b) /, ' ' + c + ' ');
+      work.currentFen = fen;
+      work.initialFen = fen;
+    } else {
+      // send fen after latest castling move and the following moves
+      for (var i = 1; i < steps.length; i++) {
+        var step = steps[i];
+        if (step.san.indexOf('O-O') === 0) {
+          work.moves = [];
+          work.initialFen = step.fen;
+        } else work.moves.push(step.uci);
+      }
+    }
+
+    var dictRes = dict(work, variant, multiPv());
+    if (dictRes) {
+      setTimeout(function() {
+        // this has to be delayed, or it slows down analysis first render.
+        work.emit({
+          work: work,
+          eval: {
+            depth: maxDepth(),
+            cp: dictRes.cp,
+            best: dictRes.best,
+            pvs: dictRes.pvs,
+            dict: true
+          }
+        });
+      }, 500);
+      pool.warmup();
+    } else pool.start(work);
+
     started = true;
   };
 
@@ -40,31 +137,32 @@ module.exports = function(allow, emit) {
     started = false;
   };
 
-  var fixCastle = function(uci, san) {
-    if (san.indexOf('O-O') !== 0) return uci;
-    switch (uci) {
-      case 'e1h1':
-        return 'e1g1';
-      case 'e1a1':
-        return 'e1c1';
-      case 'e8h8':
-        return 'e8g8';
-      case 'e8a8':
-        return 'e8c8';
-    }
-    return uci;
-  };
-
   return {
+    pnaclSupported: pnaclSupported,
     start: start,
     stop: stop,
     allowed: allowed,
+    possible: possible,
     enabled: enabled,
+    multiPv: multiPv,
+    threads: threads,
+    hashSize: hashSize,
+    showPvs: showPvs,
+    hoveringUci: hoveringUci,
+    setHoveringUci: function(uci) {
+      hoveringUci(uci);
+      root.setAutoShapes();
+    },
     toggle: function() {
-      if (!allowed()) return;
+      if (!possible() || !allowed()) return;
       stop();
       enabled(!enabled());
-      lichess.storage.set(storageKey, enabled() ? '1' : '0');
-    }
+      enableStorage.set(enabled() ? '1' : '0');
+    },
+    curDepth: function() {
+      return curDepth;
+    },
+    maxDepth: maxDepth,
+    destroy: pool.destroy
   };
 };

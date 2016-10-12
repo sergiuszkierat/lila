@@ -6,9 +6,11 @@ sealed trait AnyChat {
   def id: ChatId
   def lines: List[Line]
 
+  val loginRequired: Boolean
+
   def forUser(u: Option[User]): AnyChat
 
-  def toJsonString = Line toJsonString lines
+  def isEmpty = lines.isEmpty
 }
 
 sealed trait Chat[L <: Line] extends AnyChat {
@@ -21,19 +23,38 @@ case class UserChat(
     id: ChatId,
     lines: List[UserLine]) extends Chat[UserLine] {
 
+  val loginRequired = true
+
   def forUser(u: Option[User]) = u.??(_.troll).fold(this,
     copy(lines = lines filterNot (_.troll)))
+
+  def markDeleted(u: User) = copy(
+    lines = lines.map { l =>
+      if (l.userId == u.id) l.delete else l
+    })
+
+  def add(line: UserLine) = copy(lines = lines :+ line)
+
+  def mapLines(f: UserLine => UserLine) = copy(lines = lines map f)
+}
+
+object UserChat {
+  case class Mine(chat: UserChat, timeout: Boolean)
 }
 
 case class MixedChat(
     id: ChatId,
     lines: List[Line]) extends Chat[Line] {
 
+  val loginRequired = false
+
   def forUser(u: Option[User]) = u.??(_.troll).fold(this,
     copy(lines = lines filter {
       case l: UserLine   => !l.troll
       case l: PlayerLine => true
     }))
+
+  def mapLines(f: Line => Line) = copy(lines = lines map f)
 }
 
 object Chat {
@@ -46,19 +67,35 @@ object Chat {
   object BSONFields {
     val id = "_id"
     val lines = "l"
+    val encoded = "e"
   }
 
   import BSONFields._
   import reactivemongo.bson.BSONDocument
 
   implicit val mixedChatBSONHandler = new BSON[MixedChat] {
-    implicit def lineHandler = Line.lineBSONHandler
-    def reads(r: BSON.Reader): MixedChat = MixedChat(id = r str id, lines = r.get[List[Line]](lines))
-    def writes(w: BSON.Writer, o: MixedChat) = BSONDocument(id -> o.id, lines -> o.lines)
+    def reads(r: BSON.Reader): MixedChat = {
+      implicit val lineReader = Line.lineBSONHandler(r.boolO(encoded) | true)
+      MixedChat(
+        id = r str id,
+        lines = r.get[List[Line]](lines))
+    }
+    def writes(w: BSON.Writer, o: MixedChat) = BSONDocument(
+      id -> o.id,
+      lines -> o.lines.map(Line.lineBSONHandler(false).write),
+      encoded -> false)
   }
 
   implicit val userChatBSONHandler = new BSON[UserChat] {
-    def reads(r: BSON.Reader): UserChat = UserChat(id = r str id, lines = r.get[List[UserLine]](lines))
-    def writes(w: BSON.Writer, o: UserChat) = BSONDocument(id -> o.id, lines -> o.lines)
+    def reads(r: BSON.Reader): UserChat = {
+      implicit val lineReader = Line.userLineBSONHandler(r.boolO(encoded) | true)
+      UserChat(
+        id = r str id,
+        lines = r.get[List[UserLine]](lines))
+    }
+    def writes(w: BSON.Writer, o: UserChat) = BSONDocument(
+      id -> o.id,
+      lines -> o.lines.map(Line.lineBSONHandler(false).write),
+      encoded -> false)
   }
 }

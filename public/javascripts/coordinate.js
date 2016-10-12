@@ -7,22 +7,19 @@ $(function() {
     var $right = $trainer.find('.board_and_ground > .right');
     var $bar = $trainer.find('.progress_bar');
     var $coords = [
-      $trainer.find('#next_coord0').disableSelection(),
-      $trainer.find('#next_coord1').disableSelection(),
-      $trainer.find('#next_coord2').disableSelection()
+      $trainer.find('#next_coord0'),
+      $trainer.find('#next_coord1'),
+      $trainer.find('#next_coord2')
     ];
     var $start = $right.find('.start');
     var $explanation = $right.find('.explanation');
     var $score = $trainer.find('.score_container strong');
     var scoreUrl = $trainer.data('score-url');
-    var colorUrl = $trainer.data('color-url');
     var duration = 30 * 1000;
     var tickDelay = 50;
     var colorPref = $trainer.data('color-pref');
     var color;
     var startAt, score;
-
-    $trainer.find('.buttons').buttonset().disableSelection();
 
     var showColor = function() {
       color = colorPref == 'random' ? ['white', 'black'][Math.round(Math.random())] : colorPref;
@@ -41,22 +38,26 @@ $(function() {
     };
     showColor();
 
-    $trainer.find('form.color').on('click', 'input', function() {
-      var c = {
-        1: 'white',
-        2: 'random',
-        3: 'black'
-      }[$(this).val()];
-      if (colorUrl && c != colorPref) $.ajax({
-        url: colorUrl,
-        method: 'post',
-        data: {
-          color: $(this).val()
-        }
+    $trainer.find('form.color').each(function() {
+      var $form = $(this);
+      $form.find('input').on('change', function() {
+        var selected = $form.find('input:checked').val();
+        var c = {
+          1: 'white',
+          2: 'random',
+          3: 'black'
+        }[selected];
+        if (c !== colorPref) $.ajax({
+          url: $form.attr('action'),
+          method: 'post',
+          data: {
+            color: selected
+          }
+        });
+        colorPref = c;
+        showColor();
+        return false;
       });
-      colorPref = c;
-      showColor();
-      return false;
     });
 
     var showCharts = function() {
@@ -181,5 +182,5 @@ $(function() {
       }, 1000);
     });
   });
-  $('body').trigger('lichess.coordinate_trainer_loaded');
+  lichess.pubsub.emit('reset_zoom')();
 });

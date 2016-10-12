@@ -6,10 +6,10 @@ import akka.actor._
 import akka.pattern.ask
 
 import actorApi._
+import akka.actor.ActorSelection
 import lila.common.PimpedJson._
 import lila.hub.actorApi.map._
 import lila.security.Flood
-import akka.actor.ActorSelection
 import lila.socket.actorApi.{ Connected => _, _ }
 import lila.socket.Handler
 import lila.user.User
@@ -23,15 +23,14 @@ private[tournament] final class SocketHandler(
 
   def join(
     tourId: String,
-    version: Int,
     uid: String,
     user: Option[User]): Fu[Option[JsSocketHandler]] =
     TournamentRepo.exists(tourId) flatMap {
       _ ?? {
         for {
           socket ← socketHub ? Get(tourId) mapTo manifest[ActorRef]
-          join = Join(uid = uid, user = user, version = version)
-          handler ← Handler(hub, socket, uid, join, user map (_.id)) {
+          join = Join(uid = uid, user = user)
+          handler ← Handler(hub, socket, uid, join) {
             case Connected(enum, member) =>
               (controller(socket, tourId, uid, member), enum, member)
           }
@@ -43,12 +42,11 @@ private[tournament] final class SocketHandler(
     socket: ActorRef,
     tourId: String,
     uid: String,
-    member: Member): Handler.Controller = {
+    member: Member): Handler.Controller = ({
     case ("p", o) => o int "v" foreach { v => socket ! PingVersion(uid, v) }
-    case ("talk", o) => o str "d" foreach { text =>
-      member.userId foreach { userId =>
-        chat ! lila.chat.actorApi.UserTalk(tourId, userId, text, socket)
-      }
-    }
-  }
+  }: Handler.Controller) orElse lila.chat.Socket.in(
+    chatId = tourId,
+    member = member,
+    socket = socket,
+    chat = chat)
 }

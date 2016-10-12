@@ -3,6 +3,7 @@ package lila.tournament
 import akka.actor._
 import akka.pattern.ask
 import com.typesafe.config.Config
+import scala.concurrent.duration._
 
 import lila.common.PimpedConfig._
 import lila.hub.actorApi.map.Ask
@@ -23,13 +24,18 @@ final class Env(
     lightUser: String => Option[lila.common.LightUser],
     isOnline: String => Boolean,
     onStart: String => Unit,
+    historyApi: lila.history.HistoryApi,
     trophyApi: lila.user.TrophyApi,
+    notifyApi: lila.notify.NotifyApi,
     scheduler: lila.common.Scheduler) {
+
+  private val startsAtMillis = nowMillis
 
   private val settings = new {
     val CollectionTournament = config getString "collection.tournament"
     val CollectionPlayer = config getString "collection.player"
     val CollectionPairing = config getString "collection.pairing"
+    val CollectionLeaderboard = config getString "collection.leaderboard"
     val HistoryMessageTtl = config duration "history.message.ttl"
     val CreatedCacheTtl = config duration "created.cache.ttl"
     val LeaderboardCacheTtl = config duration "leaderboard.cache.ttl"
@@ -37,10 +43,8 @@ final class Env(
     val UidTimeout = config duration "uid.timeout"
     val SocketTimeout = config duration "socket.timeout"
     val SocketName = config getString "socket.name"
-    val OrganizerName = config getString "organizer.name"
-    val ReminderName = config getString "reminder.name"
+    val ApiActorName = config getString "api_actor.name"
     val SequencerTimeout = config duration "sequencer.timeout"
-    val SequencerMapName = config getString "sequencer.map_name"
     val NetDomain = config getString "net.domain"
   }
   import settings._
@@ -51,6 +55,8 @@ final class Env(
     createdTtl = CreatedCacheTtl,
     rankingTtl = RankingCacheTtl)
 
+  lazy val verify = new Condition.Verify(historyApi)
+
   lazy val api = new TournamentApi(
     cached = cached,
     scheduleJsonView = scheduleJsonView,
@@ -58,15 +64,22 @@ final class Env(
     sequencers = sequencerMap,
     autoPairing = autoPairing,
     clearJsonViewCache = jsonView.clearCache,
-    router = hub.actor.router,
     renderer = hub.actor.renderer,
     timeline = hub.actor.timeline,
     socketHub = socketHub,
     site = hub.socket.site,
     lobby = hub.socket.lobby,
     trophyApi = trophyApi,
+    verify = verify,
+    indexLeaderboard = leaderboardIndexer.indexOne _,
     roundMap = roundMap,
     roundSocketHub = roundSocketHub)
+
+  lazy val crudApi = new crud.CrudApi
+
+  val tourAndRanks = api tourAndRanks _
+
+  private lazy val performance = new Performance
 
   lazy val socketHandler = new SocketHandler(
     hub = hub,
@@ -78,9 +91,17 @@ final class Env(
     mongoCache = mongoCache,
     ttl = LeaderboardCacheTtl)
 
-  lazy val jsonView = new JsonView(lightUser, cached)
+  lazy val jsonView = new JsonView(lightUser, cached, performance, verify)
 
   lazy val scheduleJsonView = new ScheduleJsonView(lightUser)
+
+  lazy val leaderboardApi = new LeaderboardApi(
+    coll = leaderboardColl,
+    maxPerPage = 15)
+
+  private lazy val leaderboardIndexer = new LeaderboardIndexer(
+    tournamentColl = tournamentColl,
+    leaderboardColl = leaderboardColl)
 
   private val socketHub = system.actorOf(
     Props(new lila.socket.SocketHubActor.Default[Socket] {
@@ -94,47 +115,55 @@ final class Env(
     }), name = SocketName)
 
   private val sequencerMap = system.actorOf(Props(ActorMap { id =>
-    new Sequencer(SequencerTimeout.some)
-  }), name = SequencerMapName)
+    new Sequencer(
+      receiveTimeout = SequencerTimeout.some,
+      executionTimeout = 5.seconds.some,
+      logger = logger)
+  }))
 
-  private val organizer = system.actorOf(Props(new Organizer(
+  system.lilaBus.subscribe(
+    system.actorOf(Props(new ApiActor(api = api)), name = ApiActorName),
+    'finishGame, 'adjustCheater, 'adjustBooster)
+
+  system.actorOf(Props(new CreatedOrganizer(
     api = api,
-    reminder = system.actorOf(Props(new Reminder(
-      renderer = hub.actor.renderer
-    )), name = ReminderName),
+    isOnline = isOnline
+  )))
+
+  private val reminder = system.actorOf(Props[Reminder])
+
+  system.actorOf(Props(new StartedOrganizer(
+    api = api,
+    reminder = reminder,
     isOnline = isOnline,
     socketHub = socketHub
-  )), name = OrganizerName)
+  )))
 
-  private val tournamentScheduler = system.actorOf(Props(new Scheduler(api)))
+  TournamentScheduler.start(system, api)
+
+  TournamentInviter.start(system, api, notifyApi)
 
   def version(tourId: String): Fu[Int] =
     socketHub ? Ask(tourId, GetVersion) mapTo manifest[Int]
+
+  def cli = new lila.common.Cli {
+    def process = {
+      case "tournament" :: "leaderboard" :: "generate" :: Nil =>
+        leaderboardIndexer.generateAll inject "Done!"
+    }
+  }
 
   private lazy val autoPairing = new AutoPairing(
     roundMap = roundMap,
     system = system,
     onStart = onStart)
 
-  {
-    import scala.concurrent.duration._
-
-    scheduler.message(2 seconds) {
-      organizer -> actorApi.AllCreatedTournaments
-    }
-
-    scheduler.message(3 seconds) {
-      organizer -> actorApi.StartedTournaments
-    }
-
-    scheduler.message(5 minutes) {
-      tournamentScheduler -> actorApi.ScheduleNow
-    }
-  }
-
   private[tournament] lazy val tournamentColl = db(CollectionTournament)
   private[tournament] lazy val pairingColl = db(CollectionPairing)
   private[tournament] lazy val playerColl = db(CollectionPlayer)
+  private[tournament] lazy val leaderboardColl = db(CollectionLeaderboard)
+
+  lila.log("boot").info(s"${nowMillis - startsAtMillis}ms Tournament constructor")
 }
 
 object Env {
@@ -153,6 +182,8 @@ object Env {
     lightUser = lila.user.Env.current.lightUser,
     isOnline = lila.user.Env.current.isOnline,
     onStart = lila.game.Env.current.onStart,
+    historyApi = lila.history.Env.current.api,
     trophyApi = lila.user.Env.current.trophyApi,
+    notifyApi = lila.notify.Env.current.api,
     scheduler = lila.common.PlayApp.scheduler)
 }

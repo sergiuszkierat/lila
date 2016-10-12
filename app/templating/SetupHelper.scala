@@ -37,26 +37,33 @@ trait SetupHelper { self: I18nHelper =>
     (variant.id.toString, variant.name, variant.title.some)
 
   def translatedVariantChoices(implicit ctx: Context) = List(
-    (chess.variant.Standard.id.toString, trans.standard.str(), chess.variant.Standard.title.some),
-    variantTuple(chess.variant.Chess960)
+    (chess.variant.Standard.id.toString, trans.standard.str(), chess.variant.Standard.title.some)
   )
 
   def translatedVariantChoicesWithVariants(implicit ctx: Context) =
     translatedVariantChoices(ctx) :+
+      variantTuple(chess.variant.Crazyhouse) :+
+      variantTuple(chess.variant.Chess960) :+
       variantTuple(chess.variant.KingOfTheHill) :+
       variantTuple(chess.variant.ThreeCheck) :+
       variantTuple(chess.variant.Antichess) :+
       variantTuple(chess.variant.Atomic) :+
-      variantTuple(chess.variant.Horde)
+      variantTuple(chess.variant.Horde) :+
+      variantTuple(chess.variant.RacingKings)
 
   def translatedVariantChoicesWithFen(implicit ctx: Context) =
     translatedVariantChoices(ctx) :+
+      variantTuple(chess.variant.Chess960) :+
       variantTuple(chess.variant.FromPosition)
 
   def translatedAiVariantChoices(implicit ctx: Context) =
     translatedVariantChoices(ctx) :+
+      variantTuple(chess.variant.Chess960) :+
       variantTuple(chess.variant.KingOfTheHill) :+
       variantTuple(chess.variant.ThreeCheck) :+
+      variantTuple(chess.variant.Atomic) :+
+      variantTuple(chess.variant.Horde) :+
+      variantTuple(chess.variant.RacingKings) :+
       variantTuple(chess.variant.FromPosition)
 
   def translatedVariantChoicesWithVariantsAndFen(implicit ctx: Context) =
@@ -124,7 +131,7 @@ trait SetupHelper { self: I18nHelper =>
   def submitMoveChoices(implicit ctx: Context) = List(
     (Pref.SubmitMove.NEVER, trans.never.str()),
     (Pref.SubmitMove.CORRESPONDENCE_ONLY, trans.inCorrespondenceGames.str()),
-    (Pref.SubmitMove.CORRESPONDENCE_UNLIMITED, "Correspondence and unlimited"),
+    (Pref.SubmitMove.CORRESPONDENCE_UNLIMITED, trans.correspondenceAndUnlimited.str()),
     (Pref.SubmitMove.ALWAYS, trans.always.str())
   )
 
@@ -146,4 +153,7 @@ trait SetupHelper { self: I18nHelper =>
     (Pref.Message.ALWAYS, trans.always.str())
   )
 
+  def translatedBlindfoldChoices(implicit ctx: Context) = List(
+    Pref.Blindfold.NO -> trans.no.str(),
+    Pref.Blindfold.YES -> trans.yes.str())
 }

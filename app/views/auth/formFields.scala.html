@@ -1,10 +1,9 @@
-@(username: Field, password: Field, emailOption: Option[Field])(implicit ctx: Context)
+@(username: Field, password: Field, emailOption: Option[Field], register: Boolean)(implicit ctx: Context)
 
 <li class="username">
-  <label for="@username.id">@trans.username()</label>
+  <label for="@username.id">@register.fold(trans.username, trans.usernameOrEmail)()</label>
   <input
   type="text"
-  pattern="^[\w-]+$"
   required="required"
   name="@username.name"
   id="@username.id"

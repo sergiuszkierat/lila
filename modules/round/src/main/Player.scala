@@ -1,95 +1,109 @@
 package lila.round
 
-import chess.format.Forsyth
+import chess.format.{ Forsyth, FEN, Uci }
 import chess.Pos.posAt
-import chess.{ Status, Role, Color }
+import chess.{ Status, Role, Color, MoveOrDrop }
 import scalaz.Validation.FlatMap._
 
-import actorApi.round.{ HumanPlay, AiPlay, ImportPlay, DrawNo, TakebackNo, PlayResult, Cheat, ForecastPlay }
+import actorApi.round.{ HumanPlay, DrawNo, TakebackNo, PlayResult, Cheat, ForecastPlay }
 import akka.actor.ActorRef
-import lila.game.{ Game, GameRepo, Pov, Progress, UciMemo }
+import lila.game.{ Game, Pov, Progress, UciMemo }
 import lila.hub.actorApi.map.Tell
 import lila.hub.actorApi.round.MoveEvent
+import scala.concurrent.duration._
 
 private[round] final class Player(
-    engine: lila.ai.Client,
+    fishnetPlayer: lila.fishnet.Player,
     bus: lila.common.Bus,
     finisher: Finisher,
     cheatDetector: CheatDetector,
     uciMemo: UciMemo) {
 
-  def human(play: HumanPlay, round: ActorRef)(pov: Pov): Fu[Events] = play match {
-    case HumanPlay(playerId, ip, origS, destS, promS, blur, lag, onFailure) => pov match {
-      case Pov(game, color) if game playableBy color => {
-        (for {
-          orig ← posAt(origS) toValid "Wrong orig " + origS
-          dest ← posAt(destS) toValid "Wrong dest " + destS
-          promotion = Role promotable promS
-          newChessGameAndMove ← game.toChess(orig, dest, promotion, lag)
-          (newChessGame, move) = newChessGameAndMove
-        } yield game.update(newChessGame, move, blur, lag.some) -> move).prefixFailuresWith(s"$pov ")
-          .fold(errs => ClientErrorException.future(errs.shows), fuccess).flatMap {
-            case (progress, move) =>
-              (GameRepo save progress) >>-
-                (pov.game.hasAi ! uciMemo.add(pov.game, move)) >>-
-                notifyMove(move, progress.game, ip) >>
+  def human(play: HumanPlay, round: ActorRef)(pov: Pov)(implicit proxy: GameProxy): Fu[Events] = play match {
+    case p@HumanPlay(playerId, uci, blur, lag, promiseOption) => pov match {
+      case Pov(game, color) if game playableBy color =>
+        p.trace.segmentSync("applyUci", "logic")(applyUci(game, uci, blur, lag + humanLag)).prefixFailuresWith(s"$pov ")
+          .fold(errs => fufail(ClientError(errs.shows)), fuccess).flatMap {
+            case (progress, moveOrDrop) =>
+              p.trace.segment("save", "db")(proxy save progress) >>-
+                (pov.game.hasAi ! uciMemo.add(pov.game, moveOrDrop)) >>-
+                notifyMove(moveOrDrop, progress.game) >>
                 progress.game.finished.fold(
                   moveFinish(progress.game, color) map { progress.events ::: _ }, {
                     cheatDetector(progress.game) addEffect {
                       case Some(color) => round ! Cheat(color)
                       case None =>
-                        if (progress.game.playableByAi) round ! AiPlay
+                        if (progress.game.playableByAi) requestFishnet(progress.game, round)
                         if (pov.opponent.isOfferingDraw) round ! DrawNo(pov.player.id)
                         if (pov.player.isProposingTakeback) round ! TakebackNo(pov.player.id)
-                        if (pov.game.forecastable) round ! ForecastPlay(move)
+                        moveOrDrop.left.toOption.ifTrue(pov.game.forecastable).foreach { move =>
+                          round ! ForecastPlay(move)
+                        }
                     } inject progress.events
-                  })
+                  }) >>- promiseOption.foreach(_.success(()))
+          } addFailureEffect { e =>
+            promiseOption.foreach(_ failure e)
           }
-      } addFailureEffect onFailure
-      case Pov(game, _) if game.finished           => ClientErrorException.future(s"$pov game is finished")
-      case Pov(game, _) if game.aborted            => ClientErrorException.future(s"$pov game is aborted")
-      case Pov(game, color) if !game.turnOf(color) => ClientErrorException.future(s"$pov not your turn")
-      case _                                       => ClientErrorException.future(s"$pov move refused for some reason")
+      case Pov(game, _) if game.finished           => fufail(ClientError(s"$pov game is finished"))
+      case Pov(game, _) if game.aborted            => fufail(ClientError(s"$pov game is aborted"))
+      case Pov(game, color) if !game.turnOf(color) => fufail(ClientError(s"$pov not your turn"))
+      case _                                       => fufail(ClientError(s"$pov move refused for some reason"))
     }
   }
 
-  def importMove(play: ImportPlay)(pov: Pov): Fu[Events] = play match {
-    case ImportPlay(playerId, ip, orig, dest, promotion) => pov match {
-      case Pov(game, color) if game.turnOf(color) && game.playableEvenImported =>
-        game.toChess(orig, dest, promotion).future.flatMap {
-          case (newChessGame, move) =>
-            val progress = game.update(newChessGame, move)
-            (GameRepo save progress) >>-
-              (progress.game.finished ?? moveFinish(progress.game, color)) inject Nil
-        }
-      case _ => ClientErrorException.future(s"$pov import move refused for some reason")
+  def fishnet(game: Game, uci: Uci, currentFen: FEN, round: ActorRef)(implicit proxy: GameProxy): Fu[Events] =
+    if (game.playable && game.player.isAi) {
+      if (currentFen == FEN(Forsyth >> game.toChess))
+        applyUci(game, uci, blur = false, lag = serverLag)
+          .fold(errs => fufail(ClientError(errs.shows)), fuccess).flatMap {
+            case (progress, moveOrDrop) =>
+              proxy.save(progress) >>-
+                uciMemo.add(progress.game, moveOrDrop) >>-
+                notifyMove(moveOrDrop, progress.game) >>
+                progress.game.finished.fold(
+                  moveFinish(progress.game, game.turnColor) map { progress.events ::: _ },
+                  fuccess(progress.events)
+                )
+          }
+      else requestFishnet(game, round) >> fufail(FishnetError("Invalid AI move current FEN"))
     }
+    else fufail(FishnetError("Not AI turn"))
+
+  private def requestFishnet(game: Game, round: ActorRef): Funit = game.playableByAi ?? {
+    if (game.turns <= fishnetPlayer.maxPlies) fishnetPlayer(game)
+    else fuccess(round ! actorApi.round.ResignAi)
   }
 
-  def ai(game: Game): Fu[Progress] =
-    (game.playable && game.player.isAi).fold(
-      engine.play(game, game.aiLevel | 1) flatMap {
-        case lila.ai.actorApi.PlayResult(progress, move, upstreamIp) =>
-          upstreamIp foreach { notifyMove(move, progress.game, _) }
-          moveFinish(progress.game, game.turnColor) map { progress.++ }
-      },
-      fufail(s"Not AI turn")
-    ) prefixFailure s"[ai play] game ${game.id} turn ${game.turns}"
+  private val clientLag = 30.milliseconds
+  private val serverLag = 5.milliseconds
+  private val humanLag = clientLag + serverLag
 
-  private def notifyMove(move: chess.Move, game: Game, ip: String) {
+  private def applyUci(game: Game, uci: Uci, blur: Boolean, lag: FiniteDuration) = (uci match {
+    case Uci.Move(orig, dest, prom) => game.toChess.apply(orig, dest, prom, lag) map {
+      case (ncg, move) => ncg -> (Left(move): MoveOrDrop)
+    }
+    case Uci.Drop(role, pos) => game.toChess.drop(role, pos, lag) map {
+      case (ncg, drop) => ncg -> (Right(drop): MoveOrDrop)
+    }
+  }).map {
+    case (newChessGame, moveOrDrop) =>
+      game.update(newChessGame, moveOrDrop, blur, lag.some) -> moveOrDrop
+  }
+
+  private def notifyMove(moveOrDrop: MoveOrDrop, game: Game) {
+    val color = moveOrDrop.fold(_.color, _.color)
     bus.publish(MoveEvent(
-      ip = ip,
       gameId = game.id,
-      color = move.color,
+      color = color,
       fen = Forsyth exportBoard game.toChess.board,
-      move = move.keyString,
-      piece = move.piece.forsyth,
-      opponentUserId = game.player(!move.color).userId,
+      move = moveOrDrop.fold(_.toUci.keys, _.toUci.uci),
+      mobilePushable = game.mobilePushable,
+      opponentUserId = game.player(!color).userId,
       simulId = game.simulId
     ), 'moveEvent)
   }
 
-  private def moveFinish(game: Game, color: Color): Fu[Events] = {
+  private def moveFinish(game: Game, color: Color)(implicit proxy: GameProxy): Fu[Events] = {
     lazy val winner = game.toChess.situation.winner
     game.status match {
       case Status.Mate                             => finisher.other(game, _.Mate, winner)

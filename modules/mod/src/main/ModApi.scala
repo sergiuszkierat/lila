@@ -1,16 +1,18 @@
 package lila.mod
 
 import chess.Color
-import lila.db.api._
+import lila.db.dsl._
 import lila.security.{ Firewall, UserSpy, Store => SecurityStore }
-import lila.user.tube.userTube
-import lila.user.{ User, UserRepo }
+import lila.user.{ User, UserRepo, LightUserApi }
 
 final class ModApi(
     logApi: ModlogApi,
     userSpy: String => Fu[UserSpy],
     firewall: Firewall,
     reporter: akka.actor.ActorSelection,
+    notifier: ModNotifier,
+    lightUserApi: LightUserApi,
+    refunder: RatingRefund,
     lilaBus: lila.common.Bus) {
 
   def toggleEngine(mod: String, username: String): Funit = withUser(username) { user =>
@@ -21,15 +23,21 @@ final class ModApi(
     (user.engine != v) ?? {
       logApi.engine(mod, user.id, v) zip
         UserRepo.setEngine(user.id, v) >>- {
-          if (v) lilaBus.publish(lila.hub.actorApi.mod.MarkCheater(user.id), 'adjustCheater)
+          if (v) {
+            lilaBus.publish(lila.hub.actorApi.mod.MarkCheater(user.id), 'adjustCheater)
+            notifier.reporters(user)
+            refunder schedule user
+          }
           reporter ! lila.hub.actorApi.report.MarkCheater(user.id, mod)
         } void
     }
   }
 
   def autoAdjust(username: String): Funit = logApi.wasUnengined(User.normalize(username)) flatMap {
-    case true  => funit
-    case false => setEngine("lichess", username, true)
+    case true => funit
+    case false =>
+      lila.mon.cheat.autoMark.count()
+      setEngine("lichess", username, true)
   }
 
   def toggleBooster(mod: String, username: String): Funit = withUser(username) { user =>
@@ -40,7 +48,10 @@ final class ModApi(
     (user.booster != v) ?? {
       logApi.booster(mod, user.id, v) zip
         UserRepo.setBooster(user.id, v) >>- {
-          if (v) lilaBus.publish(lila.hub.actorApi.mod.MarkBooster(user.id), 'adjustBooster)
+          if (v) {
+            lilaBus.publish(lila.hub.actorApi.mod.MarkBooster(user.id), 'adjustBooster)
+            notifier.reporters(user)
+          }
         } void
     }
   }
@@ -55,10 +66,12 @@ final class ModApi(
     val changed = value != u.troll
     val user = u.copy(troll = value)
     changed ?? {
-      UserRepo.updateTroll(user) >>-
+      UserRepo.updateTroll(user).void >>-
         logApi.troll(mod, user.id, user.troll)
-    } >>-
-      (reporter ! lila.hub.actorApi.report.MarkTroll(user.id, mod)) inject user.troll
+    } >>- {
+      if (value) notifier.reporters(user)
+      (reporter ! lila.hub.actorApi.report.MarkTroll(user.id, mod))
+    } inject user.troll
   }
 
   def ban(mod: String, username: String): Funit = withUser(username) { user =>
@@ -73,11 +86,9 @@ final class ModApi(
     }
   }
 
-  def closeAccount(mod: String, username: String): Funit = withUser(username) { user =>
+  def closeAccount(mod: String, username: String): Fu[Option[User]] = withUser(username) { user =>
     user.enabled ?? {
-      (UserRepo disable user) >>
-        (SecurityStore disconnect user.id) >>
-        logApi.closeAccount(mod, user.id)
+      logApi.closeAccount(mod, user.id) inject user.some
     }
   }
 
@@ -88,7 +99,9 @@ final class ModApi(
   }
 
   def setTitle(mod: String, username: String, title: Option[String]): Funit = withUser(username) { user =>
-    UserRepo.setTitle(user.id, title) >> logApi.setTitle(mod, user.id, title)
+    UserRepo.setTitle(user.id, title) >>
+      lightUserApi.invalidate(user.id) >>
+      logApi.setTitle(mod, user.id, title)
   }
 
   def setEmail(mod: String, username: String, email: String): Funit = withUser(username) { user =>

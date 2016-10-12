@@ -3,12 +3,13 @@ package lila.game
 case class Crosstable(
     user1: Crosstable.User,
     user2: Crosstable.User,
-    results: List[Crosstable.Result],
-    nbGames: Int) {
+    results: List[Crosstable.Result]) {
 
   import Crosstable.Result
 
   def nonEmpty = results.nonEmpty option this
+
+  def nbGames = (user1.score + user2.score) / 10
 
   def users = List(user2, user1)
 
@@ -31,20 +32,6 @@ case class Crosstable(
     if (userId == user1.id) showScore(user2.id).some
     else if (userId == user2.id) showScore(user1.id).some
     else none
-
-  def addWins(userId: Option[String], wins: Int) = copy(
-    user1 = user1.copy(
-      score = user1.score + (userId match {
-        case None                     => wins * 5
-        case Some(u) if user1.id == u => wins * 10
-        case _                        => 0
-      })),
-    user2 = user2.copy(
-      score = user2.score + (userId match {
-        case None                     => wins * 5
-        case Some(u) if user2.id == u => wins * 10
-        case _                        => 0
-      })))
 
   def fromPov(userId: String) =
     if (userId == user2.id) copy(user1 = user2, user2 = user1)
@@ -70,7 +57,6 @@ object Crosstable {
     val score1 = "s1"
     val score2 = "s2"
     val results = "r"
-    val nbGames = "n"
   }
 
   implicit val crosstableBSONHandler = new BSON[Crosstable] {
@@ -83,24 +69,28 @@ object Crosstable {
         user2 = User(u2Id, r intD "s2"),
         results = r.get[List[String]](results).map { r =>
           r drop 8 match {
-            case ""  => Result(r take 8, none)
-            case "+" => Result(r take 8, Some(u1Id))
+            case ""  => Result(r, Some(u1Id))
             case "-" => Result(r take 8, Some(u2Id))
+            case "=" => Result(r take 8, none)
             case _   => sys error s"Invalid result string $r"
           }
-        },
-        nbGames = r int nbGames)
+        })
       case x => sys error s"Invalid crosstable id $x"
     }
 
-    def writeResult(result: Result, u1: String): String =
-      result.gameId + (result.winnerId ?? { w => if (w == u1) "+" else "-" })
+    def writeResult(result: Result, u1: String): String = {
+      val flag = result.winnerId match {
+        case Some(wid) if wid == u1 => ""
+        case Some(wid)              => "-"
+        case None                   => "="
+      }
+      s"${result.gameId}$flag"
+    }
 
     def writes(w: BSON.Writer, o: Crosstable) = BSONDocument(
       id -> makeKey(o.user1.id, o.user2.id),
       score1 -> o.user1.score,
       score2 -> o.user2.score,
-      results -> o.results.map { writeResult(_, o.user1.id) },
-      nbGames -> w.int(o.nbGames))
+      results -> o.results.map { writeResult(_, o.user1.id) })
   }
 }

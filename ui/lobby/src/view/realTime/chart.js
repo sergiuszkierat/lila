@@ -1,5 +1,6 @@
 var m = require('mithril');
-var util = require('chessground').util;
+var util = require('../util');
+var partial = require('chessground').util.partial;
 
 function px(v) {
   return v + 'px';
@@ -33,17 +34,17 @@ function clockX(dur) {
 
 function renderPlot(ctrl, hook) {
   var bottom = Math.max(0, ratingY(hook.rating) - 7);
-  var left = Math.max(0, clockX(hook.time) - 4);
+  var left = Math.max(0, clockX(hook.t) - 4);
   var klass = [
     'plot new',
-    hook.mode ? 'rated' : 'casual',
+    hook.ra ? 'rated' : 'casual',
     hook.action === 'cancel' ? 'cancel' : ''
   ].join(' ');
   return m('span', {
     id: hook.id,
     key: hook.id,
     class: klass,
-    'data-icon': hook.perf.icon,
+    'data-icon': ctrl.perfIcons[hook.perf],
     style: {
       bottom: px(bottom),
       left: px(left)
@@ -54,7 +55,7 @@ function renderPlot(ctrl, hook) {
         intentPollInterval: 100,
         fadeInTime: 0,
         fadeOutTime: 0,
-        placement: hook.rating > 2200 ? 'se' : 'ne',
+        placement: hook.rating > 1800 ? 'se' : 'ne',
         mouseOnToPopup: true,
         closeDelay: 200,
         popupId: 'hook'
@@ -73,14 +74,14 @@ function renderPlot(ctrl, hook) {
 function renderHook(ctrl, hook) {
   var html = '';
   if (hook.rating) {
-    html += '<a class="opponent" href="/@/' + hook.username + '">' + hook.username.substr(0, 14) + '</a>';
+    html += '<a class="opponent ulpt" href="/@/' + hook.u + '">' + hook.u.substr(0, 14) + '</a>';
     html += '<span class="rating">' + hook.rating + '</span>';
   } else {
     html += '<span class="opponent anon">Anonymous</span>';
   }
   html += '<span class="clock">' + hook.clock + '</span>';
   html += '<span class="mode">' +
-    '<span class="varicon" data-icon="' + hook.perf.icon + '"></span>' + ctrl.trans(hook.mode ? 'rated' : 'casual') + '</span>';
+    '<span class="varicon" data-icon="' + ctrl.perfIcons[hook.perf] + '"></span>' + ctrl.trans(hook.ra ? 'rated' : 'casual') + '</span>';
   return html;
 }
 
@@ -127,20 +128,21 @@ function renderYAxis() {
 module.exports = {
   toggle: function(ctrl) {
     return m('span', {
+      key: 'set-mode-list',
       'data-hint': ctrl.trans('list'),
       class: 'mode_toggle hint--bottom',
-      onclick: util.partial(ctrl.setMode, 'list')
+      config: util.bindOnce('mousedown', partial(ctrl.setMode, 'list'))
     }, m('span.chart[data-icon=?]'));
   },
   render: function(ctrl, hooks) {
-    return m('div.hooks_chart', [
+    return m('div.hooks_chart', {
+      key: 'chart'
+    }, [
       m('div.canvas', {
-        onclick: function(e) {
-          if (e.target.classList.contains('plot')) {
-            ctrl.clickHook(e.target.id);
-          }
-        }
-      }, hooks.map(util.partial(renderPlot, ctrl))),
+        config: util.bindOnce('click', function(e) {
+          if (e.target.classList.contains('plot')) ctrl.clickHook(e.target.id);
+        })
+      }, hooks.map(partial(renderPlot, ctrl))),
       renderYAxis(),
       renderXAxis()
     ]);

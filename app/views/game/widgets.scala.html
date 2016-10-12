@@ -1,16 +1,18 @@
 @(games: Seq[Game], user: Option[User] = None, ownerLink: Boolean = false, mini: Boolean = false)(implicit ctx: Context)
 
-@gamePlayer(player: Player) = {
+@gamePlayer(variant: chess.variant.Variant, player: Player) = {
 <div class="player @player.color.name">
   @player.playerUser.map { playerUser =>
   <a href="@routes.User.show(playerUser.id)" class="user_link ulpt">
     @usernameOrId(playerUser.id)
   </a>
   <br />
-  @if(player.berserk) { @berserkIconSpanHtml } @playerUser.rating @playerUser.ratingDiff.map(showRatingDiff)
+  @if(player.berserk) { @berserkIconSpanHtml }
+  @playerUser.rating@if(player.provisional) {?}
+  @playerUser.ratingDiff.map(showRatingDiff)
   }.getOrElse {
   @player.aiLevel.map { level =>
-  <span>@trans.aiNameLevelAiLevel.str(aiName, level)</span><br />@aiRating(level)
+  <span>@trans.aiNameLevelAiLevel.str(aiName(variant), level)</span><br />@aiRating(level)
   }.getOrElse {
   <span>@player.nameSplit match {
     case Some((name, rating)) => {
@@ -32,7 +34,6 @@
   @gameFen(Pov(g, firstPlayer), ownerLink, withTitle = false)
   <a class="game_link_overlay" href="@gameLink(g, firstPlayer.color, ownerLink)"></a>
   <div class="infos" data-icon="@gameIcon(g)">
-    @bookmark.toggle(g)
     <div class="header">
       <strong>
         @if(g.imported) {
@@ -67,9 +68,9 @@
       }
     </div>
     <div class="versus">
-      @gamePlayer(g.whitePlayer)
+      @gamePlayer(g.variant, g.whitePlayer)
       <div class="swords" data-icon="U"></div>
-      @gamePlayer(g.blackPlayer)
+      @gamePlayer(g.variant, g.blackPlayer)
     </div>
     <div class="result">
       @if(g.isBeingPlayed) {@trans.playingRightNow()} else {
@@ -86,7 +87,7 @@
     @defining(g openingPgnMoves 20) { pgnMoves =>
     @if(!g.fromPosition) {
     @g.opening.map { opening =>
-    <div class="opening">@opening.name</div>
+    <div class="opening">@opening.opening.ecoName</div>
     }
     }
     <div class="pgn">@pgnMoves.take(6).grouped(2).zipWithIndex.map {
@@ -102,7 +103,7 @@
     <div class="metadata">
       @if(g.metadata.analysed) {<span data-icon="&#xe004;"> Computer analysis available</span><br />}
       @g.pgnImport.flatMap(_.user).map { user =>
-      PGN import by @userIdLinkMini(user)<br />
+      PGN import by @userIdLink(user.some)<br />
       }
     </div>
   </div>

@@ -1,4 +1,4 @@
-@(pov: Pov, initialFen: Option[String], pgn: chess.format.pgn.Pgn, cross: Option[lila.game.Crosstable])(implicit ctx: Context)
+@(pov: Pov, initialFen: Option[String], pgn: chess.format.pgn.Pgn)(implicit ctx: Context)
 
 @title = @{ s"${playerText(pov.player)} vs ${playerText(pov.opponent)} in ${pov.gameId}" }
 
@@ -14,8 +14,8 @@ orientation: "@pov.color.name"
 
 @round.layout(
 title = title,
-side = views.html.game.side(pov, initialFen, none, simul = none, userTv = none),
-chat = base.chatDom(trans.spectatorRoom.str()).some,
+side = views.html.game.side(pov, initialFen, none, simul = none, userTv = none, bookmarked = false),
+chat = none,
 underchat = views.html.game.watchers().some,
 moreJs = moreJs,
 openGraph = povOpenGraph(pov).some) {
@@ -32,14 +32,9 @@ openGraph = povOpenGraph(pov).some) {
       <div class="lichess_ground for_bot">
         <h1>@titleGame(pov.game)</h1>
         <p>@describePov(pov)</p>
-        <div class="pgn">@Html(nl2br(escape(pgn.toString)))</div>
+        <div class="pgn">@Html(nl2br(escapeHtml(pgn.toString)))</div>
       </div>
     </div>
   </div>
-</div>
-<div class="crosstable" style="display:none">
-  @cross.map { c =>
-  @views.html.game.crosstable(c, pov.gameId.some)
-  }
 </div>
 }

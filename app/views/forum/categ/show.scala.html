@@ -6,8 +6,13 @@
 }
 }
 
+@modMenu = {
+  @mod.menu("forum")
+}
+
 @forum.layout(
 title = categ.name,
+menu = modMenu.some.ifTrue(categ.isStaff),
 openGraph = lila.app.ui.OpenGraph(
 title = s"Forum: ${categ.name}",
 url = s"$netBaseUrl${routes.ForumCateg.show(categ.slug).url}",
@@ -26,13 +31,9 @@ description = categ.desc).some) {
   </ol>
   }
 
-  <p class="description">@categ.desc
-    @if(categ.isStaff) {
-    - <a href="@routes.Mod.log">View Mod Logs</a>
-    }
-  </p>
+  <p class="description">@categ.desc</p>
   <div class="bar top clearfix">
-    @forum.pagination(routes.ForumCateg.show(categ.slug, 1), topics)
+    @forum.pagination(routes.ForumCateg.show(categ.slug, 1), topics, showPost = false)
     @newTopicButton
   </div>
 
@@ -53,7 +54,7 @@ description = categ.desc).some) {
         <td class="right">@topic.nbReplies.localize</td>
         <td class="last_post">
           @topic.lastPost.map { post =>
-          <a href="@routes.ForumTopic.show(categ.slug, topic.slug, topic.lastPage)#@post.number">@momentFromNow(post.createdAt)</a><br />@trans.by(Html(authorName(post)))
+          <a href="@routes.ForumTopic.show(categ.slug, topic.slug, topic.lastPage)#@post.number">@momentFromNow(post.createdAt)</a><br />@trans.by(authorLink(post))
           }
         </td>
       </tr>
@@ -62,7 +63,7 @@ description = categ.desc).some) {
   </table>
 
   <div class="bar bottom clearfix">
-    @forum.pagination(routes.ForumCateg.show(categ.slug, 1), topics)
+    @forum.pagination(routes.ForumCateg.show(categ.slug, 1), topics, showPost = false)
     @newTopicButton
   </div>
 </div>

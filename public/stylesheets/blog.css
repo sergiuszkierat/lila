@@ -15,11 +15,20 @@
   display:inline-block;
   margin-right: 10px;
 }
-#lichess_blog .illustration {
+#lichess_blog .illustration,
+#lichess_blog [data-oembed] {
   text-align: center;
 }
 #lichess_blog .illustration img {
   max-height: 300px;
+}
+#Vs0xMTAAAD4We4Ey [data-oembed] iframe,
+#V0KrLSkAAMo3hsi4 [data-oembed] iframe {
+  width: 744px;
+  height: 417px;
+}
+#lichess_blog .post.no-icon .illustration {
+  display: none;
 }
 #lichess_blog .shortlede {
   display: block;
@@ -48,6 +57,15 @@
 }
 #lichess_blog .body em {
   font-style: italic;
+}
+#lichess_blog .body .block-img {
+  text-align: center;
+}
+#lichess_blog .body .block-img + p > em:first-child {
+  margin-top: -20px;
+  display: block;
+  font-size: 0.8em;
+  text-align: center;
 }
 #lichess_blog ol li {
   list-style: decimal inside;

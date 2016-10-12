@@ -1,12 +1,12 @@
 @()(implicit ctx: Context)
 
 @moreJs = {
-@highchartsTag
+@highchartsLatestTag
 @highchartsMoreTag
 @jsTag("lag.js")
 }
 
-@site.layout(
+@base.layout(
 title = "Is lichess lagging?",
 moreCss = cssTag("lag.css"),
 moreJs = moreJs) {

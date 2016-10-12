@@ -33,14 +33,9 @@ trait UserHelper { self: I18nHelper with StringHelper with NumberHelper =>
     PerfType.Correspondence,
     PerfType.Antichess,
     PerfType.Atomic,
-    PerfType.Horde)
-
-  private def best4Of(u: User, perfTypes: List[PerfType]) =
-    perfTypes.sortBy { pt => -u.perfs(pt).nb } take 4
-
-  def miniViewSortedPerfTypes(u: User): List[PerfType] =
-    best4Of(u, List(PerfType.Bullet, PerfType.Blitz, PerfType.Classical, PerfType.Correspondence)) :::
-      best4Of(u, List(PerfType.Chess960, PerfType.KingOfTheHill, PerfType.ThreeCheck, PerfType.Antichess, PerfType.Atomic, PerfType.Horde))
+    PerfType.Horde,
+    PerfType.RacingKings,
+    PerfType.Crazyhouse)
 
   def showPerfRating(rating: Int, name: String, nb: Int, provisional: Boolean, icon: Char, klass: String)(implicit ctx: Context) = Html {
     val title = s"$name rating over ${nb.localize} games"
@@ -65,7 +60,7 @@ trait UserHelper { self: I18nHelper with StringHelper with NumberHelper =>
 
   def showRatingDiff(diff: Int) = Html {
     diff match {
-      case 0          => """<span class="rp null">+0</span>"""
+      case 0          => """<span class="rp null">±0</span>"""
       case d if d > 0 => s"""<span class="rp up">+$d</span>"""
       case d          => s"""<span class="rp down">$d</span>"""
     }
@@ -90,6 +85,7 @@ trait UserHelper { self: I18nHelper with StringHelper with NumberHelper =>
       userIdNameLink(
         userId = user.id,
         username = user.name,
+        isPatron = user.isPatron,
         title = user.title,
         cssClass = cssClass,
         withOnline = withOnline,
@@ -109,6 +105,7 @@ trait UserHelper { self: I18nHelper with StringHelper with NumberHelper =>
     userIdNameLink(
       userId = user.id,
       username = user.name,
+      isPatron = user.isPatron,
       title = user.title,
       cssClass = cssClass,
       withOnline = withOnline,
@@ -121,34 +118,15 @@ trait UserHelper { self: I18nHelper with StringHelper with NumberHelper =>
     userId: String,
     cssClass: Option[String]): Html = userIdLink(userId.some, cssClass)
 
-  def userIdLinkMini(userId: String) = Html {
-    val user = lightUser(userId)
-    val name = user.fold(userId)(_.name)
-    val content = user.fold(userId)(_.titleNameHtml)
-    val klass = userClass(userId, none, false)
-    val href = userHref(name)
-    s"""<a data-icon="r" $klass $href>&nbsp;$content</a>"""
-  }
-
-  def usernameLink(
-    usernameOption: Option[String],
-    cssClass: Option[String] = None,
-    withOnline: Boolean = true,
-    withTitle: Boolean = true,
-    truncate: Option[Int] = None): Html = Html {
-    usernameOption.fold(User.anonymous) { username =>
-      userIdNameLink(username.toLowerCase, username, cssClass, withOnline, withTitle, truncate)
-    }
-  }
-
   private def titleTag(title: Option[String]) = title match {
     case None    => ""
-    case Some(t) => s"""<span class="title" title="${User titleName t}">$t</span>&nbsp;"""
+    case Some(t) => s"""<span class="title" title="${User titleName t}">$t</span> """
   }
 
   private def userIdNameLink(
     userId: String,
     username: String,
+    isPatron: Boolean,
     cssClass: Option[String] = None,
     withOnline: Boolean = true,
     withTitle: Boolean = true,
@@ -159,9 +137,8 @@ trait UserHelper { self: I18nHelper with StringHelper with NumberHelper =>
     val href = userHref(username, params = params)
     val content = truncate.fold(username)(username.take)
     val titleS = if (withTitle) titleTag(title) else ""
-    val space = if (withOnline) "&nbsp;" else ""
-    val dataIcon = if (withOnline) """ data-icon="r"""" else ""
-    s"""<a$dataIcon $klass $href>$space$titleS$content</a>"""
+    val icon = withOnline ?? lineIcon(isPatron)
+    s"""<a $klass $href>$icon$titleS$content</a>"""
   }
 
   def userLink(
@@ -169,7 +146,6 @@ trait UserHelper { self: I18nHelper with StringHelper with NumberHelper =>
     cssClass: Option[String] = None,
     withOnline: Boolean = true,
     withPowerTip: Boolean = true,
-    withDonor: Boolean = false,
     withTitle: Boolean = true,
     withBestRating: Boolean = false,
     withPerfRating: Option[PerfType] = None,
@@ -179,28 +155,26 @@ trait UserHelper { self: I18nHelper with StringHelper with NumberHelper =>
     val href = userHref(user.username, params)
     val content = text | user.username
     val titleS = if (withTitle) titleTag(user.title) else ""
-    val space = if (withOnline) "&nbsp;" else ""
-    val dataIcon = if (withOnline) """ data-icon="r"""" else ""
     val rating = userRating(user, withPerfRating, withBestRating)
-    val donor = if (withDonor) donorBadge else ""
-      s"""<a$dataIcon $klass $href>$space$titleS$content$rating$donor</a>"""
+    val icon = withOnline ?? lineIcon(user)
+    s"""<a $klass $href>$icon$titleS$content$rating</a>"""
   }
 
   def userInfosLink(
     userId: String,
     rating: Option[Int],
     cssClass: Option[String] = None,
+    withPowerTip: Boolean = true,
     withTitle: Boolean = false,
     withOnline: Boolean = true) = {
     val user = lightUser(userId)
     val name = user.fold(userId)(_.name)
-    val klass = userClass(userId, cssClass, withOnline)
+    val klass = userClass(userId, cssClass, withOnline, withPowerTip)
     val href = userHref(name)
-    val content = rating.fold(name)(e => s"$name&nbsp;($e)")
+    val rat = rating ?? { r => s" ($r)" }
     val titleS = titleTag(user.flatMap(_.title) ifTrue withTitle)
-    val space = if (withOnline) "&nbsp;" else ""
-    val dataIcon = if (withOnline) """ data-icon="r"""" else ""
-    Html(s"""<a$dataIcon $klass $href>$space$titleS$content</a>""")
+    val icon = withOnline ?? lineIcon(user)
+    Html(s"""<a $klass $href>$icon$titleS$name$rat</a>""")
   }
 
   def userSpan(
@@ -216,21 +190,20 @@ trait UserHelper { self: I18nHelper with StringHelper with NumberHelper =>
     val href = s"data-${userHref(user.username)}"
     val content = text | user.username
     val titleS = if (withTitle) titleTag(user.title) else ""
-    val space = if (withOnline) "&nbsp;" else ""
-    val dataIcon = if (withOnline) """ data-icon="r"""" else ""
     val rating = userRating(user, withPerfRating, withBestRating)
-    s"""<span$dataIcon $klass $href>$space$titleS$content$rating</span>"""
+    val icon = withOnline ?? lineIcon(user)
+    s"""<span $klass $href>$icon$titleS$content$rating</span>"""
   }
 
-  def userIdSpanMini(userId: String, withOnline: Boolean = false) = Html {
+  def userIdSpanMini(userId: String, withOnline: Boolean = false, rating: Option[Int] = None) = Html {
     val user = lightUser(userId)
     val name = user.fold(userId)(_.name)
     val content = user.fold(userId)(_.titleNameHtml)
-    val klass = userClass(userId, none, false)
+    val klass = userClass(userId, none, withOnline)
     val href = s"data-${userHref(name)}"
-    val space = if (withOnline) "&nbsp;" else ""
-    val dataIcon = if (withOnline) """ data-icon="r"""" else ""
-    s"""<span$dataIcon $klass $href>$space$content</span>"""
+    val icon = withOnline ?? lineIcon(user)
+    val ra = rating.??(r => s" ($r)")
+    s"""<span $klass $href>$icon$content$ra</span>"""
   }
 
   private def renderRating(perf: Perf) =
@@ -256,7 +229,7 @@ trait UserHelper { self: I18nHelper with StringHelper with NumberHelper =>
     "user_link" :: List(
       cssClass,
       withPowerTip option "ulpt",
-      withOnline option isOnline(userId).fold("online is-green", "offline")
+      withOnline option isOnline(userId).fold("online", "offline")
     ).flatten
   }.mkString("class=\"", " ", "\"")
 
@@ -286,5 +259,16 @@ trait UserHelper { self: I18nHelper with StringHelper with NumberHelper =>
     s"$name played $nbGames games since $createdAt.$currentRating"
   }
 
-  private val donorBadge = """<span data-icon="&#xe001;" class="donor is-gold" title="Lichess donor"></span>"""
+  val patronIconChar = ""
+  val lineIconChar = ""
+
+  private val donorBadge = """<i data-icon="&#xe001;" class="donor is-gold" title="Lichess donor"></i>"""
+
+  val lineIcon: String = s"""<i class="line"></i>"""
+  val patronIcon: String = s"""<i class="line patron" title="lichess Patron"></i>"""
+  private def lineIcon(patron: Boolean): String = if (patron) patronIcon else lineIcon
+  private def lineIcon(user: Option[LightUser]): String = lineIcon(user.??(_.isPatron))
+  private def lineIcon(user: LightUser): String = lineIcon(user.isPatron)
+  def lineIcon(user: User): String = lineIcon(user.isPatron)
+  def lineIconChar(user: User): String = if (user.isPatron) patronIconChar else lineIconChar
 }

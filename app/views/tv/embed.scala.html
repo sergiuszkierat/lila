@@ -15,12 +15,12 @@
   <body
     class="base highlight @bg no-bg"
     style="width: 224px; height: 264px; overflow: hidden;"
-    data-stream-url="@routes.Tv.streamOut">
+    data-stream-url="@routes.Tv.feed">
     <div id="featured_game" class="is2d highlight @bg @theme merida" title="lichess.org TV">
       @gameFenNoCtx(pov, tv = true, blank = true)
       @game.vstext(pov)(none)
     </div>
-    <script src="http://code.jquery.com/jquery-2.1.3.min.js"></script>
+    <script src="//code.jquery.com/jquery-2.1.3.min.js"></script>
     @jsTag("vendor/chessground.min.js")
     @jsTagCompiled("tv.js")
     @base.ga()

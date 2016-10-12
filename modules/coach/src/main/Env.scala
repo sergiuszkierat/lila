@@ -4,43 +4,43 @@ import akka.actor._
 import com.typesafe.config.Config
 import scala.concurrent.duration._
 
-import akka.actor._
 import lila.common.PimpedConfig._
 
 final class Env(
     config: Config,
-    getPref: String => Fu[lila.pref.Pref],
-    areFriends: (String, String) => Fu[Boolean],
-    lightUser: String => Option[lila.common.LightUser],
-    system: ActorSystem,
+    notifyApi: lila.notify.NotifyApi,
     db: lila.db.Env) {
 
-  private val settings = new {
-    val CollectionStat = config getString "collection.stat"
+  private val CollectionCoach = config getString "collection.coach"
+  private val CollectionReview = config getString "collection.review"
+  private val CollectionImage = config getString "collection.image"
+
+  private lazy val coachColl = db(CollectionCoach)
+  private lazy val reviewColl = db(CollectionReview)
+  private lazy val imageColl = db(CollectionImage)
+
+  private lazy val photographer = new Photographer(imageColl)
+
+  lazy val api = new CoachApi(
+    coachColl = coachColl,
+    reviewColl = reviewColl,
+    photographer = photographer,
+    notifyApi = notifyApi)
+
+  lazy val pager = new CoachPager(api)
+
+  def cli = new lila.common.Cli {
+    def process = {
+      case "coach" :: "enable" :: username :: Nil  => api.toggleApproved(username, true)
+      case "coach" :: "disable" :: username :: Nil => api.toggleApproved(username, false)
+    }
   }
-  import settings._
-
-  private lazy val jsonWriters = new JSONWriters(lightUser = lightUser)
-
-  lazy val share = new Share(getPref, areFriends)
-
-  lazy val jsonView = new JsonView(jsonWriters)
-
-  lazy val statApi = new StatApi(
-    coll = db(CollectionStat))
-
-  lazy val aggregator = new Aggregator(
-    api = statApi,
-    sequencer = system.actorOf(Props(classOf[lila.hub.Sequencer], None)))
 }
 
 object Env {
 
   lazy val current: Env = "coach" boot new Env(
     config = lila.common.PlayApp loadConfig "coach",
-    getPref = lila.pref.Env.current.api.getPrefById,
-    areFriends = lila.relation.Env.current.api.areFriends,
-    lightUser = lila.user.Env.current.lightUser,
-    system = lila.common.PlayApp.system,
+    notifyApi = lila.notify.Env.current.api,
     db = lila.db.Env.current)
 }

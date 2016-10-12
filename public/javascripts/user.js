@@ -1,53 +1,85 @@
 $(function() {
 
-  var $searchForm = $('form.search');
+  var setupAutocomplete = function() {
+    var go = function(name) {
+      location.href = '/@/' + name;
+    }
+    var $input = $(this);
+    lichess.loadCss('/assets/stylesheets/autocomplete.css');
+    lichess.loadScript('/assets/javascripts/vendor/typeahead.jquery.min.js').done(function() {
+      $input.typeahead(null, {
+        minLength: 2,
+        hint: true,
+        highlight: true,
+        source: function(query, sync, async) {
+          $.ajax({
+            url: '/player/autocomplete?term=' + query,
+            cache: true,
+            success: function(res) {
+              // hack to fix typeahead limit bug
+              if (res.length === 10) res.push(null);
+              async(res);
+            }
+          });
+        },
+        limit: 10,
+        templates: {
+          empty: '<div class="empty">No player found</div>',
+          pending: lichess.spinnerHtml,
+          suggestion: function(a) {
+            return '<span class="ulpt" data-href="/@/' + a + '">' + a + '</span>';
+          }
+        }
+      }).bind('typeahead:select', function(ev, sel) {
+        go(sel);
+      }).keypress(function(e) {
+        if (e.which == 10 || e.which == 13) go($(this).val());
+      }).focus();
+    });
+  };
 
-  if ($searchForm.length) {
-    $searchInput = $searchForm.find('input.search_user');
-    $searchInput.on('autocompleteselect', function(e, ui) {
-      setTimeout(function() {
-        $searchForm.submit();
-      }, 10);
-    });
-    $searchForm.submit(function() {
-      location.href = $searchForm.attr('action') + $searchInput.val();
-      return false;
-    });
-  }
+  $('input.user-autocomplete-jump').each(setupAutocomplete);
 
   $("div.user_show .mod_zone_toggle").each(function() {
     $(this).click(function() {
       var $zone = $("div.user_show .mod_zone");
       if ($zone.is(':visible')) $zone.hide();
-      else $zone.html("Loading...").show();
-      $.ajax({
-        url: $(this).attr("href"),
-        success: function(html) {
-          $zone.html(html);
-          var $this = $(this);
-          $this.find('form.fide_title select').on('change', function() {
-            $(this).parent('form').submit();
+      else $zone.html(lichess.spinnerHtml).show();
+      $zone.load($(this).attr("href"), function() {
+        $zone.find('form.fide_title select').on('change', function() {
+          $(this).parent('form').submit();
+        });
+        lichess.pubsub.emit('content_loaded')();
+        var relatedUsers = +$zone.find('.reportCard thead th:last').text();
+        if (relatedUsers > 100) {
+          var others = $zone.find('.others').hide()
+            .before('<a id="others-show">Show ' + relatedUsers + ' related users... (very large!)</a>');
+          $zone.find('#others-show').click(function() {
+            others.show();
+            $(this).remove();
           });
-          $('body').trigger('lichess.content_loaded');
-          var relatedUsers = +$('.reportCard thead th:last').text();
-          if (relatedUsers > 100) {
-            $this.find('.others').css('display', 'none').before('<a class="others-show">Show ' + relatedUsers + ' related users</a>');
-            $this.find('.others-show').click(function() {
-              $(this).next().css('display', '');
-              $(this).remove();
-            });
-          }
-          $this.find('li.ip').slice(0, 3).each(function() {
-            var $li = $(this);
+        }
+        var $modLog = $zone.find('.mod_log ul').children();
+        if ($modLog.length > 20) {
+          var list = $modLog.slice(20);
+          list.addClass('modlog-hidden').hide()
+            .first().before('<a id="modlog-show">Show all ' + $modLog.length + ' mod log entries...</a>');
+          $zone.find('#modlog-show').click(function() {
+            $zone.find('.modlog-hidden').show();
+            $(this).remove();
+          });
+        }
+        $zone.find('li.ip').slice(0, 2).each(function() {
+          var $li = $(this);
+          $(this).one('mouseover', function() {
             $.ajax({
               url: '/mod/ip-intel?ip=' + $(this).find('.address').text(),
               success: function(res) {
-                var p = Math.round(parseFloat(res) * 100);
-                $li.append($('<span class="intel">' + p + '% proxy</span>'));
+                $li.append($('<span class="intel">' + res + '% proxy</span>'));
               }
             });
           });
-        }
+        });
       });
       return false;
     });
@@ -60,8 +92,6 @@ $(function() {
     });
     if (location.search.indexOf('note') != -1) $(this).click();
   });
-
-  $('.buttonset').buttonset().disableSelection();
 
   $('form.autosubmit').each(function() {
     var $form = $(this);
@@ -83,6 +113,25 @@ $(function() {
       $.post($(this).attr('href'));
       $zone.remove();
       return false;
+    });
+  });
+
+  if ($('#perfStat.correspondence .view_games').length &&
+    lichess.once('user-correspondence-view-games')) lichess.hopscotch(function() {
+    hopscotch.configure({
+      i18n: {
+        nextBtn: 'OK, got it'
+      }
+    }).startTour({
+      id: 'correspondence-games',
+      showPrevButton: true,
+      isTourBubble: false,
+      steps: [{
+        title: "Recently finished games",
+        content: "Would you like to display the list of your correspondence games, sorted by completion date?",
+        target: $('#perfStat.correspondence .view_games')[0],
+        placement: "bottom"
+      }]
     });
   });
 });

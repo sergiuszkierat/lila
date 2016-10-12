@@ -1,9 +1,5 @@
 package lila.pref
 
-import play.api.libs.json._
-
-import lila.db.JsTube
-import lila.db.JsTube.Helpers._
 import lila.user.User
 
 case class Pref(
@@ -38,7 +34,10 @@ case class Pref(
     puzzleDifficulty: Int,
     submitMove: Int,
     confirmResign: Int,
-    coachShare: Int,
+    insightShare: Int,
+    keyboardMove: Int,
+    moveEvent: Int,
+    pieceNotation: Int,
     tags: Map[String, String] = Map.empty) {
 
   import Pref._
@@ -92,11 +91,19 @@ case class Pref(
   def isBlindfold = blindfold == Pref.Blindfold.YES
 
   def bgImgOrDefault = bgImg | Pref.defaultBgImg
+
+  def pieceNotationIsLetter = pieceNotation == PieceNotation.LETTER
 }
 
 object Pref {
 
-  val defaultBgImg = "http://lichess1.org/assets/images/background/landscape.jpg"
+  val defaultBgImg = "//lichess1.org/assets/images/background/landscape.jpg"
+
+  trait BooleanPref {
+    val NO = 0
+    val YES = 1
+    val choices = Seq(NO -> "No", YES -> "Yes")
+  }
 
   object Tag {
     val verifyTitle = "verifyTitle"
@@ -148,16 +155,9 @@ object Pref {
       ALWAYS -> "Always")
   }
 
-  object ConfirmResign {
-    val NO = 0
-    val YES = 1
+  object ConfirmResign extends BooleanPref
 
-    val choices = Seq(
-      NO -> "No",
-      YES -> "Yes")
-  }
-
-  object CoachShare {
+  object InsightShare {
     val NOBODY = 0
     val FRIENDS = 1
     val EVERYBODY = 2
@@ -168,11 +168,30 @@ object Pref {
       EVERYBODY -> "With everybody")
   }
 
-  object Blindfold {
-    val NO = 0
-    val YES = 1
+  object KeyboardMove extends BooleanPref
+
+  object MoveEvent {
+    val CLICK = 0
+    val DRAG = 1
+    val BOTH = 2
 
     val choices = Seq(
+      CLICK -> "Click two squares",
+      DRAG -> "Drag a piece",
+      BOTH -> "Both clicks and drag")
+  }
+
+  object PieceNotation {
+    val SYMBOL = 0
+    val LETTER = 1
+
+    val choices = Seq(
+      SYMBOL -> "Chess piece symbol",
+      LETTER -> "PGN letter (K, Q, R, B, N)")
+  }
+
+  object Blindfold extends BooleanPref {
+    override val choices = Seq(
       NO -> "What? No!",
       YES -> "Yes, hide the pieces")
   }
@@ -259,8 +278,9 @@ object Pref {
       FRIEND -> "Only friends",
       ALWAYS -> "Always")
 
-    def block(from: User, to: User, pref: Int, follow: Boolean): Option[String] = pref match {
+    def block(from: User, to: User, pref: Int, follow: Boolean, fromCheat: Boolean): Option[String] = pref match {
       case NEVER => "{{user}} doesn't accept challenges.".some
+      case _ if fromCheat && !follow => "{{user}} only accepts challenges from friends.".some
       case RATING if from.perfs.bestRating > to.perfs.bestRating => none
       case RATING if math.abs(from.perfs.bestRating - to.perfs.bestRating) > ratingThreshold =>
         s"{{user}} only accepts challenges if rating is ± $ratingThreshold.".some
@@ -314,7 +334,10 @@ object Pref {
     puzzleDifficulty = Difficulty.NORMAL,
     submitMove = SubmitMove.CORRESPONDENCE_ONLY,
     confirmResign = ConfirmResign.YES,
-    coachShare = CoachShare.FRIENDS,
+    insightShare = InsightShare.FRIENDS,
+    keyboardMove = KeyboardMove.NO,
+    moveEvent = MoveEvent.BOTH,
+    pieceNotation = PieceNotation.SYMBOL,
     tags = Map.empty)
 
   import ornicar.scalalib.Zero

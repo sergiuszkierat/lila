@@ -20,8 +20,20 @@ class DataFormTest extends Specification with ScalazValidationMatchers  {
 
 1. Bd7 b4 2. Kf7 b3 3. Ke8 b2 4. Kd8 g6 5. Bxc7# { Black is checkmated } 1-0"""
 
-      ImportData(pgn).preprocess(None) must beSuccess.like {
+      ImportData(pgn, None).preprocess(None) must beSuccess.like {
         case s => s.game.toChess.board.history.castles must_== Castles.none
+      }
+    }
+  }
+
+  "Import" should {
+    "default to normal termination" in {
+      val pgn = """[Result "1-0"]
+
+1. e4 e5 2. Nf3 Nc6 3. Bc4 d6 4. Nc3 Bg4 5. h3 Bh5 6. Nxe5 Bxd1 7. Bxf7+"""
+
+      ImportData(pgn, None).preprocess(None) must beSuccess.like {
+        case Preprocessed(_, _, Some(r), _, _) => r.status must_== Status.Resign
       }
     }
   }

@@ -33,14 +33,14 @@ object Simul extends LilaController {
   }
 
   private def fetchSimuls =
-    env.allCreated(true) zip env.repo.allStarted zip env.repo.allFinished(10)
+    env.allCreated(true) zip env.repo.allStarted zip env.repo.allFinished(30)
 
   def show(id: String) = Open { implicit ctx =>
     env.repo find id flatMap {
       _.fold(simulNotFound.fuccess) { sim =>
         env.version(sim.id) zip
           env.jsonView(sim) zip
-          chatOf(sim) map {
+          (ctx.noKid ?? Env.chat.api.userChat.findMine(sim.id, ctx.me).map(some)) map {
             case ((version, data), chat) => html.simul.show(sim, version, data, chat)
           }
       }
@@ -115,15 +115,10 @@ object Simul extends LilaController {
   }
 
   def websocket(id: String, apiVersion: Int) = SocketOption[JsValue] { implicit ctx =>
-    (getInt("version") |@| get("sri")).tupled ?? {
-      case (version, uid) => env.socketHandler.join(id, version, uid, ctx.me)
+    get("sri") ?? { uid =>
+      env.socketHandler.join(id, uid, ctx.me)
     }
   }
-
-  private def chatOf(sim: Sim)(implicit ctx: Context) =
-    ctx.isAuth ?? {
-      Env.chat.api.userChat find sim.id map (_.forUser(ctx.me).some)
-    }
 
   private def AsHost(simulId: Sim.ID)(f: Sim => Result)(implicit ctx: Context): Fu[Result] =
     env.repo.find(simulId) flatMap {

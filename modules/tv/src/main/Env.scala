@@ -4,6 +4,7 @@ import akka.actor._
 import com.typesafe.config.Config
 
 import lila.common.PimpedConfig._
+import lila.db.dsl._
 
 import scala.collection.JavaConversions._
 import scala.concurrent.duration._
@@ -19,6 +20,10 @@ final class Env(
 
   private val FeaturedSelect = config duration "featured.select"
   private val StreamingSearch = config duration "streaming.search"
+  private val GoogleApiKey = config getString "streaming.google.api_key"
+  private val Keyword = config getString "streaming.keyword"
+  private val HitboxUrl = config getString "streaming.hitbox.url"
+  private val TwitchClientId = config getString "streaming.twitch.client_id"
 
   lazy val tv = new Tv(tvActor)
 
@@ -30,27 +35,35 @@ final class Env(
   private lazy val streaming = new Streaming(
     system = system,
     renderer = hub.actor.renderer,
-    streamerList = streamerList)
+    streamerList = streamerList,
+    keyword = Keyword,
+    googleApiKey = GoogleApiKey,
+    hitboxUrl = HitboxUrl,
+    twitchClientId = TwitchClientId)
 
   lazy val streamerList = new StreamerList(new {
     import reactivemongo.bson._
     private val coll = db("flag")
-    def get = coll.find(BSONDocument("_id" -> "streamer")).one[BSONDocument].map {
-      ~_.flatMap(_.getAs[String]("text"))
-    }
+    def get = coll.primitiveOne[String]($id("streamer"), "text") map (~_)
     def set(text: String) =
-      coll.update(BSONDocument("_id" -> "streamer"), BSONDocument("text" -> text), upsert = true).void
+      coll.update($id("streamer"), $doc("text" -> text), upsert = true).void
   })
 
   object isStreamer {
     private val cache = lila.memo.MixedCache.single[Set[String]](
       f = streamerList.lichessIds,
-      timeToLive = 1 minute,
-      default = Set.empty)
+      timeToLive = 10 seconds,
+      default = Set.empty,
+      logger = logger)
     def apply(id: String) = cache get true contains id
   }
 
-  def streamsOnAir = streaming.onAir
+  object streamsOnAir {
+    private val cache = lila.memo.AsyncCache.single[List[StreamOnAir]](
+      f = streaming.onAir,
+      timeToLive = 2 seconds)
+    def all = cache(true)
+  }
 
   {
     import scala.concurrent.duration._

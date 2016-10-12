@@ -14,6 +14,7 @@ final class PasswordReset(
     secret: String) {
 
   def send(user: User, email: String): Funit = tokener make user flatMap { token =>
+    lila.mon.email.resetPassword()
     val url = s"$baseUrl/password/reset/confirm/$token"
     WS.url(s"$apiUrl/messages").withAuth("api", apiKey, WSAuthScheme.BASIC).post(Map(
       "from" -> Seq(sender),
@@ -28,7 +29,10 @@ $url
 
 
 Please do not reply to this message; it was sent from an unmonitored email address. This message is a service email related to your use of lichess.org.
-"""))).void
+"""))).void addFailureEffect {
+      case e: java.net.ConnectException => lila.mon.http.mailgun.timeout()
+      case _                            =>
+    }
   }
 
   def confirm(token: String): Fu[Option[User]] = tokener read token

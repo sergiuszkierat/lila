@@ -4,12 +4,12 @@ private[i18n] object Contributors {
 
   val all = Map(
     "fr" -> List("Thibault Duplessis", "Calinou"),
-    "ru" -> List("Nikita Milovanov"),
+    "ru" -> List("Nikita Milovanov", "Alex Bagirov"),
     "de" -> List("Patrick Gawliczek", "Kurt Keller (DE)"),
     "tr" -> List("Yakup Ipek", "Usolando"),
     "sr" -> List("Nenad Nikolić"),
     "lv" -> List("Anonymous"),
-    "bs" -> List("Jacikka"),
+    "bs" -> List("Jacikka", "munja_bs"),
     "da" -> List("Henrik Bjornskov", "Kurt Keller (DE)"),
     "es" -> List("FennecFoxz"),
     "ro" -> List("Cristian Niţă"),
@@ -32,7 +32,7 @@ private[i18n] object Contributors {
     "tp" -> List("jan Mimoku"),
     "el" -> List("Tzortzakos Fivos", "Γιάννης Ανθυμίδης"),
     "fp" -> List("Alex"),
-    "lt" -> List("Anonymous"),
+    "lt" -> List("Paulius Andriekus"),
     "nb" -> List("sundaune", "Tobias V. Langhoff"),
     "et" -> List("Anonymous"),
     "hy" -> List("Network.am"),
@@ -50,7 +50,7 @@ private[i18n] object Contributors {
     "fa" -> List("saeid monajiane"),
     "he" -> List("Tangelo777", " Tornado"),
     "mr" -> List("Rahul"),
-    "mn" -> List("Tsbarsaa"),
+    "mn" -> List("Tsbarsaa", "mungunbayar"),
     "cy" -> List("cavejohnson"),
     "gd" -> List("GunChleoc"),
     "ga" -> List("Anonymous"),
@@ -85,7 +85,9 @@ private[i18n] object Contributors {
     "yo" -> List("Mikhail04"),
     "tl" -> List("Curlaub"),
     "fy" -> List("FishingCat"),
-    "jb" -> List("username05"))
+    "jb" -> List("username05"),
+    "tg" -> List("mondayguy"),
+    "cv" -> List("pentille"))
 
   def apply(code: String): List[String] = ~(all get code)
 }

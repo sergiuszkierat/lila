@@ -4,17 +4,28 @@ var util = require('./util');
 var round = require('./round');
 var m = require('mithril');
 
-function str2move(mo) {
-  return mo ? [mo.slice(0, 2), mo.slice(2, 4)] : null;
+function uci2move(uci) {
+  if (!uci) return null;
+  if (uci[1] === '@') return [uci.slice(2, 4)];
+  return [uci.slice(0, 2), uci.slice(2, 4)];
+}
+
+function boardOrientation(data, flip) {
+  if (data.game.variant.key === 'racingKings') {
+    return flip ? 'black': 'white';
+  } else {
+    return flip ? data.opponent.color : data.player.color;
+  }
 }
 
 function makeConfig(data, ply, flip) {
   var step = round.plyStep(data, ply);
+  var playing = game.isPlayerPlaying(data);
   return {
     fen: step.fen,
-    orientation: flip ? data.opponent.color : data.player.color,
+    orientation: boardOrientation(data, flip),
     turnColor: data.game.player,
-    lastMove: str2move(step.uci),
+    lastMove: uci2move(step.uci),
     check: step.check,
     coordinates: data.pref.coords !== 0,
     autoCastle: data.game.variant.key === 'standard',
@@ -25,8 +36,8 @@ function makeConfig(data, ply, flip) {
     },
     movable: {
       free: false,
-      color: game.isPlayerPlaying(data) ? data.player.color : null,
-      dests: game.isPlayerPlaying(data) ? util.parsePossibleMoves(data.possibleMoves) : {},
+      color: playing ? data.player.color : null,
+      dests: playing ? util.parsePossibleMoves(data.possibleMoves) : {},
       showDests: data.pref.destination
     },
     animation: {
@@ -42,8 +53,19 @@ function makeConfig(data, ply, flip) {
         unset: m.redraw
       }
     },
+    predroppable: {
+      enabled: data.pref.enablePremove && data.game.variant.key === 'crazyhouse',
+      events: {
+        set: m.redraw,
+        unset: m.redraw
+      }
+    },
     draggable: {
+      enabled: data.pref.moveEvent > 0,
       showGhost: data.pref.highlight
+    },
+    selectable: {
+      enabled: data.pref.moveEvent !== 1
     },
     drawable: {
       enabled: true
@@ -52,15 +74,17 @@ function makeConfig(data, ply, flip) {
   };
 }
 
-function make(data, ply, userMove, onMove) {
-  var config = makeConfig(data, ply);
+function make(opts) {
+  var config = makeConfig(opts.data, opts.ply);
   config.movable.events = {
-    after: userMove
+    after: opts.onUserMove,
+    afterNewPiece: opts.onUserNewPiece
   };
   config.events = {
-    move: onMove
+    move: opts.onMove,
+    dropNewPiece: opts.onNewPiece
   };
-  config.viewOnly = data.player.spectator;
+  config.viewOnly = opts.data.player.spectator;
   return new chessground.controller(config);
 }
 
@@ -85,6 +109,7 @@ function end(ground) {
 }
 
 module.exports = {
+  boardOrientation: boardOrientation,
   make: make,
   reload: reload,
   promote: promote,

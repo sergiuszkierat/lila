@@ -1,27 +1,41 @@
 package lila.socket
 
-import chess.format.UciMove
-import lila.common.PimpedJson._
+import chess.format.{ Uci, UciCharPair }
+import chess.opening._
+import chess.variant.Variant
 import play.api.libs.json.JsObject
+import scalaz.Validation.FlatMap._
+
+import lila.common.PimpedJson._
+import tree.Branch
 
 case class AnaMove(
     orig: chess.Pos,
     dest: chess.Pos,
-    variant: chess.variant.Variant,
+    variant: Variant,
     fen: String,
     path: String,
     promotion: Option[chess.PromotableRole]) {
 
-  def step: Valid[Step] =
-    chess.Game(variant.some, fen.some)(orig, dest, promotion) map {
-      case (game, move) => Step(
-        ply = game.turns,
-        move = game.pgnMoves.lastOption.map { san =>
-          Step.Move(UciMove(move), san)
-        },
-        fen = chess.format.Forsyth >> game,
-        check = game.situation.check,
-        dests = Some(!game.situation.end ?? game.situation.destinations))
+  def branch: Valid[Branch] =
+    chess.Game(variant.some, fen.some)(orig, dest, promotion) flatMap {
+      case (game, move) => game.pgnMoves.lastOption toValid "Moved but no last move!" map { san =>
+        val uci = Uci(move)
+        val movable = !game.situation.end
+        val fen = chess.format.Forsyth >> game
+        Branch(
+          id = UciCharPair(uci),
+          ply = game.turns,
+          move = Uci.WithSan(uci, san),
+          fen = fen,
+          check = game.situation.check,
+          dests = Some(movable ?? game.situation.destinations),
+          opening = Variant.openingSensibleVariants(variant) ?? {
+            FullOpeningDB findByFen fen
+          },
+          drops = movable.fold(game.situation.drops, Some(Nil)),
+          crazyData = game.situation.board.crazyData)
+      }
     }
 }
 

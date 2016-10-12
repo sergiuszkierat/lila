@@ -19,7 +19,8 @@ case class Puzzle(
     vote: Vote,
     attempts: Int,
     wins: Int,
-    time: Int) {
+    time: Int,
+    mate: Boolean) {
 
   def initialPly: Option[Int] = fen.split(' ').lastOption flatMap parseIntOption map { move =>
     move * 2 + color.fold(0, 1)
@@ -34,10 +35,10 @@ case class Puzzle(
   def enabled = vote.sum > -9000
 
   def fenAfterInitialMove: Option[String] = {
-    import chess.format.{ UciMove, Forsyth }
+    import chess.format.{ Uci, Forsyth }
     for {
       sit1 <- Forsyth << fen
-      uci <- UciMove(initialMove)
+      uci <- Uci.Move(initialMove)
       sit2 <- sit1.move(uci.orig, uci.dest, uci.promotion).toOption map (_.situationAfter)
     } yield Forsyth >> sit2
   }
@@ -49,20 +50,23 @@ object Puzzle {
     gameId: Option[String],
     history: List[String],
     fen: String,
-    lines: Lines)(id: PuzzleId) = new Puzzle(
+    color: Color,
+    lines: Lines,
+    mate: Boolean)(id: PuzzleId) = new Puzzle(
     id = id,
     gameId = gameId,
     history = history,
     fen = fen,
     lines = lines,
     depth = Line minDepth lines,
-    color = Color(history.size % 2 == 0),
+    color = color,
     date = DateTime.now,
     perf = Perf.default,
     vote = Vote(0, 0, 0),
     attempts = 0,
     wins = 0,
-    time = 0)
+    time = 0,
+    mate = mate)
 
   import reactivemongo.bson._
   import lila.db.BSON
@@ -105,6 +109,7 @@ object Puzzle {
     val attempts = "attempts"
     val wins = "wins"
     val time = "time"
+    val mate = "mate"
   }
 
   implicit val puzzleBSONHandler = new BSON[Puzzle] {
@@ -126,7 +131,8 @@ object Puzzle {
       vote = r.get[Vote](vote),
       attempts = r int attempts,
       wins = r int wins,
-      time = r int time)
+      time = r int time,
+      mate = r bool mate)
 
     def writes(w: BSON.Writer, o: Puzzle) = BSONDocument(
       id -> o.id,
@@ -141,6 +147,7 @@ object Puzzle {
       vote -> o.vote,
       attempts -> o.attempts,
       wins -> o.wins,
-      time -> o.time)
+      time -> o.time,
+      mate -> o.mate)
   }
 }

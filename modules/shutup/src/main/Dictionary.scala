@@ -5,14 +5,14 @@ package lila.shutup
  * - words are automatically leetified. "tit" will also match "t1t", "t-i-t", and more.
  * - words do not partial match. "anal" will NOT match "analysis".
  */
-object Dictionary {
+private object Dictionary {
 
   def en: List[String] = dict("""
 (c|k)oc?k(y|suc?ker|)
 (c|k)um(shot|)
 (c|k)unt(ing|)
-(f+|ph)(u{1,}|a{1,}|e{1,})c?k(er|r|u|k|ed|d|t|ing?|en|tard?|face|off?|)
-fck(er|r|u|k|ed|d|t|ing?|tard?|face|off?|)
+(f+|ph)(u{1,}|a{1,}|e{1,})c?k(er|r|u|k|ed|d|t|ing?|ign|en|tard?|face|off?|)
+fck(er|r|u|k|ed|d|t|ing?|ign|tard?|face|off?|)
 abortion
 adol(f|ph)
 anal(plug|sex|)
@@ -37,6 +37,7 @@ buk?kake
 bull?shit
 cancer
 cawk
+chess(|-|_)bot(.?com)?
 chink
 choad
 clit
@@ -108,13 +109,13 @@ pimp
 piss
 poof
 poon
-poop
+poop(face|)
 porn
 pric?k
 pron
 prostitute
 punani
-puss(i|y|ie)
+puss(i|y|ie|)
 queef
 queer
 quim

@@ -11,6 +11,10 @@ case class StreamOnAir(
     streamId: String) {
 
   def id = streamer.id
+
+  def is(s: Streamer) = id == s.id
+
+  def highlight = !Set("ornicar", "ornicar2")(streamer.streamerName)
 }
 
 case class StreamsOnAir(streams: List[StreamOnAir])
@@ -35,7 +39,7 @@ object Twitch {
   object Reads {
     implicit val twitchChannelReads = Json.reads[Channel]
     implicit val twitchStreamReads = Json.reads[Stream]
-    implicit val twitchResultReads: Reads[Result] = Json.reads[Result]
+    implicit val twitchResultReads = Json.reads[Result]
   }
 }
 
@@ -45,7 +49,7 @@ object Hitbox {
   case class Result(livestream: List[Stream]) {
     def streamsOnAir(streamers: List[Streamer]) = livestream.flatMap { s =>
       for {
-        streamer <- StreamerList.findTwitch(streamers)(s.media_user_name)
+        streamer <- StreamerList.findHitbox(streamers)(s.media_user_name)
         if s.media_is_live == "1"
       } yield StreamOnAir(
         streamer = streamer,
@@ -57,7 +61,31 @@ object Hitbox {
   object Reads {
     implicit val hitboxChannelReads = Json.reads[Channel]
     implicit val hitboxStreamReads = Json.reads[Stream]
-    implicit val hitboxResultReads: Reads[Result] = Json.reads[Result]
+    implicit val hitboxResultReads = Json.reads[Result]
+  }
+}
+
+object Youtube {
+  case class Snippet(title: String, channelId: String, liveBroadcastContent: String)
+  case class Id(videoId: String)
+  case class Item(id: Id, snippet: Snippet)
+  case class Result(items: List[Item]) {
+    def streamsOnAir(streamers: List[Streamer]) = items.flatMap { item =>
+      for {
+        streamer <- StreamerList.findYoutube(streamers)(item.snippet.channelId)
+        if item.snippet.liveBroadcastContent == "live"
+      } yield StreamOnAir(
+        streamer = streamer,
+        name = item.snippet.title,
+        url = s"https://www.youtube.com/channel/${item.snippet.channelId}/live",
+        streamId = item.id.videoId)
+    }
+  }
+  object Reads {
+    implicit val youtubeSnippetReads = Json.reads[Snippet]
+    implicit val youtubeIdReads = Json.reads[Id]
+    implicit val youtubeItemReads = Json.reads[Item]
+    implicit val youtubeResultReads = Json.reads[Result]
   }
 }
 

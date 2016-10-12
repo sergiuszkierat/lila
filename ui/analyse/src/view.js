@@ -1,240 +1,25 @@
 var m = require('mithril');
 var chessground = require('chessground');
-var classSet = chessground.util.classSet;
-var partial = chessground.util.partial;
 var util = require('./util');
-var defined = util.defined;
-var empty = util.empty;
 var game = require('game').game;
 var renderStatus = require('game').view.status;
-var mod = require('game').view.mod;
 var router = require('game').router;
-var treePath = require('./path');
+var treePath = require('./tree/path');
+var treeView = require('./tree/treeView');
 var control = require('./control');
 var actionMenu = require('./actionMenu').view;
 var renderPromotion = require('./promotion').view;
 var pgnExport = require('./pgnExport');
 var forecastView = require('./forecast/forecastView');
 var cevalView = require('./ceval/cevalView');
-var raf = require('chessground').util.requestAnimationFrame;
+var crazyView = require('./crazy/crazyView');
+var keyboardView = require('./keyboard').view;
+var explorerView = require('./explorer/explorerView');
+var studyView = require('./study/studyView');
+var forkView = require('./fork').view;
+var acplView = require('./acpl');
 
-function renderEvalTag(e) {
-  return {
-    tag: 'eval',
-    children: [e]
-  };
-}
-
-function autoScroll(el) {
-  return util.throttle(500, false, function autoScroll() {
-    raf(function() {
-      var plyEl = el.querySelector('.active') || el.querySelector('.turn:first-child');
-      if (plyEl) el.scrollTop = plyEl.offsetTop - el.offsetHeight / 2 + plyEl.offsetHeight / 2;
-    });
-  });
-}
-
-var emptyMove = m('move.empty', '...');
-
-function renderMove(ctrl, move, path) {
-  if (!move) return emptyMove;
-  var pathStr = treePath.write(path);
-  var eval = path[1] ? {} : (move.eval || move.ceval || {});
-  var attrs = path[1] ? {
-    'data-path': pathStr
-  } : {};
-  var classes = pathStr === ctrl.vm.pathStr ? ['active'] : [];
-  if (pathStr === ctrl.vm.initialPathStr) classes.push('current');
-  if (classes.length) attrs.class = classes.join(' ');
-  return {
-    tag: 'move',
-    attrs: attrs,
-    children: [
-      defined(eval.cp) ? renderEvalTag(util.renderEval(eval.cp)) : (
-        defined(eval.mate) ? renderEvalTag('#' + eval.mate) : null
-      ),
-      move.san
-    ]
-  };
-}
-
-function plyToTurn(ply) {
-  return Math.floor((ply - 1) / 2) + 1;
-}
-
-function renderVariation(ctrl, variation, path, klass) {
-  return m('div', {
-    class: 'variation' + (klass ? ' ' + klass : '')
-  }, renderVariationContent(ctrl, variation, path));
-}
-
-function renderVariationNested(ctrl, variation, path) {
-  return m('span.variation', [
-    '(',
-    renderVariationContent(ctrl, variation, path),
-    ')'
-  ]);
-}
-
-function renderVariationContent(ctrl, variation, path) {
-  var turns = [];
-  if (variation[0].ply % 2 === 0) {
-    variation = variation.slice(0);
-    var move = variation.shift();
-    turns.push({
-      turn: plyToTurn(move.ply),
-      black: move
-    });
-  }
-  var visiting = treePath.contains(path, ctrl.vm.path);
-  var maxPlies = Math.min(visiting ? 999 : (path[2] ? 2 : 4), variation.length);
-  for (i = 0; i < maxPlies; i += 2) turns.push({
-    turn: plyToTurn(variation[i].ply),
-    white: variation[i],
-    black: variation[i + 1]
-  });
-  return turns.map(function(turn) {
-    return renderVariationTurn(ctrl, turn, path);
-  });
-}
-
-function renderVariationMeta(ctrl, move, path) {
-  if (!move || empty(move.variations)) return;
-  return move.variations.map(function(variation, i) {
-    return renderVariationNested(ctrl, variation, treePath.withVariation(path, i + 1));
-  });
-}
-
-function renderVariationTurn(ctrl, turn, path) {
-  var wPath = turn.white ? treePath.withPly(path, turn.white.ply) : null;
-  var wMove = wPath ? renderMove(ctrl, turn.white, wPath) : null;
-  var wMeta = renderVariationMeta(ctrl, turn.white, wPath);
-  var bPath = turn.black ? treePath.withPly(path, turn.black.ply) : null;
-  var bMove = bPath ? renderMove(ctrl, turn.black, bPath) : null;
-  var bMeta = renderVariationMeta(ctrl, turn.black, bPath);
-  if (wMove) {
-    if (wMeta) return [
-      renderIndex(turn.turn + '.'),
-      wMove,
-      wMeta,
-      bMove ? [
-        bMove,
-        bMeta
-      ] : null
-    ];
-    return [renderIndex(turn.turn + '.'), wMove, (bMove ? [' ', bMove, bMeta] : '')];
-  }
-  return [renderIndex(turn.turn + '...'), bMove, bMeta];
-}
-
-function renderOpening(ctrl, opening) {
-  return m('div.comment.opening', opening.code + ': ' + opening.name);
-}
-
-function renderMeta(ctrl, move, path) {
-  if (!ctrl.vm.comments) return;
-  var opening = ctrl.data.game.opening;
-  opening = (move && opening && opening.size === move.ply) ? renderOpening(ctrl, opening) : null;
-  if (!move || (!opening && empty(move.comments) && empty(move.variations))) return;
-  var children = [];
-  if (opening) children.push(opening);
-  var colorClass = move.ply % 2 === 0 ? 'black ' : 'white ';
-  var commentClass;
-  if (!empty(move.comments)) move.comments.forEach(function(comment) {
-    if (comment.indexOf('Inaccuracy.') === 0) commentClass = 'inaccuracy';
-    else if (comment.indexOf('Mistake.') === 0) commentClass = 'mistake';
-    else if (comment.indexOf('Blunder.') === 0) commentClass = 'blunder';
-    children.push(m('div', {
-      class: 'comment ' + colorClass + commentClass
-    }, comment));
-  });
-  if (!empty(move.variations)) move.variations.forEach(function(variation, i) {
-    if (empty(variation)) return;
-    children.push(renderVariation(
-      ctrl,
-      variation,
-      treePath.withVariation(path, i + 1),
-      i === 0 ? colorClass + commentClass : null
-    ));
-  });
-  return m('div', {
-    class: 'meta'
-  }, children);
-}
-
-function renderIndex(txt) {
-  return {
-    tag: 'index',
-    children: [txt]
-  };
-}
-
-function renderTurnEl(children) {
-  return {
-    tag: 'turn',
-    children: children
-  };
-}
-
-function renderTurn(ctrl, turn, path) {
-  var index = renderIndex(turn.turn);
-  var wPath = turn.white ? treePath.withPly(path, turn.white.ply) : null;
-  var wMove = wPath ? renderMove(ctrl, turn.white, wPath) : null;
-  var wMeta = renderMeta(ctrl, turn.white, wPath);
-  var bPath = turn.black ? treePath.withPly(path, turn.black.ply) : null;
-  var bMove = bPath ? renderMove(ctrl, turn.black, bPath) : null;
-  var bMeta = renderMeta(ctrl, turn.black, bPath);
-  if (wMove) {
-    if (wMeta) return [
-      renderTurnEl([index, wMove, emptyMove]),
-      wMeta,
-      bMove ? [
-        renderTurnEl([index, emptyMove, bMove]),
-        bMeta
-      ] : null,
-    ];
-    return [
-      renderTurnEl([index, wMove, bMove]),
-      bMeta
-    ];
-  }
-  return [
-    renderTurnEl([index, emptyMove, bMove]),
-    bMeta
-  ];
-}
-
-function renderTree(ctrl, tree) {
-  var turns = [];
-  var initPly = ctrl.analyse.firstPly();
-  if (initPly % 2 === 0)
-    for (var i = 1, nb = tree.length; i < nb; i += 2) turns.push({
-      turn: Math.floor((initPly + i) / 2) + 1,
-      white: tree[i],
-      black: tree[i + 1]
-    });
-  else {
-    turns.push({
-      turn: Math.floor(initPly / 2) + 1,
-      white: null,
-      black: tree[1]
-    });
-    for (var i = 2, nb = tree.length; i < nb; i += 2) turns.push({
-      turn: Math.floor((initPly + i) / 2) + 1,
-      white: tree[i],
-      black: tree[i + 1]
-    });
-  }
-
-  var path = treePath.default();
-  var tags = [];
-  for (var i = 0, len = turns.length; i < len; i++)
-    tags.push(renderTurn(ctrl, turns[i], path));
-
-  return tags;
-}
-
-function renderAnalyse(ctrl) {
+function renderResult(ctrl) {
   var result;
   if (ctrl.data.game.status.id >= 30) switch (ctrl.data.game.winner) {
     case 'white':
@@ -246,30 +31,42 @@ function renderAnalyse(ctrl) {
     default:
       result = '½-½';
   }
-  var tree = renderTree(ctrl, ctrl.analyse.tree);
   if (result) {
-    tree.push(m('div.result', result));
+    var tags = [];
+    tags.push(m('div.result', result));
     var winner = game.getPlayer(ctrl.data, ctrl.data.game.winner);
-    tree.push(m('div.status', [
+    tags.push(m('div.status', [
       renderStatus(ctrl),
       winner ? ', ' + ctrl.trans(winner.color == 'white' ? 'whiteIsVictorious' : 'blackIsVictorious') : null
     ]));
+    return tags;
   }
-  return m('div.analyse', {
-      onmousedown: function(e) {
-        var el = e.target.tagName === 'MOVE' ? e.target : e.target.parentNode;
-        var path = el.getAttribute('data-path') ||
-          '' + (2 * parseInt($(el).siblings('index').text()) - 2 + $(el).index());
-        if (path) ctrl.userJump(treePath.read(path));
-      },
-      onclick: function(e) {
-        return false;
-      }
-    },
-    tree);
+}
+
+function makeConcealOf(ctrl) {
+  var conceal = (ctrl.study && ctrl.study.data.chapter.conceal !== null) ? {
+    owner: ctrl.study.isChapterOwner(),
+    ply: ctrl.study.data.chapter.conceal
+  } : null;
+  if (conceal) return function(isMainline) {
+    return function(path, node) {
+      if (!conceal || (isMainline && conceal.ply >= node.ply)) return null;
+      if (treePath.contains(ctrl.vm.path, path)) return null;
+      return conceal.owner ? 'conceal' : 'hide';
+    };
+  };
+}
+
+function renderAnalyse(ctrl, concealOf) {
+  return m('div.areplay', [
+    renderOpeningBox(ctrl),
+    treeView.render(ctrl, concealOf),
+    renderResult(ctrl)
+  ]);
 }
 
 function wheel(ctrl, e) {
+  if (e.target.tagName !== 'PIECE' && e.target.tagName !== 'SQUARE' && !e.target.classList.contains('cg-board')) return;
   if (e.deltaY > 0) control.next(ctrl);
   else if (e.deltaY < 0) control.prev(ctrl);
   m.redraw();
@@ -278,32 +75,51 @@ function wheel(ctrl, e) {
 }
 
 function inputs(ctrl) {
-  if (!ctrl.data.userAnalysis) return null;
+  if (ctrl.ongoing || !ctrl.data.userAnalysis) return null;
+  if (ctrl.vm.redirecting) return m.trust(lichess.spinnerHtml);
+  var pgnText = pgnExport.renderFullTxt(ctrl);
   return m('div.copyables', [
     m('label.name', 'FEN'),
-    m('input.copyable[readonly][spellCheck=false]', {
-      value: ctrl.vm.step.fen
+    m('input.copyable.autoselect[spellCheck=false]', {
+      value: ctrl.vm.node.fen,
+      config: util.bindOnce('change', function(e) {
+        if (e.target.value !== ctrl.vm.node.fen) ctrl.changeFen(e.target.value);
+      })
     }),
     m('div.pgn', [
       m('label.name', 'PGN'),
-      m('textarea.copyable[readonly][spellCheck=false]', {
-        value: pgnExport.renderStepsTxt(ctrl.analyse.getSteps(ctrl.vm.path))
-      })
+      m('textarea.copyable.autoselect[spellCheck=false]', {
+        value: pgnText
+      }),
+      m('div.action', [
+        m('button', {
+          class: 'button text',
+          'data-icon': 'G',
+          config: util.bindOnce('click', function(e) {
+            var pgn = $('.copyables .pgn textarea').val();
+            if (pgn !== pgnText) ctrl.changePgn(pgn);
+          })
+        }, 'Import PGN')
+      ])
     ])
   ]);
 }
 
 function visualBoard(ctrl) {
   return m('div.lichess_board_wrap', [
-    m('div.lichess_board.' + ctrl.data.game.variant.key, {
-        config: function(el, isUpdate) {
-          if (!isUpdate) el.addEventListener('wheel', function(e) {
-            return wheel(ctrl, e);
-          });
-        }
-      },
+    ctrl.vm.keyboardHelp ? keyboardView(ctrl) : null,
+    ctrl.study ? studyView.overboard(ctrl.study) : null,
+    m('div', {
+      class: 'lichess_board ' + ctrl.data.game.variant.key + ((ctrl.study && ctrl.data.pref.blindfold) ? ' blindfold' : ''),
+      config: function(el, isUpdate) {
+        if (!isUpdate) el.addEventListener('wheel', function(e) {
+          return wheel(ctrl, e);
+        });
+      }
+    }, [
       chessground.view(ctrl.chessground),
-      renderPromotion(ctrl)),
+      renderPromotion(ctrl)
+    ]),
     cevalView.renderGauge(ctrl)
   ]);
 }
@@ -324,70 +140,122 @@ function blindBoard(ctrl) {
   ]);
 }
 
-function buttons(ctrl) {
-  return [
-    m('div.game_control', [
-      m('div.jumps.hint--bottom', [
-        ['first', 'W', control.first, ],
-        ['prev', 'Y', control.prev],
-        ['next', 'X', control.next],
-        ['last', 'V', control.last]
-      ].map(function(b) {
-        return {
-          tag: 'a',
-          attrs: {
-            class: 'button ' + b[0] + ' ' + classSet({
-              disabled: ctrl.broken,
-              glowed: ctrl.vm.late && b[0] === 'last'
-            }),
-            'data-icon': b[1],
-            onclick: partial(b[2], ctrl)
-          }
-        };
-      })),
-      m('a.button.menu', {
-        onclick: ctrl.actionMenu.toggle,
-        class: ctrl.actionMenu.open ? 'active' : ''
-      }, m('span', {
-        'data-icon': '['
-      }))
-    ])
-  ];
+function jumpButton(icon, effect) {
+  return {
+    tag: 'button',
+    attrs: {
+      'data-act': effect,
+      'data-icon': icon
+    }
+  };
+};
+
+var cachedButtons = (function() {
+  return m('div.jumps', [
+    jumpButton('W', 'first'),
+    jumpButton('Y', 'prev'),
+    jumpButton('X', 'next'),
+    jumpButton('V', 'last')
+  ])
+})();
+
+function icon(c) {
+  return {
+    tag: 'i',
+    attrs: {
+      'data-icon': c
+    }
+  };
 }
 
+function dataAct(e) {
+  return e.target.getAttribute('data-act') ||
+    e.target.parentNode.getAttribute('data-act');
+}
+
+function buttons(ctrl) {
+  return m('div.game_control', {
+    config: util.bindOnce('mousedown', function(e) {
+      var action = dataAct(e);
+      if (action === 'prev') control.prev(ctrl);
+      else if (action === 'next') control.next(ctrl);
+      else if (action === 'first') control.first(ctrl);
+      else if (action === 'last') control.last(ctrl);
+      else if (action === 'explorer') ctrl.explorer.toggle();
+      else if (action === 'menu') ctrl.actionMenu.toggle();
+    })
+  }, [
+    m('button', {
+      id: 'open_explorer',
+      'data-hint': ctrl.trans('openingExplorer'),
+      'data-act': 'explorer',
+      class: 'hint--bottom' + (ctrl.actionMenu.open || !ctrl.explorer.allowed() ? ' hidden' : (ctrl.explorer.enabled() ? ' active' : ''))
+    }, icon(']')),
+    cachedButtons,
+    m('button', {
+      class: 'hint--bottom' + (ctrl.actionMenu.open ? ' active' : ''),
+      'data-hint': 'Menu',
+      'data-act': 'menu'
+    }, icon('['))
+  ]);
+}
+
+function renderOpeningBox(ctrl) {
+  var opening = ctrl.tree.getOpening(ctrl.vm.nodeList);
+  if (opening) return m('div', {
+    class: 'opening_box',
+    title: opening.eco + ' ' + opening.name
+  }, [
+    m('strong', opening.eco),
+    ' ' + opening.name
+  ]);
+}
+
+function renderFork(ctrl) {
+  if (!true) return;
+  return m('div.fork',
+    ctrl.vm.node.children.map(function(node) {
+      return m('move', treeView.renderMove(node));
+    })
+  );
+}
+
+var firstRender = true;
+
 module.exports = function(ctrl) {
+  var concealOf = makeConcealOf(ctrl);
   return [
     m('div', {
-      class: classSet({
-        top: true,
-        ceval_displayed: ctrl.ceval.allowed(),
-        gauge_displayed: ctrl.showEvalGauge()
-      })
+      config: function(el, isUpdate) {
+        if (firstRender) firstRender = false;
+        else if (!isUpdate) lichess.pubsub.emit('reset_zoom')();
+      },
+      class: ctrl.showEvalGauge() ? 'gauge_displayed' : ''
     }, [
       m('div.lichess_game', {
         config: function(el, isUpdate, context) {
           if (isUpdate) return;
-          $('body').trigger('lichess.content_loaded');
+          lichess.pubsub.emit('content_loaded')();
         }
       }, [
         ctrl.data.blind ? blindBoard(ctrl) : visualBoard(ctrl),
         m('div.lichess_ground', [
+          ctrl.actionMenu.open ? null : crazyView.pocket(ctrl, ctrl.topColor(), 'top'),
           ctrl.actionMenu.open ? actionMenu(ctrl) : [
             cevalView.renderCeval(ctrl),
-            m('div.replay', {
-                config: function(el, isUpdate) {
-                  if (!isUpdate) ctrl.vm.autoScroll = autoScroll(el);
-                }
-              },
-              renderAnalyse(ctrl))
+            cevalView.renderPvs(ctrl),
+            renderAnalyse(ctrl, concealOf),
+            forkView(ctrl, concealOf),
+            explorerView.renderExplorer(ctrl)
           ],
+          ctrl.actionMenu.open ? null : crazyView.pocket(ctrl, ctrl.bottomColor(), 'bottom'),
           buttons(ctrl)
         ])
       ])
     ]),
     m('div.underboard', [
-      m('div.center', inputs(ctrl)),
-      m('div.right')
+      m('div.center', ctrl.study ? studyView.underboard(ctrl) : inputs(ctrl)),
+      m('div.right', acplView(ctrl))
     ]),
     util.synthetic(ctrl.data) ? null : m('div.analeft', [
       ctrl.forecast ? forecastView(ctrl) : null,

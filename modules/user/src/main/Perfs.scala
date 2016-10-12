@@ -1,6 +1,6 @@
 package lila.user
 
-import reactivemongo.bson.BSONDocument
+import org.joda.time.DateTime
 
 import chess.Speed
 import lila.db.BSON
@@ -14,6 +14,8 @@ case class Perfs(
     antichess: Perf,
     atomic: Perf,
     horde: Perf,
+    racingKings: Perf,
+    crazyhouse: Perf,
     bullet: Perf,
     blitz: Perf,
     classical: Perf,
@@ -29,6 +31,8 @@ case class Perfs(
     "antichess" -> antichess,
     "atomic" -> atomic,
     "horde" -> horde,
+    "racingKings" -> racingKings,
+    "crazyhouse" -> crazyhouse,
     "bullet" -> bullet,
     "blitz" -> blitz,
     "classical" -> classical,
@@ -47,7 +51,11 @@ case class Perfs(
     }
   }
 
+  def bestPerfType: Option[PerfType] = bestPerf.map(_._1)
+
   def bestRating: Int = bestRatingIn(PerfType.leaderboardable)
+
+  def bestStandardRating: Int = bestRatingIn(PerfType.standard)
 
   def bestRatingIn(types: List[PerfType]): Int = {
     val ps = types map apply match {
@@ -63,6 +71,12 @@ case class Perfs(
     } | Perf.default.intRating
   }
 
+  def bestRatingInWithMinGames(types: List[PerfType], nbGames: Int): Option[Int] =
+    types.map(apply).foldLeft(none[Int]) {
+      case (ro, p) if p.nb >= nbGames && ro.fold(true)(_ < p.intRating) => p.intRating.some
+      case (ro, _) => ro
+    }
+
   def bestProgress: Int = bestProgressIn(PerfType.leaderboardable)
 
   def bestProgressIn(types: List[PerfType]): Int = types map apply match {
@@ -77,6 +91,8 @@ case class Perfs(
     "antichess" -> antichess,
     "atomic" -> atomic,
     "horde" -> horde,
+    "racingKings" -> racingKings,
+    "crazyhouse" -> crazyhouse,
     "bullet" -> bullet,
     "blitz" -> blitz,
     "classical" -> classical,
@@ -102,6 +118,8 @@ case class Perfs(
     case PerfType.Antichess      => antichess
     case PerfType.Atomic         => atomic
     case PerfType.Horde          => horde
+    case PerfType.RacingKings    => racingKings
+    case PerfType.Crazyhouse     => crazyhouse
     case PerfType.Puzzle         => puzzle
     case PerfType.Opening        => opening
   }
@@ -127,13 +145,20 @@ case class Perfs(
       }
     }
   )
+
+  def latest: Option[DateTime] =
+    perfsMap.values.toList.flatMap(_.latest).foldLeft(none[DateTime]) {
+      case (None, date)                          => date.some
+      case (Some(acc), date) if date isAfter acc => date.some
+      case (acc, _)                              => acc
+    }
 }
 
 case object Perfs {
 
   val default = {
     val p = Perf.default
-    Perfs(p, p, p, p, p, p, p, p, p, p, p, p, p)
+    Perfs(p, p, p, p, p, p, p, p, p, p, p, p, p, p, p)
   }
 
   def variantLens(variant: chess.variant.Variant): Option[Perfs => Perf] = variant match {
@@ -144,6 +169,8 @@ case object Perfs {
     case chess.variant.Antichess     => Some(_.antichess)
     case chess.variant.Atomic        => Some(_.atomic)
     case chess.variant.Horde         => Some(_.horde)
+    case chess.variant.RacingKings   => Some(_.racingKings)
+    case chess.variant.Crazyhouse    => Some(_.crazyhouse)
     case _                           => none
   }
 
@@ -157,7 +184,7 @@ case object Perfs {
   val perfsBSONHandler = new BSON[Perfs] {
 
     implicit def perfHandler = Perf.perfBSONHandler
-    import BSON.Map._
+    import BSON.MapDocument._
 
     def reads(r: BSON.Reader): Perfs = {
       def perf(key: String) = r.getO[Perf](key) getOrElse Perf.default
@@ -169,6 +196,8 @@ case object Perfs {
         antichess = perf("antichess"),
         atomic = perf("atomic"),
         horde = perf("horde"),
+        racingKings = perf("racingKings"),
+        crazyhouse = perf("crazyhouse"),
         bullet = perf("bullet"),
         blitz = perf("blitz"),
         classical = perf("classical"),
@@ -179,7 +208,7 @@ case object Perfs {
 
     private def notNew(p: Perf): Option[Perf] = p.nb > 0 option p
 
-    def writes(w: BSON.Writer, o: Perfs) = BSONDocument(
+    def writes(w: BSON.Writer, o: Perfs) = reactivemongo.bson.BSONDocument(
       "standard" -> notNew(o.standard),
       "chess960" -> notNew(o.chess960),
       "kingOfTheHill" -> notNew(o.kingOfTheHill),
@@ -187,6 +216,8 @@ case object Perfs {
       "antichess" -> notNew(o.antichess),
       "atomic" -> notNew(o.atomic),
       "horde" -> notNew(o.horde),
+      "racingKings" -> notNew(o.racingKings),
+      "crazyhouse" -> notNew(o.crazyhouse),
       "bullet" -> notNew(o.bullet),
       "blitz" -> notNew(o.blitz),
       "classical" -> notNew(o.classical),
@@ -194,4 +225,17 @@ case object Perfs {
       "puzzle" -> notNew(o.puzzle),
       "opening" -> notNew(o.opening))
   }
+
+  case class Leaderboards(
+    bullet: List[User.LightPerf],
+    blitz: List[User.LightPerf],
+    classical: List[User.LightPerf],
+    crazyhouse: List[User.LightPerf],
+    chess960: List[User.LightPerf],
+    kingOfTheHill: List[User.LightPerf],
+    threeCheck: List[User.LightPerf],
+    antichess: List[User.LightPerf],
+    atomic: List[User.LightPerf],
+    horde: List[User.LightPerf],
+    racingKings: List[User.LightPerf])
 }

@@ -11,7 +11,8 @@ private[tournament] final class Cached(
   private val nameCache = MixedCache[String, Option[String]](
     ((id: String) => TournamentRepo byId id map2 { (tour: Tournament) => tour.fullName }),
     timeToLive = 6 hours,
-    default = _ => none)
+    default = _ => none,
+    logger = logger)
 
   def name(id: String): Option[String] = nameCache get id
 
@@ -19,13 +20,27 @@ private[tournament] final class Cached(
     TournamentRepo.promotable,
     timeToLive = createdTtl)
 
+  def findNext(tour: Tournament): Fu[Option[Tournament]] = tour.perfType ?? { pt =>
+    promotable(true) map { tours =>
+      tours
+        .filter(_.perfType contains pt)
+        .filter(_.isScheduled)
+        .sortBy(_.startsAt)
+        .headOption
+    }
+  }
+
+  def ranking(tour: Tournament): Fu[Ranking] =
+    if (tour.isFinished) finishedRanking(tour.id)
+    else ongoingRanking(tour.id)
+
   // only applies to ongoing tournaments
-  val ongoingRanking = AsyncCache[String, Ranking](
+  private val ongoingRanking = AsyncCache[String, Ranking](
     PlayerRepo.computeRanking,
     timeToLive = 3.seconds)
 
   // only applies to finished tournaments
-  val finishedRanking = AsyncCache[String, Ranking](
+  private val finishedRanking = AsyncCache[String, Ranking](
     PlayerRepo.computeRanking,
     timeToLive = rankingTtl)
 }

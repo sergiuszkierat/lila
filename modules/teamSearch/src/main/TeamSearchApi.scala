@@ -1,18 +1,18 @@
 package lila.teamSearch
 
+import reactivemongo.api.Cursor
+
 import lila.search._
 import lila.team.actorApi._
-import lila.team.Team
+import lila.team.{ Team, TeamRepo }
 
 import play.api.libs.json._
 
-final class TeamSearchApi(
-    client: ESClient,
-    fetcher: Seq[String] => Fu[List[Team]]) extends SearchReadApi[Team, Query] {
+final class TeamSearchApi(client: ESClient) extends SearchReadApi[Team, Query] {
 
   def search(query: Query, from: From, size: Size) =
     client.search(query, from, size) flatMap { res =>
-      fetcher(res.ids)
+      TeamRepo byOrderedIds res.ids
     }
 
   def count(query: Query) = client.count(query) map (_.count)
@@ -26,14 +26,16 @@ final class TeamSearchApi(
     Fields.nbMembers -> team.nbMembers)
 
   def reset = client match {
-    case c: ESClientHttp => c.createTempIndex flatMap { temp =>
-      loginfo(s"Index to ${temp.tempIndex.name}")
-      import lila.db.api._
-      import lila.team.tube.teamTube
-      $enumerate.bulk[Option[Team]]($query[Team](Json.obj("enabled" -> true)), 300) { teamOptions =>
-        temp.storeBulk(teamOptions.flatten map (t => Id(t.id) -> toDoc(t)))
-      } >> temp.aliasBackToMain
+    case c: ESClientHttp => c.putMapping >> {
+      lila.log("teamSearch").info(s"Index to ${c.index.name}")
+      import lila.db.dsl._
+
+      TeamRepo.cursor($doc("enabled" -> true)).foldBulksM({}) { (_, teams) =>
+        c.storeBulk(teams.toList map (t => Id(t.id) -> toDoc(t))).
+          map(Cursor.Cont(_))
+      }
     }
+
     case _ => funit
   }
 }

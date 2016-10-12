@@ -1,19 +1,45 @@
 package lila.security
 
-import lila.user.{ User, UserRepo }
-
+import akka.actor.ActorSystem
 import com.roundeights.hasher.{ Hasher, Algo }
 import play.api.libs.ws.{ WS, WSAuthScheme }
 import play.api.Play.current
+import scala.concurrent.duration._
 
-final class EmailConfirm(
+import lila.user.{ User, UserRepo }
+
+trait EmailConfirm {
+
+  def effective: Boolean
+
+  def send(user: User, email: String, tryNb: Int = 1): Funit
+
+  def confirm(token: String): Fu[Option[User]]
+}
+
+object EmailConfirmSkip extends EmailConfirm {
+
+  def effective = false
+
+  def send(user: User, email: String, tryNb: Int = 1) = UserRepo setEmailConfirmed user.id
+
+  def confirm(token: String): Fu[Option[User]] = fuccess(none)
+}
+
+final class EmailConfirmMailGun(
     apiUrl: String,
     apiKey: String,
     sender: String,
     baseUrl: String,
-    secret: String) {
+    secret: String,
+    system: ActorSystem) extends EmailConfirm {
 
-  def send(user: User, email: String): Funit = tokener make user flatMap { token =>
+  def effective = true
+
+  val maxTries = 3
+
+  def send(user: User, email: String, tryNb: Int = 1): Funit = tokener make user flatMap { token =>
+    lila.mon.email.confirmation()
     val url = s"$baseUrl/signup/confirm/$token"
     WS.url(s"$apiUrl/messages").withAuth("api", apiKey, WSAuthScheme.BASIC).post(Map(
       "from" -> Seq(sender),
@@ -28,7 +54,15 @@ $url
 
 
 Please do not reply to this message; it was sent from an unmonitored email address. This message is a service email related to your use of lichess.org.
-"""))).void
+"""))).void addFailureEffect {
+      case e: java.net.ConnectException => lila.mon.http.mailgun.timeout()
+      case _                            =>
+    } recoverWith {
+      case e if tryNb < maxTries => akka.pattern.after(15 seconds, system.scheduler) {
+        send(user, email, tryNb + 1)
+      }
+      case e => fufail(e)
+    }
   }
 
   def confirm(token: String): Fu[Option[User]] = tokener read token flatMap {

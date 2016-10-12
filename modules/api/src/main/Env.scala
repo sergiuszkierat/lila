@@ -11,16 +11,18 @@ final class Env(
     config: Config,
     db: lila.db.Env,
     renderer: ActorSelection,
-    router: ActorSelection,
     system: ActorSystem,
+    scheduler: lila.common.Scheduler,
     roundJsonView: lila.round.JsonView,
     noteApi: lila.round.NoteApi,
     forecastApi: lila.round.ForecastApi,
     relationApi: lila.relation.RelationApi,
     bookmarkApi: lila.bookmark.BookmarkApi,
+    getTourAndRanks: lila.game.Game => Fu[Option[lila.tournament.TourAndRanks]],
     crosstableApi: lila.game.CrosstableApi,
     prefApi: lila.pref.PrefApi,
     gamePgnDump: lila.game.PgnDump,
+    gameCache: lila.game.Cached,
     userEnv: lila.user.Env,
     analyseEnv: lila.analyse.Env,
     lobbyEnv: lila.lobby.Env,
@@ -32,7 +34,7 @@ final class Env(
 
   val CliUsername = config getString "cli.username"
 
-  private[api] val apiToken = config getString "api.token"
+  val apiToken = config getString "api.token"
 
   object Net {
     val Domain = config getString "net.domain"
@@ -41,20 +43,25 @@ final class Env(
     val Port = config getInt "http.port"
     val AssetDomain = config getString "net.asset.domain"
     val AssetVersion = config getInt "net.asset.version"
+    val Email = config getString "net.email"
+    val Crawlable = config getBoolean "net.crawlable"
   }
   val PrismicApiUrl = config getString "prismic.api_url"
   val EditorAnimationDuration = config duration "editor.animation.duration"
+  val ExplorerEndpoint = config getString "explorer.endpoint"
+  val TablebaseEndpoint = config getString "explorer.tablebase.endpoint"
 
   object assetVersion {
     import reactivemongo.bson._
+    import lila.db.dsl._
     private val coll = db("flag")
     private val cache = lila.memo.MixedCache.single[Int](
-      f = coll.find(BSONDocument("_id" -> "asset")).one[BSONDocument].map {
-        _.flatMap(_.getAs[BSONNumberLike]("version"))
-          .fold(Net.AssetVersion)(_.toInt max Net.AssetVersion)
+      f = coll.primitiveOne[BSONNumberLike]($id("asset"), "version").map {
+        _.fold(Net.AssetVersion)(_.toInt max Net.AssetVersion)
       },
-      timeToLive = 1 minute,
-      default = Net.AssetVersion)
+      timeToLive = 10.seconds,
+      default = Net.AssetVersion,
+      logger = lila.log("assetVersion"))
     def get = cache get true
   }
 
@@ -76,19 +83,16 @@ final class Env(
   val userApi = new UserApi(
     jsonView = userEnv.jsonView,
     makeUrl = makeUrl,
-    apiToken = apiToken,
     relationApi = relationApi,
     bookmarkApi = bookmarkApi,
     crosstableApi = crosstableApi,
     prefApi = prefApi)
 
-  val analysisApi = new AnalysisApi
-
   val gameApi = new GameApi(
     netBaseUrl = Net.BaseUrl,
     apiToken = apiToken,
     pgnDump = pgnDump,
-    analysisApi = analysisApi)
+    gameCache = gameCache)
 
   val userGameApi = new UserGameApi(
     bookmarkApi = bookmarkApi)
@@ -98,11 +102,12 @@ final class Env(
       jsonView = roundJsonView,
       noteApi = noteApi,
       forecastApi = forecastApi,
-      analysisApi = analysisApi,
+      bookmarkApi = bookmarkApi,
+      getTourAndRanks = getTourAndRanks,
       getSimul = getSimul,
       lightUser = userEnv.lightUser),
     system = system,
-    nbActors = math.max(1, Runtime.getRuntime.availableProcessors - 1))
+    nbActors = math.max(1, math.min(16, Runtime.getRuntime.availableProcessors - 1)))
 
   val lobbyApi = new LobbyApi(
     lobby = lobbyEnv.lobby,
@@ -114,6 +119,10 @@ final class Env(
   private def makeUrl(path: String): String = s"${Net.BaseUrl}/$path"
 
   lazy val cli = new Cli(system.lilaBus, renderer)
+
+  KamonPusher.start(system) {
+    new KamonPusher(countUsers = () => userEnv.onlineUserIdMemo.count)
+  }
 }
 
 object Env {
@@ -122,7 +131,6 @@ object Env {
     config = lila.common.PlayApp.loadConfig,
     db = lila.db.Env.current,
     renderer = lila.hub.Env.current.actor.renderer,
-    router = lila.hub.Env.current.actor.router,
     userEnv = lila.user.Env.current,
     analyseEnv = lila.analyse.Env.current,
     lobbyEnv = lila.lobby.Env.current,
@@ -135,9 +143,12 @@ object Env {
     forecastApi = lila.round.Env.current.forecastApi,
     relationApi = lila.relation.Env.current.api,
     bookmarkApi = lila.bookmark.Env.current.api,
+    getTourAndRanks = lila.tournament.Env.current.tourAndRanks,
     crosstableApi = lila.game.Env.current.crosstableApi,
     prefApi = lila.pref.Env.current.api,
     gamePgnDump = lila.game.Env.current.pgnDump,
+    gameCache = lila.game.Env.current.cached,
     system = lila.common.PlayApp.system,
+    scheduler = lila.common.PlayApp.scheduler,
     isProd = lila.common.PlayApp.isProd)
 }

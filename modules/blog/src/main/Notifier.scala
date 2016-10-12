@@ -1,44 +1,40 @@
 package lila.blog
 
-import lila.message.{ ThreadRepo, Api => MessageApi }
-import lila.user.UserRepo
+import io.prismic.Document
 import org.joda.time.DateTime
+import play.api.libs.iteratee._
+import reactivemongo.api._
+import reactivemongo.bson._
+
+import lila.notify.{ Notification, NotifyApi, NewBlogPost }
+import lila.user.UserRepo
 
 private[blog] final class Notifier(
     blogApi: BlogApi,
-    messageApi: MessageApi,
-    lastPostCache: LastPostCache,
-    lichessUserId: String) {
+    notifyApi: NotifyApi) {
 
-  def apply {
-    blogApi.prismicApi foreach { prismicApi =>
-      blogApi.recent(prismicApi, none, 1) map {
-        _ ?? (_.results.headOption)
-      } foreach {
-        _ ?? { post =>
-          ThreadRepo.visibleByUserContainingExists(user = lichessUserId, containing = post.id) foreach {
-            case true => funit
-            case false => UserRepo recentlySeenNotKidIds DateTime.now.minusWeeks(2) foreach { userIds =>
-              (ThreadRepo reallyDeleteByCreatorId lichessUserId) >> {
-                val thread = makeThread(post)
-                val futures = userIds.toStream map { userId =>
-                  messageApi.lichessThread(thread.copy(to = userId))
-                }
-                lila.common.Future.lazyFold(futures)(())((_, _) => ()) >>- lastPostCache.clear
-              }
-            }
-          }
-        }
-      }
+  def apply(prismicId: String): Funit =
+    blogApi.prismicApi flatMap { prismicApi =>
+      blogApi.one(prismicApi, none, prismicId) flatten
+        s"No such document: $prismicId" flatMap doSend
     }
+
+  private def doSend(post: Document): Funit = {
+    val content = NewBlogPost(
+      id = NewBlogPost.Id(post.id),
+      slug = NewBlogPost.Slug(post.slug),
+      title = NewBlogPost.Title(~post.getText("blog.title")))
+    UserRepo.recentlySeenNotKidIdsCursor(DateTime.now minusWeeks 1)
+      .enumerate(500 * 1000, stopOnError = true) &>
+      Enumeratee.map {
+        _.getAs[String]("_id") err "User without an id"
+      } |>>>
+      Iteratee.foldM[String, Int](0) {
+        case (count, userId) => notifyApi.addNotificationWithoutSkipOrEvent(
+          Notification(Notification.Notifies(userId), content)
+        ) inject (count + 1)
+      } addEffect { count =>
+        logger.info(s"Sent $count notifications")
+      } void
   }
-
-  private def makeThread(doc: io.prismic.Document) =
-    lila.hub.actorApi.message.LichessThread(
-      from = lichessUserId,
-      to = "",
-      subject = s"New blog post: ${~doc.getText("blog.title")}",
-      message = s"""${~doc.getText("blog.shortlede")}
-
-Continue reading this post on http://lichess.org/blog/${doc.id}/${doc.slug}""")
 }

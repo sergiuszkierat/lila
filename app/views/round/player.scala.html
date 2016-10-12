@@ -1,4 +1,4 @@
-@(pov: Pov, data: play.api.libs.json.JsObject, tour: Option[lila.tournament.MiniStanding], simul: Option[lila.simul.Simul], cross: Option[lila.game.Crosstable], playing: List[Pov], prefs: Option[Form[_]])(implicit ctx: Context)
+@(pov: Pov, data: play.api.libs.json.JsObject, tour: Option[lila.tournament.MiniStanding], simul: Option[lila.simul.Simul], cross: Option[lila.game.Crosstable], playing: List[Pov], chatOption: Option[lila.chat.MixedChat], bookmarked: Boolean)(implicit ctx: Context)
 
 @import pov._
 
@@ -11,7 +11,10 @@ $(function() {
 lichess.startRound(document.getElementById('lichess'), {
 data: @Html(J.stringify(data)),
 i18n: @jsI18n(),
-userId: @Html(ctx.userId.fold("null")(id => s""""$id""""))
+userId: @jsUserId,
+chat: @jsOrNull(chatOption map { c =>
+chat.ChatJsData.json(c, name = trans.chatRoom.str(), timeout = false, withNote = true)
+})
 });
 });
 }
@@ -23,8 +26,8 @@ userId: @Html(ctx.userId.fold("null")(id => s""""$id""""))
 
 @round.layout(
 title = title,
-side = views.html.game.side(pov, (data\"game"\"initialFen").asOpt[String], tour, simul),
-chat = game.tournamentId.isEmpty.option(leftabs(pov, prefs)),
+side = views.html.game.side(pov, (data\"game"\"initialFen").asOpt[String], tour, simul, bookmarked = bookmarked),
+chat = chatOption.isDefined.option(chat.dom()),
 underchat = views.html.game.watchers().some,
 moreJs = moreJs,
 openGraph = povOpenGraph(pov).some,
@@ -32,20 +35,16 @@ chessground = false,
 playing = true,
 atom = atom.some) {
 <div class="round cg-512">
-  <div class="top">@miniBoardContent</div>
-  <div class="underboard">
-    <div class="center">
-      <div class="crosstable_placeholder"></div>
-    </div>
-  </div>
+  @miniBoardContent
+  <div class="underboard"><div class="center"></div></div>
 </div>
-<div class="crosstable" style="display:none">
-  @cross.map { c =>
+@cross.map { c =>
+<div class="crosstable none">
   @views.html.game.crosstable(ctx.userId.fold(c)(c.fromPov), pov.gameId.some)
-  }
 </div>
+}
 @if(playing.nonEmpty) {
-<div id="now_playing" class="clearfix other_games @if(ctx.pref.isBlindfold){blindfold}" data-reload-url="@routes.Round.others(pov.gameId)">
+<div id="now_playing" class="other_games @if(ctx.pref.isBlindfold){blindfold}" data-reload-url="@routes.Round.others(pov.gameId)">
   @others(playing)
 </div>
 }

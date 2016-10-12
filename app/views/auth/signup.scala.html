@@ -1,7 +1,11 @@
-@(form: Form[_], captcha: lila.common.Captcha, recaptchaPublicKey: String)(implicit ctx: Context)
+@(form: Form[_], recaptchaPublicKey: String)(implicit ctx: Context)
 
 @moreJs = {
 <script src='https://www.google.com/recaptcha/api.js'></script>
+}
+
+@tosLink = {
+  <a href="@routes.Page.tos">@trans.termsOfService()</a>
 }
 
 @auth.layout(
@@ -17,16 +21,12 @@ zen = true) {
     <h1 class="lichess_title">@trans.signUp()</h1>
     <form action="@routes.Auth.signupPost" method="POST">
       <ul>
-        @auth.formFields(form("username"), form("password"), form("email").some)
-        <li>
-          @base.captcha(form("move"), form("gameId"), captcha)
-        </li>
+        @auth.formFields(form("username"), form("password"), form("email").some, register = true)
         @errMsg(form)
         <li data-icon="">&nbsp;
           @trans.computersAreNotAllowedToPlay()<br />
           <small>
-            By registering, you agree to be bound by our
-            <a target="_blank" href="@routes.Page.tos">Terms of Service</a>.
+            @trans.byRegisteringYouAgreeToBeBoundByOur(tosLink)
           </small>
         </li>
         <li>

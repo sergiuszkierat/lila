@@ -3,8 +3,9 @@ package lila.team
 import com.typesafe.config.Config
 
 import lila.common.PimpedConfig._
+import lila.notify.NotifyApi
 
-final class Env(config: Config, hub: lila.hub.Env, db: lila.db.Env) {
+final class Env(config: Config, hub: lila.hub.Env, notifyApi: NotifyApi, db: lila.db.Env) {
 
   private val settings = new {
     val CollectionTeam = config getString "collection.team"
@@ -12,13 +13,20 @@ final class Env(config: Config, hub: lila.hub.Env, db: lila.db.Env) {
     val CollectionRequest = config getString "collection.request"
     val PaginatorMaxPerPage = config getInt "paginator.max_per_page"
     val PaginatorMaxUserPerPage = config getInt "paginator.max_user_per_page"
-    val NotifierSender = config getString "notifier.sender"
   }
   import settings._
 
-  lazy val forms = new DataForm(hub.actor.captcher)
+  private[team] lazy val colls = new Colls(
+    team = db(CollectionTeam),
+    request = db(CollectionRequest),
+    member = db(CollectionMember))
+
+  lazy val forms = new DataForm(colls.team, hub.actor.captcher)
+
+  lazy val pager = new MemberPager(colls.member)
 
   lazy val api = new TeamApi(
+    coll = colls,
     cached = cached,
     notifier = notifier,
     forum = hub.actor.forum,
@@ -26,21 +34,15 @@ final class Env(config: Config, hub: lila.hub.Env, db: lila.db.Env) {
     timeline = hub.actor.timeline)
 
   lazy val paginator = new PaginatorBuilder(
+    coll = colls,
     maxPerPage = PaginatorMaxPerPage,
     maxUserPerPage = PaginatorMaxUserPerPage)
 
-  lazy val cli = new Cli(api)
+  lazy val cli = new Cli(api, colls)
 
   lazy val cached = new Cached
 
-  private[team] lazy val teamColl = db(CollectionTeam)
-  private[team] lazy val requestColl = db(CollectionRequest)
-  private[team] lazy val memberColl = db(CollectionMember)
-
-  private lazy val notifier = new Notifier(
-    sender = NotifierSender,
-    messenger = hub.actor.messenger,
-    router = hub.actor.router)
+  private lazy val notifier = new Notifier(notifyApi = notifyApi)
 }
 
 object Env {
@@ -48,5 +50,6 @@ object Env {
   lazy val current = "team" boot new Env(
     config = lila.common.PlayApp loadConfig "team",
     hub = lila.hub.Env.current,
+    notifyApi = lila.notify.Env.current.api,
     db = lila.db.Env.current)
 }

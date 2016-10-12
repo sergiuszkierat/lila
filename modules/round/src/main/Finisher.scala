@@ -4,52 +4,70 @@ import chess.Color._
 import chess.Status._
 import chess.{ Status, Color, Speed }
 
-import lila.db.api._
+import lila.db.dsl._
 import lila.game.actorApi.{ FinishGame, AbortedBy }
 import lila.game.{ GameRepo, Game, Pov, Event }
 import lila.i18n.I18nKey.{ Select => SelectI18nKey }
 import lila.playban.{ PlaybanApi, Outcome }
-import lila.user.tube.userTube
 import lila.user.{ User, UserRepo, Perfs }
 
 private[round] final class Finisher(
     messenger: Messenger,
     perfsUpdater: PerfsUpdater,
     playban: PlaybanApi,
-    aiPerfApi: lila.ai.AiPerfApi,
+    notifier: RoundNotifier,
     crosstableApi: lila.game.CrosstableApi,
     bus: lila.common.Bus,
-    timeline: akka.actor.ActorSelection,
-    casualOnly: Boolean) {
+    casualOnly: Boolean,
+    getSocketStatus: Game.ID => Fu[actorApi.SocketStatus]) {
 
-  def abort(pov: Pov): Fu[Events] = apply(pov.game, _.Aborted) >>- {
-    playban.abort(pov)
+  def abort(pov: Pov)(implicit proxy: GameProxy): Fu[Events] = apply(pov.game, _.Aborted) >>- {
+    getSocketStatus(pov.gameId) foreach { ss =>
+      playban.abort(pov, ss.colorsOnGame)
+    }
     bus.publish(AbortedBy(pov), 'abortGame)
   }
 
-  def rageQuit(game: Game, winner: Option[Color]): Fu[Events] =
-    apply(game, _.Timeout, winner) >>- winner.?? { color => playban.rageQuit(game, !color) }
+  def rageQuit(game: Game, winner: Option[Color])(implicit proxy: GameProxy): Fu[Events] =
+    apply(game, _.Timeout, winner) >>-
+      winner.?? { color => playban.rageQuit(game, !color) }
+
+  def outOfTime(game: Game)(implicit proxy: GameProxy): Fu[Events] = {
+    import lila.common.PlayApp
+    if (!PlayApp.startedSinceSeconds(60) && game.updatedAt.exists(_ isBefore PlayApp.startedAt)) {
+      logger.info(s"Aborting game last played before JVM boot: ${game.id}")
+      other(game, _.Aborted, none)
+    }
+    else {
+      val winner = Some(!game.player.color) filterNot { color =>
+        game.toChess.board.variant.insufficientWinningMaterial(game.toChess.situation.board, color)
+      }
+      apply(game, _.Outoftime, winner) >>-
+        winner.?? { color => playban.sittingOrGood(game, !color) }
+    }
+  }
 
   def other(
     game: Game,
     status: Status.type => Status,
     winner: Option[Color] = None,
-    message: Option[SelectI18nKey] = None): Fu[Events] =
+    message: Option[SelectI18nKey] = None)(implicit proxy: GameProxy): Fu[Events] =
     apply(game, status, winner, message) >>- playban.goodFinish(game)
 
   private def apply(
     game: Game,
-    status: Status.type => Status,
+    makeStatus: Status.type => Status,
     winner: Option[Color] = None,
-    message: Option[SelectI18nKey] = None): Fu[Events] = {
-    val prog = game.finish(status(Status), winner)
-    if (game.nonAi && game.isCorrespondence)
-      Color.all foreach notifyTimeline(prog.game)
+    message: Option[SelectI18nKey] = None)(implicit proxy: GameProxy): Fu[Events] = {
+    val status = makeStatus(Status)
+    val prog = game.finish(status, winner)
+    if (game.nonAi && game.isCorrespondence) Color.all foreach notifier.gameEnd(prog.game)
+    lila.mon.game.finish(status.name)()
     casualOnly.fold(
       GameRepo unrate prog.game.id inject prog.game.copy(mode = chess.Mode.Casual),
       fuccess(prog.game)
     ) flatMap { g =>
-        (GameRepo save prog) >>
+        proxy.save(prog) >>
           GameRepo.finish(
             id = g.id,
             winnerColor = winner,
@@ -70,20 +88,7 @@ private[round] final class Finisher(
                 }
               }
       }
-  }
-
-  private def notifyTimeline(game: Game)(color: Color) = {
-    import lila.hub.actorApi.timeline.{ Propagate, GameEnd }
-    if (!game.aborted) {
-      game.player(color).userId foreach { userId =>
-        timeline ! (Propagate(GameEnd(
-          playerId = game fullIdOf color,
-          opponent = game.player(!color).userId,
-          win = game.winnerColor map (color ==),
-          perf = game.perfKey)) toUser userId)
-      }
-    }
-  }
+  } >>- proxy.invalidate
 
   private def updateCountAndPerfs(finish: FinishGame): Funit =
     (!finish.isVsSelf && !finish.game.aborted) ?? {
@@ -103,6 +108,6 @@ private[round] final class Finisher(
       else if (game.loserUserId exists (user.id==)) -1
       else 0,
       totalTime = totalTime,
-      tvTime = tvTime)
+      tvTime = tvTime).void
   }
 }

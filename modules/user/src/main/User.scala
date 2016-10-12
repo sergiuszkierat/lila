@@ -2,7 +2,10 @@ package lila.user
 
 import scala.concurrent.duration._
 
+import lila.common.LightUser
+
 import chess.Speed
+import lila.rating.PerfType
 import org.joda.time.DateTime
 
 case class User(
@@ -23,7 +26,8 @@ case class User(
     createdAt: DateTime,
     seenAt: Option[DateTime],
     kid: Boolean,
-    lang: Option[String]) extends Ordered[User] {
+    lang: Option[String],
+    plan: Plan) extends Ordered[User] {
 
   override def equals(other: Any) = other match {
     case u: User => id == u.id
@@ -33,7 +37,11 @@ case class User(
   override def toString =
     s"User $username(${perfs.bestRating}) games:${count.game}${troll ?? " troll"}${engine ?? " engine"}"
 
-  def light = lila.common.LightUser(id = id, name = username, title = title)
+  def light = LightUser(id = id, name = username, title = title, isPatron = isPatron)
+
+  def titleName = title.fold(username)(_ + " " + username)
+
+  def realNameOrUsername = profileOrDefault.nonEmptyRealName | username
 
   def langs = ("en" :: lang.toList).distinct.sorted
 
@@ -47,7 +55,7 @@ case class User(
 
   def usernameWithBestRating = s"$username (${perfs.bestRating})"
 
-  def titleUsername = title.fold(username)(_ + " " + username)
+  def titleUsername = title.fold(username)(t => s"$t $username")
 
   def titleUsernameWithBestRating = title.fold(usernameWithBestRating)(_ + " " + usernameWithBestRating)
 
@@ -59,7 +67,7 @@ case class User(
 
   def hasTitle = title.isDefined
 
-  def seenRecently: Boolean = timeNoSee < 10.minutes
+  lazy val seenRecently: Boolean = timeNoSee < 2.minutes
 
   def timeNoSee: Duration = seenAt.fold[Duration](Duration.Inf) { s =>
     (nowMillis - s.getMillis).millis
@@ -68,13 +76,42 @@ case class User(
   def lame = booster || engine
 
   def lameOrTroll = lame || troll
+
+  def lightPerf(key: String) = perfs(key) map { perf =>
+    User.LightPerf(light, key, perf.intRating, perf.progress)
+  }
+
+  def lightCount = User.LightCount(light, count.game)
+
+  private def best4Of(perfTypes: List[PerfType]) =
+    perfTypes.sortBy { pt => -perfs(pt).nb } take 4
+
+  def best8Perfs: List[PerfType] =
+    best4Of(List(PerfType.Bullet, PerfType.Blitz, PerfType.Classical, PerfType.Correspondence)) :::
+      best4Of(List(PerfType.Crazyhouse, PerfType.Chess960, PerfType.KingOfTheHill, PerfType.ThreeCheck, PerfType.Antichess, PerfType.Atomic, PerfType.Horde, PerfType.RacingKings))
+
+  def hasEstablishedRating(pt: PerfType) = perfs(pt).established
+
+  def isPatron = plan.active
+
+  def activePlan: Option[Plan] = if (plan.active) Some(plan) else None
+
+  def planMonths: Option[Int] = activePlan.map(_.months)
 }
 
 object User {
 
   type ID = String
 
+  type CredentialCheck = String => Boolean
+  case class LoginCandidate(user: User, check: CredentialCheck) {
+    def apply(password: String): Option[User] = check(password) option user
+  }
+
   val anonymous = "Anonymous"
+
+  case class LightPerf(user: LightUser, perfKey: String, rating: Int, progress: Int)
+  case class LightCount(user: LightUser, count: Int)
 
   case class Active(user: User)
 
@@ -86,6 +123,15 @@ object User {
   import lila.db.BSON.BSONJodaDateTimeHandler
   implicit def playTimeHandler = reactivemongo.bson.Macros.handler[PlayTime]
 
+  // Matches a lichess username with an '@' prefix if it is used as a single
+  // word (i.e. preceded and followed by space or appropriate punctuation):
+  // Yes: everyone says @ornicar is a pretty cool guy
+  // No: contact@lichess.org, @1, http://example.com/@happy0
+  val atUsernameRegex = """(?<=\s|^)@(?>([a-zA-Z_-][\w-]{1,19}))(?![\w-])""".r
+
+  val usernameRegex = """^[\w-]+$""".r
+  def couldBeUsername(str: String) = usernameRegex.pattern.matcher(str).matches
+
   def normalize(username: String) = username.toLowerCase
 
   val titles = Seq(
@@ -94,9 +140,10 @@ object User {
     "IM" -> "International Master",
     "WIM" -> "Woman Intl. Master",
     "FM" -> "FIDE Master",
+    "WFM" -> "Woman FIDE Master",
     "NM" -> "National Master",
-    "CM" -> "FIDE Candidate Master",
-    "WCM" -> "FIDE Woman Candidate Master",
+    "CM" -> "Candidate Master",
+    "WCM" -> "Woman Candidate Master",
     "WNM" -> "Woman National Master",
     "LM" -> "Lichess Master")
 
@@ -128,17 +175,20 @@ object User {
     val email = "email"
     val mustConfirmEmail = "mustConfirmEmail"
     val colorIt = "colorIt"
+    val plan = "plan"
   }
 
   import lila.db.BSON
+  import lila.db.dsl._
 
-  val userBSONHandler = new BSON[User] {
+  implicit val userBSONHandler = new BSON[User] {
 
     import BSONFields._
     import reactivemongo.bson.BSONDocument
     private implicit def countHandler = Count.countBSONHandler
     private implicit def profileHandler = Profile.profileBSONHandler
     private implicit def perfsHandler = Perfs.perfsBSONHandler
+    private implicit def planHandler = Plan.planBSONHandler
 
     def reads(r: BSON.Reader): User = User(
       id = r str id,
@@ -158,7 +208,8 @@ object User {
       seenAt = r dateO seenAt,
       kid = r boolD kid,
       lang = r strO lang,
-      title = r strO title)
+      title = r strO title,
+      plan = r.getO[Plan](plan) | Plan.empty)
 
     def writes(w: BSON.Writer, o: User) = BSONDocument(
       id -> o.id,
@@ -178,8 +229,7 @@ object User {
       seenAt -> o.seenAt,
       kid -> w.boolO(o.kid),
       lang -> o.lang,
-      title -> o.title)
+      title -> o.title,
+      plan -> o.plan.nonEmpty)
   }
-
-  private[user] lazy val tube = lila.db.BsTube(userBSONHandler)
 }

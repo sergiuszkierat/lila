@@ -8,15 +8,18 @@ import spray.caching.{ LruCache, Cache }
 final class MixedCache[K, V] private (
     cache: SyncCache[K, V],
     default: K => V,
-    val invalidate: K => Funit) {
+    val invalidate: K => Funit,
+    logger: lila.log.Logger) {
 
   def get(k: K): V = try {
     cache get k
   }
   catch {
-    case _: java.util.concurrent.ExecutionException => default(k)
+    case e: java.util.concurrent.ExecutionException =>
+      // logger.debug(e.getMessage)
+      default(k)
     case e: com.google.common.util.concurrent.UncheckedExecutionException =>
-      logerr(e.getMessage)
+      // logger.debug(e.getMessage)
       default(k)
   }
 }
@@ -29,24 +32,38 @@ object MixedCache {
   def apply[K, V](
     f: K => Fu[V],
     timeToLive: Duration = Duration.Inf,
-    awaitTime: FiniteDuration = 5.milliseconds,
-    default: K => V): MixedCache[K, V] = {
+    awaitTime: FiniteDuration = 10.milliseconds,
+    default: K => V,
+    logger: lila.log.Logger): MixedCache[K, V] = {
     val async = AsyncCache(f, maxCapacity = 10000, timeToLive = 1 minute)
     val sync = Builder.cache[K, V](
       timeToLive,
       (k: K) => async(k) await makeTimeout(awaitTime))
-    new MixedCache(sync, default, invalidate(async, sync) _)
+    new MixedCache(sync, default, invalidate(async, sync) _, logger branch "MixedCache")
+  }
+
+  def fromAsync[K, V](
+    async: AsyncCache[K,V],
+    timeToLive: Duration = Duration.Inf,
+    awaitTime: FiniteDuration = 10.milliseconds,
+    default: K => V,
+    logger: lila.log.Logger): MixedCache[K, V] = {
+    val sync = Builder.cache[K, V](
+      timeToLive,
+      (k: K) => async(k) await makeTimeout(awaitTime))
+    new MixedCache(sync, default, invalidate(async, sync) _, logger branch "MixedCache")
   }
 
   def single[V](
     f: => Fu[V],
     timeToLive: Duration = Duration.Inf,
     awaitTime: FiniteDuration = 5.milliseconds,
-    default: V): MixedCache[Boolean, V] = {
+    default: V,
+    logger: lila.log.Logger): MixedCache[Boolean, V] = {
     val async = AsyncCache.single(f, timeToLive = 1 minute)
     val sync = Builder.cache[Boolean, V](
       timeToLive,
       (_: Boolean) => async(true) await makeTimeout(awaitTime))
-    new MixedCache(sync, _ => default, invalidate(async, sync) _)
+    new MixedCache(sync, _ => default, invalidate(async, sync) _, logger branch "MixedCache")
   }
 }

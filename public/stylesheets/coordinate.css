@@ -1,22 +1,21 @@
 #trainer {
   margin-bottom: 160px;
 }
-form.color .color span {
+form.color .color i {
   display: block;
   width: 30px;
   height: 30px;
   background-size: 30px 30px;
   background-repeat: no-repeat;
   padding: 0;
-  margin: 10px 15px;
 }
-form.color .color_1 span {
+form.color .color_1 i {
   background-image: url(../piece/cburnett/wK.svg);
 }
-form.color .color_2 span {
+form.color .color_2 i {
   background-image: url(../piece/cburnett/wbK.svg);
 }
-form.color .color_3 span {
+form.color .color_3 i {
   background-image: url(../piece/cburnett/bK.svg);
 }
 #trainer .lichess_board {
@@ -26,9 +25,6 @@ form.color .color_3 span {
 #trainer.white .white .lichess_board,
 #trainer.black .black .lichess_board {
   display: block;
-}
-#trainer form.color {
-  text-align: center;
 }
 #trainer .overlay_container {
   position: absolute;
@@ -90,6 +86,12 @@ form.color .color_3 span {
   font-size: 30px;
   opacity: 0.4;
 }
+#trainer #next_coord0 {
+  #trainer #next_coord1,
+  #trainer #next_coord2,
+  -webkit-user-select: none;
+  -moz-user-select: none;
+}
 #trainer .explanation {
   text-align: justify;
   margin-bottom: 20px;
@@ -122,7 +124,6 @@ form.color .color_3 span {
   box-shadow: 0 0 10px #fff;
   border-radius: 3px;
   transform: rotate(360deg);
-  -webkit-transform: rotate(360deg);
   cursor: pointer;
 }
 #trainer.init .score {
@@ -134,7 +135,6 @@ form.color .color_3 span {
   box-shadow: 0 0 1px #fff;
   border-radius: 100px;
   transform: rotate(0deg);
-  -webkit-transform: rotate(0deg);
 }
 #trainer.wrong .progress_bar,
 #trainer.wrong strong.score {

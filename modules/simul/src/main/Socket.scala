@@ -21,6 +21,16 @@ private[simul] final class Socket(
     uidTimeout: Duration,
     socketTimeout: Duration) extends SocketActor[Member](uidTimeout) with Historical[Member, Messadata] {
 
+  override def preStart() {
+    super.preStart()
+    lilaBus.subscribe(self, Symbol(s"chat-$simulId"))
+  }
+
+  override def postStop() {
+    super.postStop()
+    lilaBus.unsubscribe(self)
+  }
+
   private val timeBomb = new TimeBomb(socketTimeout)
 
   private var delayedCrowdNotification = false
@@ -36,7 +46,7 @@ private[simul] final class Socket(
     }
   }
 
-  def receiveSpecific = {
+  def receiveSpecific = ({
 
     case StartGame(game, hostId)       => redirectPlayer(game, game.playerByUserId(hostId) map (!_.color))
 
@@ -68,15 +78,11 @@ private[simul] final class Socket(
       if (timeBomb.boom) self ! PoisonPill
     }
 
-    case lila.chat.actorApi.ChatLine(_, line) => line match {
-      case line: lila.chat.UserLine =>
-        notifyVersion("message", lila.chat.Line toJson line, Messadata(line.troll))
-      case _ =>
-    }
+    case GetVersion        => sender ! history.version
 
-    case GetVersion => sender ! history.version
+    case Socket.GetUserIds => sender ! userIds
 
-    case Join(uid, user, version) =>
+    case Join(uid, user) =>
       val (enumerator, channel) = Concurrent.broadcast[JsValue]
       val member = Member(channel, user)
       addMember(uid, member)
@@ -89,12 +95,10 @@ private[simul] final class Socket(
 
     case NotifyCrowd =>
       delayedCrowdNotification = false
-      val (anons, users) = members.values.map(_.userId flatMap lightUser).foldLeft(0 -> List[LightUser]()) {
-        case ((anons, users), Some(user)) => anons -> (user :: users)
-        case ((anons, users), None)       => (anons + 1) -> users
-      }
-      notifyVersion("crowd", showSpectators(users, anons), Messadata())
-  }
+      notifyAll("crowd", showSpectators(lightUser)(members.values))
+  }: Actor.Receive) orElse lila.chat.Socket.out(
+    send = (t, d, trollish) => notifyVersion(t, d, Messadata(trollish))
+  )
 
   def notifyCrowd {
     if (!delayedCrowdNotification) {
@@ -105,4 +109,8 @@ private[simul] final class Socket(
 
   protected def shouldSkipMessageFor(message: Message, member: Member) =
     message.metadata.trollish && !member.troll
+}
+
+case object Socket {
+  case object GetUserIds
 }

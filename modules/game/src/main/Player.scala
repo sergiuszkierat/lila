@@ -28,7 +28,7 @@ case class Player(
     rating map { PlayerUser(uid, _, ratingDiff) }
   }
 
-  def withUser(id: String, perf: lila.rating.Perf): Player = copy(
+  def withUser(id: User.ID, perf: lila.rating.Perf): Player = copy(
     userId = id.some,
     rating = perf.intRating.some,
     provisional = perf.glicko.provisional)
@@ -52,9 +52,7 @@ case class Player(
 
   def goBerserk = copy(berserk = true)
 
-  def finish(winner: Boolean) = copy(
-    isWinner = if (winner) Some(true) else None
-  )
+  def finish(winner: Boolean) = copy(isWinner = winner option true)
 
   def offerDraw(turn: Int) = copy(
     isOfferingDraw = true,
@@ -88,6 +86,10 @@ case class Player(
   }
 
   def ratingAfter = rating map (_ + ~ratingDiff)
+
+  def stableRating = rating ifFalse provisional
+
+  def stableRatingAfter = stableRating map (_ + ~ratingDiff)
 }
 
 object Player {
@@ -142,7 +144,7 @@ object Player {
   private def safeRange(range: Range, name: String)(userId: Option[String])(v: Int): Option[Int] =
     if (range contains v) Some(v)
     else {
-      logwarn(s"game.Player: $userId $name=$v (range: ${range.min}-${range.max})")
+      logger.warn(s"Player $userId $name=$v (range: ${range.min}-${range.max})")
       None
     }
 

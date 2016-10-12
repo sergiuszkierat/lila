@@ -5,18 +5,32 @@ var arena = require('./arena');
 var pairings = require('./pairings');
 var playerInfo = require('./playerInfo');
 var pagination = require('../pagination');
+var header = require('./header');
+
+function confetti(data) {
+  if (!data.me) return;
+  if (!data.isRecentlyFinished) return;
+  if (data.me.rank > 3) return;
+  if (!lichess.once('tournament.end.canvas.' + data.id)) return;
+  return m('canvas', {
+    id: 'confetti',
+    config: function(el, isUpdate) {
+      if (isUpdate) return;
+      lichess.loadScript('/assets/javascripts/confetti.js');
+    }
+  });
+}
 
 module.exports = {
   main: function(ctrl) {
     var pag = pagination.players(ctrl);
     return [
-      util.title(ctrl),
-      arena.podium(ctrl),
-      m('div.standing_wrap',
-        pagination.render(ctrl, pag, function() {
-          return m('table.slist.standing' + (ctrl.data.scheduled ? '.scheduled' : ''), arena.standing(ctrl, pag));
-        })),
-      util.games(ctrl.data.lastGames)
+      m('div.big_top', [
+        confetti(ctrl.data),
+        header(ctrl),
+        arena.podium(ctrl)
+      ]),
+      arena.standing(ctrl, pag)
     ];
   },
   side: function(ctrl) {

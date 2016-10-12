@@ -1,27 +1,29 @@
 package lila.team
 
-import org.joda.time.Period
 import actorApi._
 import akka.actor.ActorSelection
-import lila.db.api._
+import lila.db.dsl._
 import lila.hub.actorApi.forum.MakeTeam
 import lila.hub.actorApi.timeline.{ Propagate, TeamJoin, TeamCreate }
-import lila.user.tube.userTube
-import lila.user.{ User, UserContext }
-import tube._
+import lila.user.{ User, UserRepo, UserContext }
+import org.joda.time.Period
+import reactivemongo.api.Cursor
 
 final class TeamApi(
+    coll: Colls,
     cached: Cached,
     notifier: Notifier,
     forum: ActorSelection,
     indexer: ActorSelection,
     timeline: ActorSelection) {
 
+  import BSONHandlers._
+
   val creationPeriod = Period weeks 1
 
-  def team(id: String) = $find.byId[Team](id)
+  def team(id: String) = coll.team.byId[Team](id)
 
-  def request(id: String) = $find.byId[Request](id)
+  def request(id: String) = coll.request.byId[Request](id)
 
   def create(setup: TeamSetup, me: User): Option[Fu[Team]] = me.canTeam option {
     val s = setup.trim
@@ -30,9 +32,8 @@ final class TeamApi(
       location = s.location,
       description = s.description,
       open = s.isOpen,
-      irc = s.hasIrc,
       createdBy = me)
-    $insert(team) >>
+    coll.team.insert(team) >>
       MemberRepo.add(team.id, me.id) >>- {
         (cached.teamIdsCache invalidate me.id)
         (forum ! MakeTeam(team.id, team.name))
@@ -47,11 +48,12 @@ final class TeamApi(
     team.copy(
       location = e.location,
       description = e.description,
-      open = e.isOpen,
-      irc = e.hasIrc) |> { team => $update(team) >>- (indexer ! InsertTeam(team)) }
+      open = e.isOpen) |> { team =>
+        coll.team.update($id(team.id), team).void >>- (indexer ! InsertTeam(team))
+      }
   }
 
-  def mine(me: User): Fu[List[Team]] = $find.byIds[Team](cached teamIds me.id)
+  def mine(me: User): Fu[List[Team]] = coll.team.byIds[Team](cached teamIds me.id)
 
   def hasTeams(me: User): Boolean = cached.teamIds(me.id).nonEmpty
 
@@ -60,7 +62,7 @@ final class TeamApi(
 
   def requestsWithUsers(team: Team): Fu[List[RequestWithUser]] = for {
     requests ← RequestRepo findByTeam team.id
-    users ← $find.byOrderedIds[User](requests map (_.user))
+    users ← UserRepo byOrderedIds requests.map(_.user)
   } yield requests zip users map {
     case (request, user) => RequestWithUser(request, user)
   }
@@ -68,13 +70,13 @@ final class TeamApi(
   def requestsWithUsers(user: User): Fu[List[RequestWithUser]] = for {
     teamIds ← TeamRepo teamIdsByCreator user.id
     requests ← RequestRepo findByTeams teamIds
-    users ← $find.byOrderedIds[User](requests map (_.user))
+    users ← UserRepo byOrderedIds requests.map(_.user)
   } yield requests zip users map {
     case (request, user) => RequestWithUser(request, user)
   }
 
   def join(teamId: String)(implicit ctx: UserContext): Fu[Option[Requesting]] = for {
-    teamOption ← $find.byId[Team](teamId)
+    teamOption ← coll.team.byId[Team](teamId)
     result ← ~(teamOption |@| ctx.me.filter(_.canTeam))({
       case (team, user) if team.open =>
         (doJoin(team, user.id) inject Joined(team).some): Fu[Option[Requesting]]
@@ -84,7 +86,7 @@ final class TeamApi(
   } yield result
 
   def requestable(teamId: String, user: User): Fu[Option[Team]] = for {
-    teamOption ← $find.byId[Team](teamId)
+    teamOption ← coll.team.byId[Team](teamId)
     able ← teamOption.??(requestable(_, user))
   } yield teamOption filter (_ => able)
 
@@ -99,33 +101,29 @@ final class TeamApi(
       _ ?? {
         val request = Request.make(team = team.id, user = user.id, message = setup.message)
         val rwu = RequestWithUser(request, user)
-        $insert(request) >> (cached.nbRequests remove team.createdBy)
+        coll.request.insert(request).void >> (cached.nbRequests remove team.createdBy)
       }
     }
 
   def processRequest(team: Team, request: Request, accept: Boolean): Funit = for {
-    _ ← $remove(request)
+    _ ← coll.request.remove(request)
     _ ← cached.nbRequests remove team.createdBy
-    userOption ← $find.byId[User](request.user)
+    userOption ← UserRepo byId request.user
     _ ← userOption.filter(_ => accept).??(user =>
       doJoin(team, user.id) >>- notifier.acceptRequest(team, request)
     )
   } yield ()
 
   def doJoin(team: Team, userId: String): Funit = (!belongsTo(team.id, userId)) ?? {
-    MemberRepo userIdsByTeam team.id flatMap { previousMembers =>
-      MemberRepo.add(team.id, userId) >>
-        TeamRepo.incMembers(team.id, +1) >>- {
-          (cached.teamIdsCache invalidate userId)
-          (timeline ! Propagate(
-            TeamJoin(userId, team.id)
-          ).toFollowersOf(userId).toUsers(previousMembers))
-        }
-    }
+    MemberRepo.add(team.id, userId) >>
+      TeamRepo.incMembers(team.id, +1) >>- {
+        cached.teamIdsCache invalidate userId
+        timeline ! Propagate(TeamJoin(userId, team.id)).toFollowersOf(userId)
+      }
   } recover lila.db.recoverDuplicateKey(e => ())
 
   def quit(teamId: String)(implicit ctx: UserContext): Fu[Option[Team]] = for {
-    teamOption ← $find.byId[Team](teamId)
+    teamOption ← coll.team.byId[Team](teamId)
     result ← ~(teamOption |@| ctx.me)({
       case (team, user) => doQuit(team, user.id) inject team.some
     })
@@ -142,14 +140,14 @@ final class TeamApi(
   def kick(team: Team, userId: String): Funit = doQuit(team, userId)
 
   def enable(team: Team): Funit =
-    TeamRepo.enable(team) >>- (indexer ! InsertTeam(team))
+    TeamRepo.enable(team).void >>- (indexer ! InsertTeam(team))
 
   def disable(team: Team): Funit =
-    TeamRepo.disable(team) >>- (indexer ! RemoveTeam(team.id))
+    TeamRepo.disable(team).void >>- (indexer ! RemoveTeam(team.id))
 
   // delete for ever, with members but not forums
   def delete(team: Team): Funit =
-    $remove(team) >>
+    coll.team.remove($id(team.id)) >>
       MemberRepo.removeByteam(team.id) >>-
       (indexer ! RemoveTeam(team.id))
 
@@ -166,9 +164,10 @@ final class TeamApi(
   def nbRequests(teamId: String) = cached nbRequests teamId
 
   def recomputeNbMembers =
-    $enumerate.over[Team]($query.all[Team]) { team =>
-      MemberRepo.countByTeam(team.id) flatMap { nb =>
-        $update.field[String, Team, Int](team.id, "nbMembers", nb)
-      }
+    coll.team.find($empty).cursor[Team]().foldWhileM({}) { (_, team) =>
+      for {
+        nb <- MemberRepo.countByTeam(team.id)
+        _ <- coll.team.updateField($id(team.id), "nbMembers", nb)
+      } yield Cursor.Cont({})
     }
 }

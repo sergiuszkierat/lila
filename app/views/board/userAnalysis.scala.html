@@ -1,4 +1,6 @@
-@(data: play.api.libs.json.JsObject, pov: Option[Pov])(implicit ctx: Context)
+@(data: play.api.libs.json.JsObject, pov: Pov)(implicit ctx: Context)
+
+@import lila.rating.PerfType.iconByVariant
 
 @moreCss = {
 @cssTag("analyse.css")
@@ -10,33 +12,28 @@
 lichess = lichess || {};
 lichess.user_analysis = {
 data: @Html(play.api.libs.json.Json.stringify(data)),
-i18n: @Html(J.stringify(i18nJsObject(
-trans.flipBoard,
-trans.backToGame,
-trans.gameAborted,
-trans.checkmate,
-trans.whiteResigned,
-trans.blackResigned,
-trans.stalemate,
-trans.whiteLeftTheGame,
-trans.blackLeftTheGame,
-trans.draw,
-trans.timeOut,
-trans.playingRightNow,
-trans.whiteIsVictorious,
-trans.blackIsVictorious,
-trans.kingInTheCenter,
-trans.threeChecks,
-trans.variantEnding,
-trans.whitePlays,
-trans.blackPlays,
-trans.gameOver,
-trans.boardEditor,
-trans.continueFromHere,
-trans.playWithTheMachine,
-trans.playWithAFriend
-)))
+i18n: @userAnalysisI18n(),
+explorer: {
+endpoint: "@explorerEndpoint",
+tablebaseEndpoint: "@tablebaseEndpoint"
+}
 };
+}
+}
+
+@side = {
+@if(pov.game.synthetic) {
+<div class="mselect">
+  <div class="button" data-icon="@iconByVariant(pov.game.variant)">
+    @pov.game.variant.name
+    <i data-icon="u"></i>
+  </div>
+  <div class="list">
+    @chess.variant.Variant.all.filterNot(chess.variant.FromPosition ==).map { v =>
+    <a data-icon="@iconByVariant(v)" href="@routes.UserAnalysis.parse(v.key)">@v.name</a>
+    }
+  </div>
+</div>
 }
 }
 
@@ -44,6 +41,7 @@ trans.playWithAFriend
 title = trans.analysis.str(),
 moreCss = moreCss,
 moreJs = moreJs,
+side = side.some,
 chessground = false,
 openGraph = lila.app.ui.OpenGraph(
 title = "Chess analysis board",

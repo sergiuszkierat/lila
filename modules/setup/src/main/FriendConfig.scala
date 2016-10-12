@@ -13,26 +13,13 @@ case class FriendConfig(
     days: Int,
     mode: Mode,
     color: Color,
-    fen: Option[String] = None) extends HumanConfig with GameGenerator with Positional {
+    fen: Option[String] = None) extends HumanConfig with Positional {
 
   val strictFen = false
 
   def >> = (variant.id, timeMode.id, time, increment, days, mode.id.some, color.name, fen).some
 
-  def game = fenGame { chessGame =>
-    val realVariant = chessGame.board.variant
-    Game.make(
-      game = chessGame,
-      whitePlayer = Player.white,
-      blackPlayer = Player.black,
-      mode = (realVariant == chess.variant.FromPosition).fold(Mode.Casual, mode),
-      variant = realVariant,
-      source = (realVariant == chess.variant.FromPosition).fold(Source.Position, Source.Friend),
-      daysPerTurn = makeDaysPerTurn,
-      pgnImport = None)
-  }
-
-  def pov = Pov(game, creatorColor)
+  def isPersistent = timeMode == TimeMode.Unlimited || timeMode == TimeMode.Correspondence
 }
 
 object FriendConfig extends BaseHumanConfig {
@@ -57,10 +44,12 @@ object FriendConfig extends BaseHumanConfig {
     mode = Mode.default,
     color = Color.default)
 
-  import reactivemongo.bson._
   import lila.db.BSON
+  import lila.db.dsl._
 
   private[setup] implicit val friendConfigBSONHandler = new BSON[FriendConfig] {
+
+    override val logMalformed = false
 
     def reads(r: BSON.Reader): FriendConfig = FriendConfig(
       variant = chess.variant.Variant orDefault (r int "v"),
@@ -72,7 +61,7 @@ object FriendConfig extends BaseHumanConfig {
       color = Color.White,
       fen = r strO "f" filter (_.nonEmpty))
 
-    def writes(w: BSON.Writer, o: FriendConfig) = BSONDocument(
+    def writes(w: BSON.Writer, o: FriendConfig) = $doc(
       "v" -> o.variant.id,
       "tm" -> o.timeMode.id,
       "t" -> o.time,

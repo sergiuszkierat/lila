@@ -10,10 +10,12 @@ import play.api.libs.json._
 
 import actorApi._
 import lila.common.LightUser
+import lila.common.PimpedJson._
 import lila.game.actorApi.{ StartGame, UserStartGame }
 import lila.game.Event
 import lila.hub.actorApi.Deploy
 import lila.hub.actorApi.game.ChangeFeatured
+import lila.hub.actorApi.round.IsOnGame
 import lila.hub.actorApi.tv.{ Select => TvSelect }
 import lila.hub.TimeBomb
 import lila.socket._
@@ -39,7 +41,7 @@ private[round] final class Socket(
   private final class Player(color: Color) {
 
     // when the player has been seen online for the last time
-    private var time: Double = nowMillis
+    private var time: Long = nowMillis
     // wether the player closed the window intentionally
     private var bye: Int = 0
 
@@ -77,6 +79,7 @@ private[round] final class Socket(
   override def postStop() {
     super.postStop()
     lilaBus.unsubscribe(self)
+    lilaBus.publish(lila.hub.actorApi.round.SocketEvent.Stop(gameId), 'roundDoor)
   }
 
   private def refreshSubscriptions {
@@ -84,9 +87,10 @@ private[round] final class Socket(
     watchers.flatMap(_.userTv).toList.distinct foreach { userId =>
       lilaBus.subscribe(self, Symbol(s"userStartGame:$userId"))
     }
+    lilaBus.subscribe(self, Symbol(s"chat-$gameId"), Symbol(s"chat-$gameId/w"))
   }
 
-  def receiveSpecific = {
+  def receiveSpecific = ({
 
     case SetGame(Some(game)) =>
       hasAi = game.hasAi
@@ -99,7 +103,7 @@ private[round] final class Socket(
     case StartGame(game) => self ! SetGame(game.some)
 
     case d: Deploy =>
-      onDeploy(d) // default behaviour
+      onDeploy(d)
       history.enablePersistence
 
     case PingVersion(uid, v) =>
@@ -121,9 +125,11 @@ private[round] final class Socket(
         playerGet(c, _.isGone) foreach { _ ?? notifyGone(c, true) }
       }
 
-    case GetVersion    => sender ! history.getVersion
+    case GetVersion      => sender ! history.getVersion
 
-    case IsGone(color) => playerGet(color, _.isGone) pipeTo sender
+    case IsGone(color)   => playerGet(color, _.isGone) pipeTo sender
+
+    case IsOnGame(color) => sender ! ownerOf(color).isDefined
 
     case GetSocketStatus =>
       playerGet(White, _.isGone) zip playerGet(Black, _.isGone) map {
@@ -135,14 +141,17 @@ private[round] final class Socket(
           blackIsGone = blackIsGone)
       } pipeTo sender
 
-    case Join(uid, user, version, color, playerId, ip, userTv) =>
+    case Join(uid, user, color, playerId, ip, userTv, apiVersion) =>
       val (enumerator, channel) = Concurrent.broadcast[JsValue]
-      val member = Member(channel, user, color, playerId, ip, userTv = userTv)
+      val member = Member(channel, user, color, playerId, ip, userTv = userTv, apiVersion = apiVersion)
       addMember(uid, member)
       notifyCrowd
       playerDo(color, _.ping)
       sender ! Connected(enumerator, member)
       if (member.userTv.isDefined) refreshSubscriptions
+      if (member.owner) lilaBus.publish(
+        lila.hub.actorApi.round.SocketEvent.OwnerJoin(gameId, color, ip),
+        'roundDoor)
 
     case Nil                  =>
     case eventList: EventList => notify(eventList.events)
@@ -152,9 +161,18 @@ private[round] final class Socket(
       case l: lila.chat.PlayerLine => Event.PlayerMessage(l)
     }))
 
-    case AnalysisAvailable                           => notifyAll("analysisAvailable")
-
-    case lila.hub.actorApi.setup.DeclineChallenge(_) => notifyAll("declined")
+    case a: lila.analyse.actorApi.AnalysisProgress =>
+      import lila.analyse.{ JsonView => analysisJson }
+      notifyAll("analysisProgress", Json.obj(
+        "analysis" -> analysisJson.bothPlayers(a.game, a.analysis),
+        "tree" -> TreeBuilder(
+          id = a.analysis.id,
+          pgnMoves = a.game.pgnMoves,
+          variant = a.variant,
+          analysis = a.analysis.some,
+          initialFen = a.initialFen.value,
+          withOpening = false)
+      ))
 
     case Quit(uid) =>
       members get uid foreach { member =>
@@ -167,7 +185,7 @@ private[round] final class Socket(
 
     case TvSelect(msg)          => watchers.foreach(_ push msg)
 
-    case UserStartGame(userId, game) => watchers filter (_ onUserTv userId) foreach {
+    case UserStartGame(userId, _) => watchers filter (_ onUserTv userId) foreach {
       _ push makeMessage("resync")
     }
 
@@ -177,16 +195,14 @@ private[round] final class Socket(
 
     case NotifyCrowd =>
       delayedCrowdNotification = false
-      val (anons, users) = watchers.map(_.userId flatMap lightUser).foldLeft(0 -> List[LightUser]()) {
-        case ((anons, users), Some(user)) => anons -> (user :: users)
-        case ((anons, users), None)       => (anons + 1) -> users
-      }
       val event = Event.Crowd(
         white = ownerOf(White).isDefined,
         black = ownerOf(Black).isDefined,
-        watchers = showSpectators(users, anons))
+        watchers = showSpectators(lightUser)(watchers))
       notifyAll(event.typ, event.data)
-  }
+  }: Actor.Receive) orElse lila.chat.Socket.out(
+    send = (t, d, _) => notifyAll(t, d)
+  )
 
   def notifyCrowd {
     if (!delayedCrowdNotification) {

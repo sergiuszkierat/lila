@@ -1,5 +1,6 @@
 var ctrl = require('./ctrl');
 var view = require('./view');
+var studyView = require('./study/studyView');
 var m = require('mithril');
 
 module.exports = function(opts) {
@@ -7,12 +8,22 @@ module.exports = function(opts) {
   var controller = new ctrl(opts);
 
   m.module(opts.element, {
-    controller: function () { return controller; },
+    controller: function() {
+      return controller;
+    },
     view: view
   });
 
+  if (controller.study) m.module(opts.sideElement, {
+    controller: function() {
+      m.redraw.strategy("diff"); // prevents double full redraw on page load
+      return controller.study;
+    },
+    view: studyView.main
+  });
+
   return {
-    socketReceive: controller.socket.receive,
+    socketReceive: controller.socketReceive,
     jumpToIndex: function(index) {
       controller.jumpToIndex(index);
       m.redraw();
@@ -22,8 +33,7 @@ module.exports = function(opts) {
     },
     pathStr: function() {
       return controller.vm.pathStr;
-    },
-    jumpToNag: controller.jumpToNag
+    }
   };
 };
 
