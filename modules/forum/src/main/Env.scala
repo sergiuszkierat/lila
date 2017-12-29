@@ -4,8 +4,8 @@ import akka.actor._
 import com.typesafe.config.Config
 
 import lila.common.DetectLanguage
-import lila.common.PimpedConfig._
-import lila.hub.actorApi.forum._
+
+import lila.hub.actorApi.team.CreateTeam
 import lila.mod.ModlogApi
 import lila.notify.NotifyApi
 import lila.relation.RelationApi
@@ -19,7 +19,9 @@ final class Env(
     detectLanguage: DetectLanguage,
     notifyApi: NotifyApi,
     relationApi: RelationApi,
-    system: ActorSystem) {
+    asyncCache: lila.memo.AsyncCache.Builder,
+    system: ActorSystem
+) {
 
   private val settings = new {
     val TopicMaxPerPage = config getInt "topic.max_per_page"
@@ -29,7 +31,6 @@ final class Env(
     val CollectionCateg = config getString "collection.categ"
     val CollectionTopic = config getString "collection.topic"
     val CollectionPost = config getString "collection.post"
-    val ActorName = config getString "actor.name"
     import scala.collection.JavaConversions._
     val PublicCategIds = (config getStringList "public_categ_ids").toList
   }
@@ -47,7 +48,9 @@ final class Env(
     shutup = shutup,
     timeline = hub.actor.timeline,
     detectLanguage = detectLanguage,
-    mentionNotifier = mentionNotifier)
+    mentionNotifier = mentionNotifier,
+    bus = system.lilaBus
+  )
 
   lazy val postApi = new PostApi(
     env = this,
@@ -57,16 +60,21 @@ final class Env(
     shutup = shutup,
     timeline = hub.actor.timeline,
     detectLanguage = detectLanguage,
-    mentionNotifier = mentionNotifier)
+    mentionNotifier = mentionNotifier,
+    bus = system.lilaBus
+  )
 
   lazy val forms = new DataForm(hub.actor.captcher)
-  lazy val recent = new Recent(postApi, RecentTtl, RecentNb, PublicCategIds)
+  lazy val recent = new Recent(postApi, RecentTtl, RecentNb, asyncCache, PublicCategIds)
 
-  system.actorOf(Props(new Actor {
-    def receive = {
-      case MakeTeam(id, name) => categApi.makeTeam(id, name)
-    }
-  }), name = ActorName)
+  system.lilaBus.subscribe(
+    system.actorOf(Props(new Actor {
+      def receive = {
+        case CreateTeam(id, name, _) => categApi.makeTeam(id, name)
+      }
+    })),
+    'team
+  )
 
   private[forum] lazy val categColl = db(CollectionCateg)
   private[forum] lazy val topicColl = db(CollectionTopic)
@@ -74,8 +82,6 @@ final class Env(
 }
 
 object Env {
-
-  private def hub = lila.hub.Env.current
 
   lazy val current = "forum" boot new Env(
     config = lila.common.PlayApp loadConfig "forum",
@@ -86,5 +92,7 @@ object Env {
     detectLanguage = DetectLanguage(lila.common.PlayApp loadConfig "detectlanguage"),
     notifyApi = lila.notify.Env.current.api,
     relationApi = lila.relation.Env.current.api,
-    system = lila.common.PlayApp.system)
+    asyncCache = lila.memo.Env.current.asyncCache,
+    system = lila.common.PlayApp.system
+  )
 }

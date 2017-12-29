@@ -1,19 +1,11 @@
 var m = require('mithril');
-var partial = require('chessground').util.partial;
 var simul = require('../simul');
 var util = require('./util');
-var button = require('./button');
 var xhr = require('../xhr');
 
-function maybeWithdrawButton(ctrl, applicant) {
-  if (ctrl.userId === applicant.player.id) return m('a.thin.button', {
-    onclick: partial(xhr.withdraw, ctrl)
-  }, ctrl.trans('withdraw'));
+function byName(a, b) {
+  return a.player.username > b.player.username
 }
-
-function byRating(a, b) {
-  return a.rating > b.rating
-};
 
 function randomButton(ctrl, candidates) {
   return candidates.length ? m('a.button.top_right.text', {
@@ -29,7 +21,7 @@ function startOrCancel(ctrl, accepted) {
   return accepted.length > 1 ?
     m('a.button.top_right.text.active', {
       'data-icon': 'G',
-      onclick: partial(xhr.start, ctrl)
+      onclick: function() { xhr.start(ctrl) }
     }, 'Start') : m('a.button.top_right.text', {
       'data-icon': 'L',
       onclick: function() {
@@ -39,8 +31,8 @@ function startOrCancel(ctrl, accepted) {
 }
 
 module.exports = function(ctrl) {
-  var candidates = simul.candidates(ctrl).sort(byRating);
-  var accepted = simul.accepted(ctrl).sort(byRating);
+  var candidates = simul.candidates(ctrl).sort(byName);
+  var accepted = simul.accepted(ctrl).sort(byName);
   var isHost = simul.createdByMe(ctrl);
   return [
     ctrl.userId ? (
@@ -49,7 +41,7 @@ module.exports = function(ctrl) {
         randomButton(ctrl, candidates)
       ] : (
         simul.containsMe(ctrl) ? m('a.button.top_right', {
-          onclick: partial(xhr.withdraw, ctrl)
+          onclick: function() { xhr.withdraw(ctrl) }
         }, ctrl.trans('withdraw')) : m('a.button.top_right.text', {
             'data-icon': 'G',
             onclick: function() {
@@ -65,7 +57,10 @@ module.exports = function(ctrl) {
             }
           },
           ctrl.trans('join'))
-      )) : null,
+      )) : m('a.button.top_right.text', {
+        'data-icon': 'G',
+        href: '/login?referrer=' + window.location.pathname
+      }, ctrl.trans('signIn')),
     util.title(ctrl),
     simul.acceptedContainsMe(ctrl) ? m('div.instructions',
       'You have been selected! Hold still, the simul is about to begin.'
@@ -90,15 +85,16 @@ module.exports = function(ctrl) {
               class: ctrl.userId === applicant.player.id ? 'me' : ''
             }, [
               m('td', util.player(applicant.player)),
-              m('td.variant.text', {
+              m('td.variant', {
                 'data-icon': variant.icon
-              }, variant.name),
-              m('td.action', isHost ? m('a.button.text', {
+              }),
+              m('td.action', isHost ? m('a.button', {
                 'data-icon': 'E',
+                title: 'Accept',
                 onclick: function(e) {
                   xhr.accept(applicant.player.id)(ctrl);
                 }
-              }, 'Accept') : null)
+              }) : null)
             ])
           })))
       ),
@@ -121,9 +117,9 @@ module.exports = function(ctrl) {
               class: ctrl.userId === applicant.player.id ? 'me' : ''
             }, [
               m('td', util.player(applicant.player)),
-              m('td.variant.text', {
+              m('td.variant', {
                 'data-icon': variant.icon
-              }, variant.name),
+              }),
               m('td.action', isHost ? m('a.button', {
                 'data-icon': 'L',
                 onclick: function(e) {

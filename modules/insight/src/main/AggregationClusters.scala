@@ -11,7 +11,7 @@ object AggregationClusters {
       else single(question, res)
     }
 
-  private def single[X](question: Question[X], res: AggregationResult): List[Cluster[X]] =
+  private def single[X](question: Question[X], res: AggregationResult): List[Cluster[X]] = {
     res.firstBatch.flatMap { doc =>
       for {
         x <- doc.getAs[X]("_id")(question.dimension.bson)
@@ -20,6 +20,7 @@ object AggregationClusters {
         ids <- doc.getAs[List[String]]("ids")
       } yield Cluster(x, Insight.Single(Point(value.toDouble)), nb, ids)
     }
+  }
 
   private case class StackEntry(metric: BSONValue, v: BSONNumberLike)
   private implicit val StackEntryBSONReader = Macros.reader[StackEntry]
@@ -46,6 +47,6 @@ object AggregationClusters {
 
   private def postSort[X](q: Question[X])(clusters: List[Cluster[X]]): List[Cluster[X]] = q.dimension match {
     case Dimension.Opening => clusters
-    case _                 => clusters.sortLike(Dimension.valuesOf(q.dimension), _.x)
+    case _ => clusters.sortLike(Dimension.valuesOf(q.dimension), _.x)
   }
 }

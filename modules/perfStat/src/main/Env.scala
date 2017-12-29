@@ -2,16 +2,15 @@ package lila.perfStat
 
 import akka.actor._
 import com.typesafe.config.Config
-import scala.concurrent.duration._
 
 import akka.actor._
-import lila.common.PimpedConfig._
 
 final class Env(
     config: Config,
     system: ActorSystem,
-    lightUser: String => Option[lila.common.LightUser],
-    db: lila.db.Env) {
+    lightUser: lila.common.LightUser.GetterSync,
+    db: lila.db.Env
+) {
 
   private val settings = new {
     val CollectionPerfStat = config getString "collection.perf_stat"
@@ -19,14 +18,16 @@ final class Env(
   import settings._
 
   lazy val storage = new PerfStatStorage(
-    coll = db(CollectionPerfStat))
+    coll = db(CollectionPerfStat)
+  )
 
   lazy val indexer = new PerfStatIndexer(
     storage = storage,
     sequencer = system.actorOf(Props(
       classOf[lila.hub.Sequencer],
       None, None, lila.log("perfStat")
-    )))
+    ))
+  )
 
   lazy val jsonView = new JsonView(lightUser)
 
@@ -50,6 +51,7 @@ object Env {
   lazy val current: Env = "perfStat" boot new Env(
     config = lila.common.PlayApp loadConfig "perfStat",
     system = lila.common.PlayApp.system,
-    lightUser = lila.user.Env.current.lightUser,
-    db = lila.db.Env.current)
+    lightUser = lila.user.Env.current.lightUserSync,
+    db = lila.db.Env.current
+  )
 }

@@ -1,40 +1,53 @@
 package lila.mod
 
-import lila.chat.UserChat
+import lila.chat.{ Chat, UserChat }
+import lila.report.Suspect
 import lila.simul.Simul
 import lila.tournament.Tournament
 
 final class PublicChat(
     chatApi: lila.chat.ChatApi,
     tournamentApi: lila.tournament.TournamentApi,
-    simulEnv: lila.simul.Env) {
+    simulEnv: lila.simul.Env
+) {
 
-  def tournamentChats: Fu[List[(Tournament, UserChat)]] =
+  def all: Fu[(List[(Tournament, UserChat)], List[(Simul, UserChat)])] =
+    tournamentChats zip simulChats
+
+  def delete(suspect: Suspect): Funit = all.flatMap {
+    case (tours, simuls) =>
+      (tours.map(_._2) ::: simuls.map(_._2))
+        .filter(_ hasLinesOf suspect.user)
+        .map(chatApi.userChat.delete(_, suspect.user))
+        .sequenceFu.void
+  }
+
+  private def tournamentChats: Fu[List[(Tournament, UserChat)]] =
     tournamentApi.fetchVisibleTournaments.flatMap {
       visibleTournaments =>
-        val ids = visibleTournaments.all.map(_.id)
+        val ids = visibleTournaments.all.map(_.id) map Chat.Id.apply
         chatApi.userChat.findAll(ids).map {
           chats =>
             chats.map { chat =>
-              visibleTournaments.all.find(_.id === chat.id).map(tour => (tour, chat))
+              visibleTournaments.all.find(_.id === chat.id.value).map(tour => (tour, chat))
             }.flatten
         } map sortTournamentsByRelevance
     }
 
-  def simulChats: Fu[List[(Simul, UserChat)]] =
+  private def simulChats: Fu[List[(Simul, UserChat)]] =
     fetchVisibleSimuls.flatMap {
       simuls =>
-        var ids = simuls.map(_.id)
+        val ids = simuls.map(_.id) map Chat.Id.apply
         chatApi.userChat.findAll(ids).map {
           chats =>
             chats.map { chat =>
-              simuls.find(_.id === chat.id).map(simul => (simul, chat))
+              simuls.find(_.id === chat.id.value).map(simul => (simul, chat))
             }.flatten
         }
     }
 
   private def fetchVisibleSimuls: Fu[List[Simul]] = {
-    simulEnv.allCreated(true) zip
+    simulEnv.allCreated.get zip
       simulEnv.repo.allStarted zip
       simulEnv.repo.allFinished(3) map {
         case ((created, started), finished) =>

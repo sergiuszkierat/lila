@@ -9,12 +9,14 @@ private[chat] final class FrontActor(api: ChatApi) extends Actor {
 
   def receive = {
 
-    case UserTalk(chatId, userId, text, public) => api.userChat.write(chatId, userId, text, public)
+    case UserTalk(chatId, userId, text, source) => api.userChat.write(chatId, userId, text, source)
 
-    case PlayerTalk(chatId, color, text)        => api.playerChat.write(chatId, Color(color), text)
+    case PlayerTalk(chatId, color, text) => api.playerChat.write(chatId, Color(color), text)
 
-    case SystemTalk(chatId, text)               => api.userChat.system(chatId, text)
+    case SystemTalk(chatId, text) => api.userChat.system(chatId, text)
 
-    case Timeout(chatId, modId, userId, reason) => api.userChat.timeout(chatId, modId, userId, reason)
+    case Timeout(chatId, modId, userId, reason, local) => api.userChat.timeout(chatId, modId, userId, reason, local)
+
+    case Remove(chatId) => api remove chatId
   }
 }

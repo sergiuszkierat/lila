@@ -1,22 +1,31 @@
-@(pov: Pov, data: play.api.libs.json.JsObject, tour: Option[lila.tournament.MiniStanding], simul: Option[lila.simul.Simul], cross: Option[lila.game.Crosstable], playing: List[Pov], chatOption: Option[lila.chat.MixedChat], bookmarked: Boolean)(implicit ctx: Context)
+@(pov: Pov, data: play.api.libs.json.JsObject, tour: Option[lila.tournament.TourMiniView], simul: Option[lila.simul.Simul], cross: Option[lila.game.Crosstable.WithMatchup], playing: List[Pov], chatOption: Option[lila.chat.Chat.GameOrEvent], bookmarked: Boolean)(implicit ctx: Context)
 
 @import pov._
 
-@title = @{ s"${trans.play.str()} ${playerText(pov.opponent)} in $gameId" }
+@title = @{ s"${trans.play.txt()} ${playerText(pov.opponent)} in $gameId" }
 
 @moreJs = {
-@jsAt(s"compiled/lichess.round${isProd??(".min")}.js")
+@roundTag
 @embedJs {
-$(function() {
-lichess.startRound(document.getElementById('lichess'), {
-data: @Html(J.stringify(data)),
-i18n: @jsI18n(),
+window.customWS = true;
+window.onload = function() {
+LichessRound.boot({
+data: @safeJson(data),
+i18n: @jsI18n(pov.game),
 userId: @jsUserId,
-chat: @jsOrNull(chatOption map { c =>
-chat.ChatJsData.json(c, name = trans.chatRoom.str(), timeout = false, withNote = true)
+@tour.map { t =>
+tour: @toJson(tour.flatMap(_.top).map(lila.tournament.JsonView.top(_, lightUser))),
+}
+chat: @jsOrNull(chatOption.map(_.either).map {
+case Left(c) => {
+chat.ChatJsData.restricted(c, name = trans.chatRoom.txt(), timeout = false, withNote = ctx.isAuth, public = false)
+}
+case Right(c) => {
+chat.ChatJsData.json(c.chat, name = trans.chatRoom.txt(), timeout = c.timeout, public = true)
+}
 })
-});
-});
+}, document.getElementById('lichess'));
+};
 }
 }
 
@@ -24,28 +33,36 @@ chat.ChatJsData.json(c, name = trans.chatRoom.str(), timeout = false, withNote =
 <link href="@routes.Round.atom(pov.gameId, pov.color.name)" type="application/atom+xml" rel="alternate" title="Game feed" />
 }
 
+@underchat = {
+@views.html.game.watchers()
+@round.blurs(pov.game)
+@round.holdAlerts(pov.game)
+}
+
 @round.layout(
 title = title,
-side = views.html.game.side(pov, (data\"game"\"initialFen").asOpt[String], tour, simul, bookmarked = bookmarked),
+side = views.html.game.side(pov, (data\"game"\"initialFen").asOpt[String], tour.map(_.tour), simul, bookmarked = bookmarked),
 chat = chatOption.isDefined.option(chat.dom()),
-underchat = views.html.game.watchers().some,
+underchat = underchat.some,
 moreJs = moreJs,
+moreCss = cssTag("chat.css"),
 openGraph = povOpenGraph(pov).some,
 chessground = false,
 playing = true,
 atom = atom.some) {
 <div class="round cg-512">
-  @miniBoardContent
-  <div class="underboard"><div class="center"></div></div>
+  @board.domPreload(pov.some)
+  <div class="underboard"><div class="center">
+      @cross.map { c =>
+      <div class="crosstable">
+        @views.html.game.crosstable(ctx.userId.fold(c)(c.fromPov), pov.gameId.some)
+      </div>
+      }
+  </div></div>
 </div>
-@cross.map { c =>
-<div class="crosstable none">
-  @views.html.game.crosstable(ctx.userId.fold(c)(c.fromPov), pov.gameId.some)
-</div>
-}
-@if(playing.nonEmpty) {
-<div id="now_playing" class="other_games @if(ctx.pref.isBlindfold){blindfold}" data-reload-url="@routes.Round.others(pov.gameId)">
-  @others(playing)
+@if(playing.nonEmpty || simul.nonEmpty) {
+<div id="now_playing" class="other_games @if(ctx.pref.isBlindfold){blindfold}">
+  @others(playing, simul)
 </div>
 }
 }

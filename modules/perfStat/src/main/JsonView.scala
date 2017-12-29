@@ -8,7 +8,7 @@ import org.joda.time.DateTime
 import org.joda.time.format.ISODateTimeFormat
 import play.api.libs.json._
 
-final class JsonView(getLightUser: String => Option[LightUser]) {
+final class JsonView(getLightUser: LightUser.GetterSync) {
 
   import JsonView._
 
@@ -16,7 +16,8 @@ final class JsonView(getLightUser: String => Option[LightUser]) {
     user: User,
     stat: PerfStat,
     rank: Option[Int],
-    ratingDistribution: Option[List[Int]]) = Json.obj(
+    ratingDistribution: Option[List[Int]]
+  ) = Json.obj(
     "user" -> user,
     "perf" -> user.perfs(stat.perfType),
     "rank" -> rank,
@@ -25,14 +26,16 @@ final class JsonView(getLightUser: String => Option[LightUser]) {
         case (under, sum) => Math.round(under * 1000.0 / sum) / 10.0
       }
     },
-    "stat" -> stat.copy(playStreak = stat.playStreak.checkCurrent))
+    "stat" -> stat.copy(playStreak = stat.playStreak.checkCurrent)
+  )
 
   private implicit val userIdWriter: OWrites[UserId] = OWrites { u =>
     val light = getLightUser(u.value)
     Json.obj(
       "id" -> u.value,
       "name" -> light.fold(u.value)(_.name),
-      "title" -> light.flatMap(_.title))
+      "title" -> light.flatMap(_.title)
+    )
   }
 
   implicit val ratingAtWrites = Json.writes[RatingAt]
@@ -48,7 +51,7 @@ final class JsonView(getLightUser: String => Option[LightUser]) {
 
 object JsonView {
 
-  private def truncate(v: Double) = lila.common.Maths.truncateAt(v, 2)
+  private def round(v: Double, depth: Int = 2) = lila.common.Maths.roundAt(v, depth)
 
   private val isoFormatter = ISODateTimeFormat.dateTime
   private implicit val dateWriter: Writes[DateTime] = Writes { d =>
@@ -59,20 +62,21 @@ object JsonView {
   }
   implicit val glickoWriter: OWrites[Glicko] = OWrites { p =>
     Json.obj(
-      "rating" -> truncate(p.rating),
-      "deviation" -> truncate(p.deviation),
-      "volatility" -> truncate(p.volatility),
-      "provisional" -> p.provisional)
+      "rating" -> round(p.rating),
+      "deviation" -> round(p.deviation),
+      "provisional" -> p.provisional
+    )
   }
   implicit val perfWriter: OWrites[Perf] = OWrites { p =>
     Json.obj("glicko" -> p.glicko, "nb" -> p.nb, "progress" -> p.progress)
   }
   private implicit val avgWriter: Writes[Avg] = Writes { a =>
-    JsNumber(truncate(a.avg))
+    JsNumber(round(a.avg))
   }
   implicit val perfTypeWriter: OWrites[PerfType] = OWrites { pt =>
     Json.obj(
       "key" -> pt.key,
-      "name" -> pt.name)
+      "name" -> pt.name
+    )
   }
 }

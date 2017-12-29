@@ -18,7 +18,9 @@ case class Topic(
     lastPostIdTroll: String,
     troll: Boolean,
     closed: Boolean,
-    hidden: Boolean) {
+    hidden: Boolean,
+    sticky: Option[Boolean]
+) {
 
   def id = _id
 
@@ -30,13 +32,18 @@ case class Topic(
   def open = !closed
   def visibleOnHome = !hidden
 
+  def isSticky = ~sticky
+
+  def isStaff = categId == Categ.staffId
+
   def withPost(post: Post): Topic = copy(
     nbPosts = post.troll.fold(nbPosts, nbPosts + 1),
     lastPostId = post.troll.fold(lastPostId, post.id),
     updatedAt = post.troll.fold(updatedAt, post.createdAt),
     nbPostsTroll = nbPostsTroll + 1,
     lastPostIdTroll = post.id,
-    updatedAtTroll = post.createdAt)
+    updatedAtTroll = post.createdAt
+  )
 
   def incNbPosts = copy(nbPosts = nbPosts + 1)
 }
@@ -45,7 +52,7 @@ object Topic {
 
   def nameToId(name: String) = (lila.common.String slugify name) |> { slug =>
     // if most chars are not latin, go for random slug
-    (slug.size > (name.size / 2)).fold(slug, Random nextStringUppercase 8)
+    (slug.size > (name.size / 2)).fold(slug, Random nextString 8)
   }
 
   val idSize = 8
@@ -55,7 +62,8 @@ object Topic {
     slug: String,
     name: String,
     troll: Boolean,
-    hidden: Boolean): Topic = Topic(
+    hidden: Boolean
+  ): Topic = Topic(
     _id = Random nextString idSize,
     categId = categId,
     slug = slug,
@@ -70,5 +78,7 @@ object Topic {
     lastPostIdTroll = "",
     troll = troll,
     closed = false,
-    hidden = hidden)
+    hidden = hidden,
+    sticky = None
+  )
 }

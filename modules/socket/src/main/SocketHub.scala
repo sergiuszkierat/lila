@@ -1,23 +1,16 @@
 package lila.socket
 
-import scala.concurrent.duration._
-
 import akka.actor._
-import akka.dispatch.Dispatchers
-import akka.pattern.{ ask, pipe }
-import akka.routing._
-
-import actorApi._
 
 final class SocketHub extends Actor {
 
   private val sockets = collection.mutable.Set[ActorRef]()
 
-  override def preStart() {
+  override def preStart(): Unit = {
     context.system.lilaBus.subscribe(self, 'deploy, 'socket)
   }
 
-  override def postStop() {
+  override def postStop(): Unit = {
     super.postStop()
     context.system.lilaBus.unsubscribe(self)
   }
@@ -26,11 +19,11 @@ final class SocketHub extends Actor {
 
   def receive = {
 
-    case Open(socket)  => sockets += socket
+    case Open(socket) => sockets += socket
 
     case Close(socket) => sockets -= socket
 
-    case msg           => sockets foreach (_ ! msg)
+    case msg => sockets foreach (_ ! msg)
   }
 }
 

@@ -1,15 +1,16 @@
 package lila.coach
 
-import akka.actor._
-import com.typesafe.config.Config
 import scala.concurrent.duration._
-
-import lila.common.PimpedConfig._
+import com.typesafe.config.Config
+import akka.actor._
 
 final class Env(
     config: Config,
     notifyApi: lila.notify.NotifyApi,
-    db: lila.db.Env) {
+    asyncCache: lila.memo.AsyncCache.Builder,
+    system: ActorSystem,
+    db: lila.db.Env
+) {
 
   private val CollectionCoach = config getString "collection.coach"
   private val CollectionReview = config getString "collection.review"
@@ -25,13 +26,25 @@ final class Env(
     coachColl = coachColl,
     reviewColl = reviewColl,
     photographer = photographer,
-    notifyApi = notifyApi)
+    asyncCache = asyncCache,
+    notifyApi = notifyApi
+  )
 
   lazy val pager = new CoachPager(api)
 
+  system.lilaBus.subscribe(
+    system.actorOf(Props(new Actor {
+      def receive = {
+        case lila.hub.actorApi.mod.MarkCheater(userId, true) =>
+          system.scheduler.scheduleOnce(5 minutes) { api.reviews.deleteAllBy(userId) }
+      }
+    })),
+    'adjustCheater
+  )
+
   def cli = new lila.common.Cli {
     def process = {
-      case "coach" :: "enable" :: username :: Nil  => api.toggleApproved(username, true)
+      case "coach" :: "enable" :: username :: Nil => api.toggleApproved(username, true)
       case "coach" :: "disable" :: username :: Nil => api.toggleApproved(username, false)
     }
   }
@@ -42,5 +55,8 @@ object Env {
   lazy val current: Env = "coach" boot new Env(
     config = lila.common.PlayApp loadConfig "coach",
     notifyApi = lila.notify.Env.current.api,
-    db = lila.db.Env.current)
+    asyncCache = lila.memo.Env.current.asyncCache,
+    system = lila.common.PlayApp.system,
+    db = lila.db.Env.current
+  )
 }

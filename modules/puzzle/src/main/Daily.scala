@@ -7,16 +7,23 @@ import akka.pattern.ask
 import org.joda.time.DateTime
 
 import lila.db.dsl._
+import Puzzle.{ BSONFields => F }
 
 private[puzzle] final class Daily(
     coll: Coll,
     renderer: ActorSelection,
-    scheduler: Scheduler) {
+    asyncCache: lila.memo.AsyncCache.Builder,
+    scheduler: Scheduler
+) {
 
   private val cache =
-    lila.memo.AsyncCache.single[Option[DailyPuzzle]](f = find, timeToLive = 30 minutes)
+    asyncCache.single[Option[DailyPuzzle]](
+      name = "puzzle.daily",
+      f = find,
+      expireAfter = _.ExpireAfterWrite(10 minutes)
+    )
 
-  def apply(): Fu[Option[DailyPuzzle]] = cache apply true
+  def get: Fu[Option[DailyPuzzle]] = cache.get
 
   private def find: Fu[Option[DailyPuzzle]] = (findCurrent orElse findNew) recover {
     case e: Exception =>
@@ -24,15 +31,13 @@ private[puzzle] final class Daily(
       none
   } flatMap {
     case Some(puzzle) => makeDaily(puzzle)
-    case None =>
-      scheduler.scheduleOnce(10.seconds)(cache.clear)
-      fuccess(none)
+    case None => fuccess(none)
   }
 
   private def makeDaily(puzzle: Puzzle): Fu[Option[DailyPuzzle]] = {
     import makeTimeout.short
     ~puzzle.fenAfterInitialMove.map { fen =>
-      renderer ? RenderDaily(puzzle, fen, puzzle.initialMove) map {
+      renderer ? RenderDaily(puzzle, fen, puzzle.initialMove.uci) map {
         case html: play.twirl.api.Html => DailyPuzzle(html, puzzle.color, puzzle.id).some
       }
     }
@@ -43,15 +48,15 @@ private[puzzle] final class Daily(
   }
 
   private def findCurrent = coll.find(
-    $doc("day" -> $doc("$gt" -> DateTime.now.minusMinutes(24 * 60 - 15)))
+    $doc(F.day $gt DateTime.now.minusMinutes(24 * 60 - 15))
   ).uno[Puzzle]
 
   private def findNew = coll.find(
-    $doc("day" -> $doc("$exists" -> false))
-  ).sort($doc("vote.sum" -> -1)).uno[Puzzle] flatMap {
+    $doc(F.day $exists false, F.voteNb $gte 200)
+  ).sort($doc(F.voteRatio -> -1)).uno[Puzzle] flatMap {
       case Some(puzzle) => coll.update(
-        $doc("_id" -> puzzle.id),
-        $doc("$set" -> $doc("day" -> DateTime.now))
+        $id(puzzle.id),
+        $set(F.day -> DateTime.now)
       ) inject puzzle.some
       case None => fuccess(none)
     }

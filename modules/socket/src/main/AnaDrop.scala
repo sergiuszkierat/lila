@@ -3,18 +3,20 @@ package lila.socket
 import chess.format.{ Uci, UciCharPair }
 import chess.opening._
 import chess.variant.Variant
+import play.api.libs.json._
 import play.api.libs.json.JsObject
 import scalaz.Validation.FlatMap._
 
-import lila.common.PimpedJson._
-import tree.Branch
+import lila.tree.Branch
 
 case class AnaDrop(
     role: chess.Role,
     pos: chess.Pos,
     variant: Variant,
     fen: String,
-    path: String) {
+    path: String,
+    chapterId: Option[String]
+) extends AnaAny {
 
   def branch: Valid[Branch] =
     chess.Game(variant.some, fen.some).drop(role, pos) flatMap {
@@ -33,9 +35,15 @@ case class AnaDrop(
             FullOpeningDB findByFen fen
           },
           drops = movable.fold(game.situation.drops, Some(Nil)),
-          crazyData = game.situation.board.crazyData)
+          crazyData = game.situation.board.crazyData
+        )
       }
     }
+
+  def json(b: Branch): JsObject = Json.obj(
+    "node" -> b,
+    "path" -> path
+  ).add("ch" -> chapterId)
 }
 
 object AnaDrop {
@@ -47,10 +55,13 @@ object AnaDrop {
     variant = chess.variant.Variant orDefault ~d.str("variant")
     fen ← d str "fen"
     path ← d str "path"
+    chapterId = d str "ch"
   } yield AnaDrop(
     role = role,
     pos = pos,
     variant = variant,
     fen = fen,
-    path = path)
+    path = path,
+    chapterId = d str "ch"
+  )
 }

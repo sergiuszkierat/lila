@@ -1,13 +1,11 @@
 package lila.setup
 
-import lila.rating.RatingRange
-import lila.db.dsl._
 import lila.lobby.Color
 import lila.user.UserContext
 import play.api.data._
 import play.api.data.Forms._
 
-private[setup] final class FormFactory(casualOnly: Boolean) {
+private[setup] final class FormFactory {
 
   import Mappings._
 
@@ -43,7 +41,7 @@ private[setup] final class FormFactory(casualOnly: Boolean) {
       "color" -> color,
       "fen" -> fen
     )(AiConfig.<<)(_.>>)
-      .verifying("Invalid FEN", _.validFen)
+      .verifying("invalidFen", _.validFen)
   )
 
   def aiConfig(implicit ctx: UserContext): Fu[AiConfig] = savedConfig map (_.ai)
@@ -62,12 +60,12 @@ private[setup] final class FormFactory(casualOnly: Boolean) {
       "time" -> time,
       "increment" -> increment,
       "days" -> days,
-      "mode" -> mode(withRated = ctx.isAuth && !casualOnly),
+      "mode" -> mode(withRated = ctx.isAuth),
       "color" -> color,
       "fen" -> fen
     )(FriendConfig.<<)(_.>>)
       .verifying("Invalid clock", _.validClock)
-      .verifying("Invalid FEN", _.validFen)
+      .verifying("invalidFen", _.validFen)
   )
 
   def friendConfig(implicit ctx: UserContext): Fu[FriendConfig] = savedConfig map (_.friend)
@@ -82,8 +80,7 @@ private[setup] final class FormFactory(casualOnly: Boolean) {
       "time" -> time,
       "increment" -> increment,
       "days" -> days,
-      "mode" -> mode(ctx.isAuth && !casualOnly),
-      "membersOnly" -> boolean,
+      "mode" -> mode(ctx.isAuth),
       "ratingRange" -> optional(ratingRange),
       "color" -> nonEmptyText.verifying(Color.names contains _)
     )(HookConfig.<<)(_.>>)

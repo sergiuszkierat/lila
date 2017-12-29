@@ -14,7 +14,7 @@ object LilaCookie {
 
   val sessionId = "sid"
 
-  def makeSessionId(implicit req: RequestHeader) = session(sessionId, Random nextStringUppercase 8)
+  def makeSessionId(implicit req: RequestHeader) = session(sessionId, Random secureString 10)
 
   def session(name: String, value: String)(implicit req: RequestHeader): Cookie = withSession { s =>
     s + (name -> value)
@@ -34,5 +34,6 @@ object LilaCookie {
     "/",
     domain(req).some,
     Session.secure || req.headers.get("X-Forwarded-Proto").contains("https"),
-    httpOnly | Session.httpOnly)
+    httpOnly | Session.httpOnly
+  )
 }

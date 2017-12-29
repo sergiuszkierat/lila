@@ -1,25 +1,29 @@
 package lila.game
 
-import chess.{ Clock, Pos, CheckCount }
+import chess.{ Color, White, Black, Clock, CheckCount, UnmovedRooks }
 import chess.variant.Crazyhouse
 import Game.BSONFields._
-import org.joda.time.DateTime
 import reactivemongo.bson._
 
 import lila.db.BSON.BSONJodaDateTimeHandler
 import lila.db.ByteArray
+import lila.db.ByteArray.ByteArrayBSONHandler
+import Blurs.BlursBSONWriter
+import chess.Centis
 
 private[game] object GameDiff {
 
-  type Set = (String, BSONValue)
-  type Unset = (String, BSONBoolean)
+  type Set = BSONElement // [String, BSONValue]
+  type Unset = BSONElement // [String, BSONBoolean]
+
+  type ClockHistorySide = (Centis, Vector[Centis], Boolean)
 
   def apply(a: Game, b: Game): (List[Set], List[Unset]) = {
 
     val setBuilder = scala.collection.mutable.ListBuffer[Set]()
     val unsetBuilder = scala.collection.mutable.ListBuffer[Unset]()
 
-    def d[A, B <: BSONValue](name: String, getter: Game => A, toBson: A => B) {
+    def d[A, B <: BSONValue](name: String, getter: Game => A, toBson: A => B): Unit = {
       val (va, vb) = (getter(a), getter(b))
       if (va != vb) {
         if (vb == None || vb == null || vb == "") unsetBuilder += (name -> bTrue)
@@ -27,25 +31,40 @@ private[game] object GameDiff {
       }
     }
 
-    def dOpt[A, B <: BSONValue](name: String, getter: Game => A, toBson: A => Option[B]) {
+    def dOpt[A, B <: BSONValue](name: String, getter: Game => A, toBson: A => Option[B]): Unit = {
       val (va, vb) = (getter(a), getter(b))
       if (va != vb) {
         if (vb == None || vb == null || vb == "") unsetBuilder += (name -> bTrue)
         else toBson(vb) match {
-          case None    => unsetBuilder += (name -> bTrue)
+          case None => unsetBuilder += (name -> bTrue)
           case Some(x) => setBuilder += name -> x
         }
       }
     }
 
+    def getClockHistory(color: Color)(g: Game): Option[ClockHistorySide] =
+      for {
+        clk <- g.clock
+        history <- g.clockHistory
+        curColor = g.turnColor
+        times = history(color)
+      } yield (clk.limit, times, g.flagged has color)
+
+    def clockHistoryToBytes(o: Option[ClockHistorySide]) = o.map {
+      case (x, y, z) => ByteArrayBSONHandler.write(BinaryFormat.clockHistory.writeSide(x, y, z))
+    }
+
     val w = lila.db.BSON.writer
 
-    d(binaryPieces, _.binaryPieces, ByteArray.ByteArrayBSONHandler.write)
-    d(binaryPgn, _.binaryPgn, ByteArray.ByteArrayBSONHandler.write)
+    d(binaryPieces, _.binaryPieces, ByteArrayBSONHandler.write)
+    d(binaryPgn, _.binaryPgn, ByteArrayBSONHandler.write)
     d(status, _.status.id, w.int)
     d(turns, _.turns, w.int)
     d(castleLastMoveTime, _.castleLastMoveTime, CastleLastMoveTime.castleLastMoveTimeBSONHandler.write)
-    d(moveTimes, _.moveTimes, (x: Vector[Int]) => ByteArray.ByteArrayBSONHandler.write(BinaryFormat.moveTime write x))
+    d(unmovedRooks, _.unmovedRooks, (x: UnmovedRooks) => ByteArrayBSONHandler.write(BinaryFormat.unmovedRooks write x))
+    dOpt(moveTimes, _.binaryMoveTimes, (o: Option[ByteArray]) => o map ByteArrayBSONHandler.write)
+    dOpt(whiteClockHistory, getClockHistory(White), clockHistoryToBytes)
+    dOpt(blackClockHistory, getClockHistory(Black), clockHistoryToBytes)
     dOpt(positionHashes, _.positionHashes, w.bytesO)
     dOpt(clock, _.clock, (o: Option[Clock]) => o map { c =>
       BSONHandlers.clockBSONWrite(a.createdAt, c)
@@ -61,16 +80,12 @@ private[game] object GameDiff {
       dOpt(s"$name$isOfferingDraw", player(_).isOfferingDraw, w.boolO)
       dOpt(s"$name$isOfferingRematch", player(_).isOfferingRematch, w.boolO)
       dOpt(s"$name$proposeTakebackAt", player(_).proposeTakebackAt, w.intO)
-      dOpt(s"$name$blurs", player(_).blurs, w.intO)
+      d(s"$name$blursBits", player(_).blurs, BlursBSONWriter.write)
     }
+    d(movedAt, _.movedAt, BSONJodaDateTimeHandler.write)
 
-    (addUa(setBuilder.toList), unsetBuilder.toList)
+    (setBuilder.toList, unsetBuilder.toList)
   }
 
   private val bTrue = BSONBoolean(true)
-
-  private def addUa(sets: List[Set]): List[Set] = sets match {
-    case Nil  => Nil
-    case sets => (Game.BSONFields.updatedAt -> BSONJodaDateTimeHandler.write(DateTime.now)) :: sets
-  }
 }

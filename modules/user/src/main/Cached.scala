@@ -3,38 +3,34 @@ package lila.user
 import scala.concurrent.duration._
 
 import org.joda.time.DateTime
-import play.api.libs.json._
 import reactivemongo.bson._
 
 import lila.common.LightUser
-import lila.db.BSON
 import lila.db.dsl._
-import lila.memo.{ ExpireSetMemo, MongoCache }
 import lila.rating.{ Perf, PerfType }
 import User.{ LightPerf, LightCount }
 
 final class Cached(
     userColl: Coll,
     nbTtl: FiniteDuration,
-    onlineUserIdMemo: ExpireSetMemo,
-    mongoCache: MongoCache.Builder,
-    rankingApi: RankingApi) {
+    onlineUserIdMemo: lila.memo.ExpireSetMemo,
+    mongoCache: lila.memo.MongoCache.Builder,
+    asyncCache: lila.memo.AsyncCache.Builder,
+    rankingApi: RankingApi
+) {
 
   private def oneWeekAgo = DateTime.now minusWeeks 1
   private def oneMonthAgo = DateTime.now minusMonths 1
-
-  private val countCache = mongoCache.single[Int](
-    prefix = "user:nb",
-    f = userColl.count(UserRepo.enabledSelect.some),
-    timeToLive = nbTtl)
 
   private implicit val LightUserBSONHandler = Macros.handler[LightUser]
   private implicit val LightPerfBSONHandler = Macros.handler[LightPerf]
   private implicit val LightCountBSONHandler = Macros.handler[LightCount]
 
   def leaderboards: Fu[Perfs.Leaderboards] = for {
+    ultraBullet ← top10Perf(PerfType.UltraBullet.id)
     bullet ← top10Perf(PerfType.Bullet.id)
     blitz ← top10Perf(PerfType.Blitz.id)
+    rapid ← top10Perf(PerfType.Rapid.id)
     classical ← top10Perf(PerfType.Classical.id)
     chess960 ← top10Perf(PerfType.Chess960.id)
     kingOfTheHill ← top10Perf(PerfType.KingOfTheHill.id)
@@ -45,8 +41,10 @@ final class Cached(
     racingKings <- top10Perf(PerfType.RacingKings.id)
     crazyhouse <- top10Perf(PerfType.Crazyhouse.id)
   } yield Perfs.Leaderboards(
+    ultraBullet = ultraBullet,
     bullet = bullet,
     blitz = blitz,
+    rapid = rapid,
     classical = classical,
     crazyhouse = crazyhouse,
     chess960 = chess960,
@@ -55,26 +53,30 @@ final class Cached(
     antichess = antichess,
     atomic = atomic,
     horde = horde,
-    racingKings = racingKings)
+    racingKings = racingKings
+  )
 
   val top10Perf = mongoCache[Perf.ID, List[LightPerf]](
     prefix = "user:top10:perf",
     f = (perf: Perf.ID) => rankingApi.topPerf(perf, 10),
     timeToLive = 10 seconds,
-    keyToString = _.toString)
+    keyToString = _.toString
+  )
 
   val top200Perf = mongoCache[Perf.ID, List[User.LightPerf]](
     prefix = "user:top200:perf",
     f = (perf: Perf.ID) => rankingApi.topPerf(perf, 200),
     timeToLive = 10 minutes,
-    keyToString = _.toString)
+    keyToString = _.toString
+  )
 
   private val topWeekCache = mongoCache.single[List[User.LightPerf]](
     prefix = "user:top:week",
     f = PerfType.leaderboardable.map { perf =>
       rankingApi.topPerf(perf.id, 1)
     }.sequenceFu.map(_.flatten),
-    timeToLive = 9 minutes)
+    timeToLive = 9 minutes
+  )
 
   def topWeek = topWeekCache.apply _
 
@@ -82,16 +84,16 @@ final class Cached(
     prefix = "user:top:nbGame",
     f = nb => UserRepo topNbGame nb map { _ map (_.lightCount) },
     timeToLive = 34 minutes,
-    keyToString = _.toString)
+    keyToString = _.toString
+  )
 
-  val top50Online = lila.memo.AsyncCache.single[List[User]](
+  private val top50Online = asyncCache.single[List[User]](
+    name = "user.top50online",
     f = UserRepo.byIdsSortRating(onlineUserIdMemo.keys, 50),
-    timeToLive = 10 seconds)
+    expireAfter = _.ExpireAfterWrite(10 seconds)
+  )
 
-  val topToints = mongoCache.single[List[User]](
-    prefix = "user:top:toints",
-    f = UserRepo allSortToints 10,
-    timeToLive = 5 minutes)
+  def getTop50Online = top50Online.get.nevermind
 
   object ranking {
 

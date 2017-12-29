@@ -2,18 +2,14 @@ package lila.insight
 
 import akka.actor._
 import com.typesafe.config.Config
-import scala.concurrent.duration._
-
-import akka.actor._
-import lila.common.PimpedConfig._
 
 final class Env(
     config: Config,
     getPref: String => Fu[lila.pref.Pref],
     areFriends: (String, String) => Fu[Boolean],
-    lightUser: String => Option[lila.common.LightUser],
     system: ActorSystem,
-    lifecycle: play.api.inject.ApplicationLifecycle) {
+    lifecycle: play.api.inject.ApplicationLifecycle
+) {
 
   private val settings = new {
     val CollectionEntry = config getString "collection.entry"
@@ -36,7 +32,8 @@ final class Env(
     sequencer = system.actorOf(Props(
       classOf[lila.hub.Sequencer],
       None, None, logger
-    )))
+    ))
+  )
 
   private lazy val userCacheApi = new UserCacheApi(coll = db(CollectionUserCache))
 
@@ -44,7 +41,8 @@ final class Env(
     storage = storage,
     userCacheApi = userCacheApi,
     pipeline = aggregationPipeline,
-    indexer = indexer)
+    indexer = indexer
+  )
 
   system.lilaBus.subscribe(system.actorOf(Props(new Actor {
     def receive = {
@@ -59,7 +57,7 @@ object Env {
     config = lila.common.PlayApp loadConfig "insight",
     getPref = lila.pref.Env.current.api.getPrefById,
     areFriends = lila.relation.Env.current.api.fetchAreFriends,
-    lightUser = lila.user.Env.current.lightUser,
     system = lila.common.PlayApp.system,
-    lifecycle = lila.common.PlayApp.lifecycle)
+    lifecycle = lila.common.PlayApp.lifecycle
+  )
 }

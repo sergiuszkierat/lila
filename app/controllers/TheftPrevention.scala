@@ -4,10 +4,7 @@ import lila.api.Context
 import lila.app._
 import lila.game.{ Game => GameModel, Pov, AnonCookie }
 import lila.security.Granter
-import play.api.http.ContentTypes._
 import play.api.mvc._
-import play.api.mvc.Results._
-import views._
 
 private[controllers] trait TheftPrevention { self: LilaController =>
 
@@ -17,8 +14,7 @@ private[controllers] trait TheftPrevention { self: LilaController =>
   protected def isTheft(pov: Pov)(implicit ctx: Context) = pov.game.isPgnImport || pov.player.isAi || {
     (pov.player.userId, ctx.userId) match {
       case (Some(playerId), None) => true
-      case (Some(playerId), Some(userId)) =>
-        playerId != userId && !(ctx.me ?? Granter.superAdmin)
+      case (Some(playerId), Some(userId)) => playerId != userId
       case (None, _) =>
         !lila.api.Mobile.Api.requested(ctx.req) &&
           !ctx.req.cookies.get(AnonCookie.name).map(_.value).contains(pov.playerId)

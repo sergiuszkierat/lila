@@ -12,11 +12,26 @@
 }
 
 #insight .chart {
-  width: 100%;
-  height: 500px;
+  width: 850px;
+  height: 550px;
 }
 #insight .loading .chart {
-  -webkit-filter: blur(3px);
+  filter: blur(3px);
+  opacity: 0.5;
+}
+#insight .chart.empty {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-flow: column;
+  font-size: 1.5em;
+  opacity: 0.7;
+}
+#insight .chart.empty i {
+  margin-bottom: 30px;
+  display: block;
+  font-size: 200px;
   opacity: 0.5;
 }
 
@@ -31,8 +46,8 @@
 }
 
 #insight header {
-  background: #fff;
-  border: 1px solid #ccc;
+  background: #333;
+  color: #ddd;
   height: 60px;
 }
 #insight header h2 {
@@ -43,11 +58,24 @@
   font-size: 42px;
   vertical-align: top;
   line-height: 60px;
-  margin-left: 10px;
-  opacity: 0.5;
+  margin: 0 10px;
 }
 #insight header > * {
   display: inline-block;
+}
+#insight header .ms-choice {
+  background: #444;
+  color: #ddd!important;
+  border-color: #666;
+}
+#insight .meat {
+  background: #fff;
+  border: 1px solid #ccc;
+  border-top: 0;
+}
+body.dark #insight .meat {
+  background: #202020;
+  border-color: #3d3d3d;
 }
 #insight .axis-form {
   float: right;
@@ -139,9 +167,11 @@ div.panel-tabs a.active {
 #insight .filters .ms-parent:last-child .ms-choice {
   border-bottom: 0;
 }
-#insight .filters .ms-parent:hover .ms-choice,
 #insight .filters .ms-parent.selected .ms-choice {
-  background: #fff;
+  background: linear-gradient(to right, rgba(56,147,232,0.7) 0px, rgba(56,147,232,0.7) 5px, rgba(0,0,0,0) 5px, rgba(0,0,0,0) 100%);
+}
+#insight .filters .ms-parent:hover .ms-choice {
+  background-color: #fff;
 }
 #insight .filters .ms-choice > span.placeholder {
   color: #505050;
@@ -232,22 +262,17 @@ div.panel-tabs a.active {
   text-decoration: underline;
 }
 
-#insight table {
-  margin-left: 20px;
-  border: 1px solid #d4d4d4;
-  width: calc(100% - 20px);
-}
 #insight table td.data {
   font-weight: bold;
 }
 #insight .game-sample {
-  margin: 20px 0 0 20px;
+  margin: 20px 0 10px 0;
+  border-width: 1px 0 0 0;
 }
 #insight .game-sample .top {
   text-align: center;
 }
 #insight .game_list .cg-board-wrap {
-  margin: auto;
   width: 182px;
   height: 182px;
   position: relative;
@@ -258,8 +283,10 @@ div.panel-tabs a.active {
   background: none;
 }
 #insight .game_list {
-  height: 218px;
   white-space: nowrap;
+  display: flex;
+  flex-flow: row nowrap;
+  justify-content: space-between;
 }
 #insight .game_list > div {
   display: inline-block;

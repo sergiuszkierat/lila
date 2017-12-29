@@ -26,7 +26,7 @@ case class Pov(game: Game, color: Color) {
   lazy val isMyTurn = game.started && game.playable && game.turnColor == color
 
   lazy val remainingSeconds: Option[Int] =
-    game.clock.map(_.remainingTime(color).toInt).orElse {
+    game.clock.map(c => c.remainingTime(color).roundSeconds).orElse {
       game.playableCorrespondenceClock.map(_.remainingTime(color).toInt)
     }
 
@@ -67,8 +67,8 @@ object Pov {
 
   private def orInf(i: Option[Int]) = i getOrElse Int.MaxValue
   private def isFresher(a: Pov, b: Pov) = {
-    val aDate = a.game.updatedAtOrCreatedAt.getSeconds
-    val bDate = b.game.updatedAtOrCreatedAt.getSeconds
+    val aDate = a.game.movedAt.getSeconds
+    val bDate = b.game.movedAt.getSeconds
     if (aDate == bDate) a.gameId < b.gameId
     else aDate > bDate
   }
@@ -89,7 +89,7 @@ case class PovRef(gameId: String, color: Color) {
 
   def unary_! = PovRef(gameId, !color)
 
-  override def toString = s"$gameId/$color"
+  override def toString = s"$gameId/${color.name}"
 }
 
 case class PlayerRef(gameId: String, playerId: String)

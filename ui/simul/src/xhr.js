@@ -1,10 +1,13 @@
 var m = require('mithril');
-var partial = require('chessground').util.partial;
 
 var xhrConfig = function(xhr) {
   xhr.setRequestHeader('X-Requested-With', 'XMLHttpRequest');
   xhr.setRequestHeader('Accept', 'application/vnd.lichess.v1+json');
 }
+
+function partial() {
+  return arguments[0].bind.apply(arguments[0], [null].concat(Array.prototype.slice.call(arguments, 1)));
+};
 
 function simulAction(action, ctrl) {
   return m.request({

@@ -2,14 +2,21 @@ package lila.socket
 package actorApi
 
 import play.api.libs.json.JsObject
-import akka.actor.ActorRef
+
+import chess.Centis
 
 case class Connected[M <: SocketMember](
-  enumerator: JsEnumerator,
-  member: M)
+    enumerator: JsEnumerator,
+    member: M
+)
 case class Sync(uid: String, friends: List[String])
-case class Ping(uid: String)
-case class PingVersion(uid: String, version: Int)
+case class Ping(uid: String, version: Option[Int], lagCentis: Option[Centis])
+
+object Ping {
+  def apply(uid: Socket.Uid, o: JsObject): Ping =
+    Ping(uid.value, o int "v", o int "l" map Centis.apply)
+}
+
 case object Broom
 case class Quit(uid: String)
 

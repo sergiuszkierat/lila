@@ -1,13 +1,17 @@
 package lila.game
 
-import lila.db.{ BSON, ByteArray }
+import scala.collection.breakOut
 import org.joda.time.DateTime
 import reactivemongo.bson._
 
 import chess.variant.{ Variant, Crazyhouse }
-import chess.{ CheckCount, Color, Clock, White, Black, Status, Mode }
+import chess.{ CheckCount, Color, Clock, White, Black, Status, Mode, UnmovedRooks }
+
+import lila.db.BSON
 
 object BSONHandlers {
+
+  import lila.db.ByteArray.ByteArrayBSONHandler
 
   private[game] implicit val checkCountWriter = new BSONWriter[CheckCount, BSONArray] {
     def write(cc: CheckCount) = BSONArray(cc.white, cc.black)
@@ -18,18 +22,31 @@ object BSONHandlers {
     def write(x: Status) = BSONInteger(x.id)
   }
 
+  private[game] implicit val unmovedRooksHandler = new BSONHandler[BSONBinary, UnmovedRooks] {
+    def read(bin: BSONBinary): UnmovedRooks = BinaryFormat.unmovedRooks.read {
+      ByteArrayBSONHandler.read(bin)
+    }
+    def write(x: UnmovedRooks): BSONBinary = ByteArrayBSONHandler.write {
+      BinaryFormat.unmovedRooks.write(x)
+    }
+  }
+
   private[game] implicit val crazyhouseDataBSONHandler = new BSON[Crazyhouse.Data] {
 
     import Crazyhouse._
 
     def reads(r: BSON.Reader) = Crazyhouse.Data(
       pockets = {
-        val (white, black) = r.str("p").toList.flatMap(chess.Piece.fromChar).partition(_ is chess.White)
+        val (white, black) = {
+          r.str("p").flatMap(chess.Piece.fromChar)(breakOut): List[chess.Piece]
+        }.partition(_ is chess.White)
         Pockets(
           white = Pocket(white.map(_.role)),
-          black = Pocket(black.map(_.role)))
+          black = Pocket(black.map(_.role))
+        )
       },
-      promoted = r.str("t").toSet.flatMap(chess.Pos.piotr))
+      promoted = r.str("t").flatMap(chess.Pos.piotr)(breakOut)
+    )
 
     def writes(w: BSON.Writer, o: Crazyhouse.Data) = BSONDocument(
       "p" -> {
@@ -40,7 +57,7 @@ object BSONHandlers {
     )
   }
 
-  implicit val gameBSONHandler = new BSON[Game] {
+  implicit val gameBSONHandler: BSON[Game] = new BSON[Game] {
 
     import Game.BSONFields._
     import PgnImport.pgnImportBSONHandler
@@ -49,7 +66,6 @@ object BSONHandlers {
     private val emptyPlayerBuilder = playerBSONHandler.read(BSONDocument())
 
     def reads(r: BSON.Reader): Game = {
-      val nbTurns = r int turns
       val winC = r boolO winnerColor map Color.apply
       val (whiteId, blackId) = r str playerIds splitAt 4
       val uids = ~r.getO[List[String]](playerUids)
@@ -59,42 +75,52 @@ object BSONHandlers {
         val win = winC map (_ == color)
         builder(color)(id)(uid)(win)
       }
-      val wPlayer = player(whitePlayer, White, whiteId, whiteUid)
-      val bPlayer = player(blackPlayer, Black, blackId, blackUid)
-      val createdAtValue = r date createdAt
-      val realVariant = Variant(r intD variant) | chess.variant.Standard
-      Game(
+
+      val g = Game(
         id = r str id,
-        whitePlayer = wPlayer,
-        blackPlayer = bPlayer,
+        whitePlayer = player(whitePlayer, White, whiteId, whiteUid),
+        blackPlayer = player(blackPlayer, Black, blackId, blackUid),
         binaryPieces = r bytes binaryPieces,
         binaryPgn = r bytesD binaryPgn,
         status = r.get[Status](status),
-        turns = nbTurns,
+        turns = r int turns,
         startedAtTurn = r intD startedAtTurn,
-        clock = r.getO[Color => Clock](clock)(clockBSONReader(createdAtValue, wPlayer.berserk, bPlayer.berserk)) map (_(Color(0 == nbTurns % 2))),
         positionHashes = r.bytesD(positionHashes).value,
         checkCount = {
           val counts = r.intsD(checkCount)
           CheckCount(~counts.headOption, ~counts.lastOption)
         },
         castleLastMoveTime = r.get[CastleLastMoveTime](castleLastMoveTime)(CastleLastMoveTime.castleLastMoveTimeBSONHandler),
+        unmovedRooks = r.getO[UnmovedRooks](unmovedRooks) | UnmovedRooks.default,
         daysPerTurn = r intO daysPerTurn,
-        binaryMoveTimes = (r bytesO moveTimes) | ByteArray.empty,
+        binaryMoveTimes = r bytesO moveTimes,
         mode = Mode(r boolD rated),
-        variant = realVariant,
-        crazyData = (realVariant == Crazyhouse) option r.get[Crazyhouse.Data](crazyData),
+        variant = Variant(r intD variant) | chess.variant.Standard,
         next = r strO next,
         bookmarks = r intD bookmarks,
-        createdAt = createdAtValue,
-        updatedAt = r dateO updatedAt,
+        createdAt = r date createdAt,
+        movedAt = r.dateD(movedAt, r date createdAt),
         metadata = Metadata(
           source = r intO source flatMap Source.apply,
           pgnImport = r.getO[PgnImport](pgnImport)(PgnImport.pgnImportBSONHandler),
           tournamentId = r strO tournamentId,
           simulId = r strO simulId,
           tvAt = r dateO tvAt,
-          analysed = r boolD analysed)
+          analysed = r boolD analysed
+        )
+      )
+
+      val gameClock = r.getO[Color => Clock](clock)(clockBSONReader(g.createdAt, g.whitePlayer.berserk, g.blackPlayer.berserk)) map (_(g.turnColor))
+
+      g.copy(
+        clock = gameClock,
+        crazyData = (g.variant == Crazyhouse) option r.get[Crazyhouse.Data](crazyData),
+        clockHistory = for {
+          clk <- gameClock
+          bw <- r bytesO whiteClockHistory
+          bb <- r bytesO blackClockHistory
+          history <- BinaryFormat.clockHistory.read(clk.limit, bw, bb, g.flagged, g.id)
+        } yield history
       )
     }
 
@@ -113,15 +139,18 @@ object BSONHandlers {
       positionHashes -> w.bytesO(o.positionHashes),
       checkCount -> o.checkCount.nonEmpty.option(o.checkCount),
       castleLastMoveTime -> CastleLastMoveTime.castleLastMoveTimeBSONHandler.write(o.castleLastMoveTime),
+      unmovedRooks -> o.unmovedRooks,
       daysPerTurn -> o.daysPerTurn,
-      moveTimes -> (BinaryFormat.moveTime write o.moveTimes),
+      moveTimes -> o.binaryMoveTimes,
+      whiteClockHistory -> clockHistory(White, o.clockHistory, o.clock, o.flagged),
+      blackClockHistory -> clockHistory(Black, o.clockHistory, o.clock, o.flagged),
       rated -> w.boolO(o.mode.rated),
       variant -> o.variant.exotic.option(o.variant.id).map(w.int),
       crazyData -> o.crazyData,
       next -> o.next,
       bookmarks -> w.intO(o.bookmarks),
       createdAt -> w.date(o.createdAt),
-      updatedAt -> o.updatedAt.map(w.date),
+      movedAt -> w.date(o.movedAt),
       source -> o.metadata.source.map(_.id),
       pgnImport -> o.metadata.pgnImport,
       tournamentId -> o.metadata.tournamentId,
@@ -131,13 +160,19 @@ object BSONHandlers {
     )
   }
 
-  import lila.db.ByteArray.ByteArrayBSONHandler
+  private def clockHistory(color: Color, clockHistory: Option[ClockHistory], clock: Option[Clock], flagged: Option[Color]) =
+    for {
+      clk <- clock
+      history <- clockHistory
+      times = history(color)
+    } yield BinaryFormat.clockHistory.writeSide(clk.limit, times, flagged has color)
 
   private[game] def clockBSONReader(since: DateTime, whiteBerserk: Boolean, blackBerserk: Boolean) = new BSONReader[BSONBinary, Color => Clock] {
     def read(bin: BSONBinary) = BinaryFormat.clock(since).read(
       ByteArrayBSONHandler read bin, whiteBerserk, blackBerserk
     )
   }
+
   private[game] def clockBSONWrite(since: DateTime, clock: Clock) = ByteArrayBSONHandler write {
     BinaryFormat clock since write clock
   }

@@ -1,19 +1,22 @@
 package lila.api
 
 import akka.actor._
-import akka.pattern.{ ask, pipe }
+import akka.pattern.ask
 import play.api.libs.json.JsObject
 import scala.concurrent.duration._
 
-import lila.common.ApiVersion
 import lila.analyse.Analysis
+import lila.common.ApiVersion
 import lila.game.Pov
 import lila.pref.Pref
+import lila.round.JsonView.WithFlags
+import lila.user.User
 
 private[api] final class RoundApiBalancer(
     system: ActorSystem,
     api: RoundApi,
-    nbActors: Int) {
+    nbActors: Int
+) {
 
   private val logger = lila.log("round").branch("balancer")
 
@@ -23,17 +26,15 @@ private[api] final class RoundApiBalancer(
 
     case class Player(pov: Pov, apiVersion: ApiVersion, ctx: Context)
     case class Watcher(pov: Pov, apiVersion: ApiVersion, tv: Option[lila.round.OnTv],
-      initialFenO: Option[Option[String]] = None,
-      ctx: Context)
+        initialFenO: Option[Option[String]] = None,
+        ctx: Context)
     case class Review(pov: Pov, apiVersion: ApiVersion, tv: Option[lila.round.OnTv],
-      analysis: Option[Analysis] = None,
-      initialFenO: Option[Option[String]] = None,
-      withMoveTimes: Boolean = false,
-      withDivision: Boolean = false,
-      withOpening: Boolean = false,
-      ctx: Context)
-    case class UserAnalysis(pov: Pov, pref: Pref, initialFen: Option[String], orientation: chess.Color, owner: Boolean)
-    case class FreeStudy(pov: Pov, pref: Pref, initialFen: Option[String], orientation: chess.Color)
+        analysis: Option[Analysis] = None,
+        initialFenO: Option[Option[String]] = None,
+        withFlags: WithFlags,
+        ctx: Context)
+    case class UserAnalysis(pov: Pov, pref: Pref, initialFen: Option[String], orientation: chess.Color, owner: Boolean, me: Option[User])
+    case class FreeStudy(pov: Pov, pref: Pref, initialFen: Option[String], orientation: chess.Color, me: Option[User])
 
     val router = system.actorOf(
       akka.routing.RoundRobinPool(nbActors).props(Props(new lila.hub.SequentialProvider {
@@ -42,19 +43,23 @@ private[api] final class RoundApiBalancer(
         def process = {
           case Player(pov, apiVersion, ctx) => {
             api.player(pov, apiVersion)(ctx) addFailureEffect { e =>
-              logger.error(pov.toString, e)
+              logger.error(s"player ${pov.toString}", e)
             }
-          }.chronometer.logIfSlow(500, logger) { _ => s"inner player $pov" }.result
+          }.chronometer
+            .mon(_.round.api.playerInner)
+            .logIfSlow(500, logger) { _ => s"inner player $pov" }
+            .result
           case Watcher(pov, apiVersion, tv, initialFenO, ctx) =>
             api.watcher(pov, apiVersion, tv, initialFenO)(ctx)
-          case Review(pov, apiVersion, tv, analysis, initialFenO, withMoveTimes, withDivision, withOpening, ctx) =>
-            api.review(pov, apiVersion, tv, analysis, initialFenO, withMoveTimes, withDivision, withOpening)(ctx)
-          case UserAnalysis(pov, pref, initialFen, orientation, owner) =>
-            api.userAnalysisJson(pov, pref, initialFen, orientation, owner)
-          case FreeStudy(pov, pref, initialFen, orientation) =>
-            api.freeStudyJson(pov, pref, initialFen, orientation)
+          case Review(pov, apiVersion, tv, analysis, initialFenO, withFlags, ctx) =>
+            api.review(pov, apiVersion, tv, analysis, initialFenO, withFlags)(ctx)
+          case UserAnalysis(pov, pref, initialFen, orientation, owner, me) =>
+            api.userAnalysisJson(pov, pref, initialFen, orientation, owner, me)
+          case FreeStudy(pov, pref, initialFen, orientation, me) =>
+            fuccess(api.freeStudyJson(pov, pref, initialFen, orientation, me))
         }
-      })), "api.round.router")
+      })), "api.round.router"
+    )
   }
 
   import implementation._
@@ -73,18 +78,17 @@ private[api] final class RoundApiBalancer(
     router ? Watcher(pov, apiVersion, tv, initialFenO, ctx) mapTo manifest[JsObject]
   }.mon(_.round.api.watcher)
 
-  def review(pov: Pov, apiVersion: ApiVersion, tv: Option[lila.round.OnTv],
+  def review(pov: Pov, apiVersion: ApiVersion,
+    tv: Option[lila.round.OnTv] = None,
     analysis: Option[Analysis] = None,
     initialFenO: Option[Option[String]] = None,
-    withMoveTimes: Boolean = false,
-    withDivision: Boolean = false,
-    withOpening: Boolean = false)(implicit ctx: Context): Fu[JsObject] = {
-    router ? Review(pov, apiVersion, tv, analysis, initialFenO, withMoveTimes, withDivision, withOpening, ctx) mapTo manifest[JsObject]
+    withFlags: WithFlags)(implicit ctx: Context): Fu[JsObject] = {
+    router ? Review(pov, apiVersion, tv, analysis, initialFenO, withFlags, ctx) mapTo manifest[JsObject]
   }.mon(_.round.api.watcher)
 
-  def userAnalysisJson(pov: Pov, pref: Pref, initialFen: Option[String], orientation: chess.Color, owner: Boolean): Fu[JsObject] =
-    router ? UserAnalysis(pov, pref, initialFen, orientation, owner) mapTo manifest[JsObject]
+  def userAnalysisJson(pov: Pov, pref: Pref, initialFen: Option[String], orientation: chess.Color, owner: Boolean, me: Option[User]): Fu[JsObject] =
+    router ? UserAnalysis(pov, pref, initialFen, orientation, owner, me) mapTo manifest[JsObject]
 
-  def freeStudyJson(pov: Pov, pref: Pref, initialFen: Option[String], orientation: chess.Color): Fu[JsObject] =
-    router ? FreeStudy(pov, pref, initialFen, orientation) mapTo manifest[JsObject]
+  def freeStudyJson(pov: Pov, pref: Pref, initialFen: Option[String], orientation: chess.Color, me: Option[User]): Fu[JsObject] =
+    router ? FreeStudy(pov, pref, initialFen, orientation, me) mapTo manifest[JsObject]
 }

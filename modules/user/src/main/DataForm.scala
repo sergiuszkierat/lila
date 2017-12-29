@@ -3,11 +3,16 @@ package lila.user
 import play.api.data._
 import play.api.data.Forms._
 
-object DataForm {
+import User.ClearPassword
 
-  val note = Form(single(
-    "text" -> nonEmptyText(minLength = 3, maxLength = 2000)
-  ))
+final class DataForm(authenticator: Authenticator) {
+
+  val note = Form(mapping(
+    "text" -> nonEmptyText(minLength = 3, maxLength = 2000),
+    "mod" -> boolean
+  )(NoteData.apply)(NoteData.unapply))
+
+  case class NoteData(text: String, mod: Boolean)
 
   val profile = Form(mapping(
     "country" -> optional(nonEmptyText.verifying(Countries.codeSet contains _)),
@@ -16,8 +21,9 @@ object DataForm {
     "firstName" -> nameField,
     "lastName" -> nameField,
     "fideRating" -> optional(number(min = 600, max = 3000)),
-    "uscfRating" -> optional(number(min = 600, max = 3000)),
-    "ecfRating" -> optional(number(min = 0, max = 300))
+    "uscfRating" -> optional(number(min = 100, max = 3000)),
+    "ecfRating" -> optional(number(min = 0, max = 300)),
+    "links" -> optional(nonEmptyText(maxLength = 3000))
   )(Profile.apply)(Profile.unapply))
 
   def profileOf(user: User) = profile fill user.profileOrDefault
@@ -27,18 +33,21 @@ object DataForm {
   case class Passwd(
       oldPasswd: String,
       newPasswd1: String,
-      newPasswd2: String) {
+      newPasswd2: String
+  ) {
     def samePasswords = newPasswd1 == newPasswd2
   }
 
-  val passwd = Form(mapping(
-    "oldPasswd" -> nonEmptyText,
-    "newPasswd1" -> nonEmptyText(minLength = 2),
-    "newPasswd2" -> nonEmptyText(minLength = 2)
-  )(Passwd.apply)(Passwd.unapply).verifying(
-      "the new passwords don't match",
-      _.samePasswords
-    ))
+  def passwd(u: User) = authenticator loginCandidate u map { candidate =>
+    Form(mapping(
+      "oldPasswd" -> nonEmptyText.verifying("incorrectPassword", p => candidate.check(ClearPassword(p))),
+      "newPasswd1" -> nonEmptyText(minLength = 2),
+      "newPasswd2" -> nonEmptyText(minLength = 2)
+    )(Passwd.apply)(Passwd.unapply).verifying("the new passwords don't match", _.samePasswords))
+  }
+}
+
+object DataForm {
 
   val title = Form(single("title" -> optional(nonEmptyText)))
 }

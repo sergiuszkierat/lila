@@ -1,7 +1,14 @@
 package lila.db
 
+import scala.collection.breakOut
+import scala.collection.generic.CanBuildFrom
+import scala.util.{ Success, Failure }
+
 import reactivemongo.api._
+import reactivemongo.api.collections.bson.BSONBatchCommands._
+import reactivemongo.api.commands.GetLastError
 import reactivemongo.bson._
+import reactivemongo.core.protocol.MongoWireVersion
 
 trait CollExt { self: dsl with QueryBuilderExt =>
 
@@ -10,50 +17,67 @@ trait CollExt { self: dsl with QueryBuilderExt =>
     def uno[D: BSONDocumentReader](selector: Bdoc): Fu[Option[D]] =
       coll.find(selector).uno[D]
 
-    def list[D: BSONDocumentReader](selector: Bdoc): Fu[List[D]] =
-      coll.find(selector).list[D]()
+    def uno[D: BSONDocumentReader](selector: Bdoc, projection: Bdoc): Fu[Option[D]] =
+      coll.find(selector, projection).uno[D]
 
-    def list[D: BSONDocumentReader](selector: Bdoc, max: Int): Fu[List[D]] =
-      coll.find(selector).list[D](max)
+    def list[D: BSONDocumentReader](selector: Bdoc, readPreference: ReadPreference = ReadPreference.primary): Fu[List[D]] =
+      coll.find(selector).list[D](Int.MaxValue, readPreference = readPreference)
+
+    def list[D: BSONDocumentReader](selector: Bdoc, limit: Int): Fu[List[D]] =
+      coll.find(selector).list[D](limit = limit)
 
     def byId[D: BSONDocumentReader, I: BSONValueWriter](id: I): Fu[Option[D]] =
       uno[D]($id(id))
 
     def byId[D: BSONDocumentReader](id: String): Fu[Option[D]] = uno[D]($id(id))
+    def byId[D: BSONDocumentReader](id: String, projection: Bdoc): Fu[Option[D]] = uno[D]($id(id), projection)
 
     def byId[D: BSONDocumentReader](id: Int): Fu[Option[D]] = uno[D]($id(id))
 
-    def byIds[D: BSONDocumentReader, I: BSONValueWriter](ids: Iterable[I]): Fu[List[D]] =
+    def byIds[D: BSONDocumentReader, I: BSONValueWriter](ids: Iterable[I], readPreference: ReadPreference): Fu[List[D]] =
       list[D]($inIds(ids))
 
-    def byIds[D: BSONDocumentReader](ids: Iterable[String]): Fu[List[D]] =
-      byIds[D, String](ids)
+    def byIds[D: BSONDocumentReader](ids: Iterable[String], readPreference: ReadPreference = ReadPreference.primary): Fu[List[D]] =
+      byIds[D, String](ids, readPreference)
 
-    def countSel(selector: Bdoc): Fu[Int] = coll count selector.some
+    def countSel(
+      selector: Bdoc,
+      readPreference: ReadPreference = ReadPreference.primary
+    ): Fu[Int] =
+      coll.runValueCommand(
+        CountCommand.Count(query = selector.some, limit = 0, skip = 0, hint = None),
+        readPreference
+      )
 
-    def exists(selector: Bdoc): Fu[Boolean] = countSel(selector).map(0!=)
+    def exists(selector: Bdoc, readPreference: ReadPreference = ReadPreference.primary): Fu[Boolean] =
+      countSel(selector, readPreference).dmap(0!=)
 
-    def byOrderedIds[D: BSONDocumentReader](ids: Iterable[String], readPreference: ReadPreference = ReadPreference.primary)(docId: D => String): Fu[List[D]] =
-      coll.find($inIds(ids)).cursor[D](readPreference = readPreference).
-        collect[List](Int.MaxValue, err = Cursor.FailOnError[List[D]]()).
-        map { docs =>
-          val docsMap = docs.map(u => docId(u) -> u).toMap
-          ids.flatMap(docsMap.get).toList
+    def byOrderedIds[D: BSONDocumentReader, I: BSONValueWriter](ids: Iterable[I], readPreference: ReadPreference = ReadPreference.primary)(docId: D => I): Fu[List[D]] =
+      coll.find($inIds(ids)).cursor[D](readPreference = readPreference)
+        .collect[List](Int.MaxValue, err = Cursor.FailOnError[List[D]]())
+        .map { docs =>
+          val docsMap: Map[I, D] = docs.map(u => docId(u) -> u)(breakOut)
+          ids.flatMap(docsMap.get)(breakOut)
         }
 
     // def byOrderedIds[A <: Identified[String]: TubeInColl](ids: Iterable[String]): Fu[List[A]] =
     //   byOrderedIds[String, A](ids)
 
-    def optionsByOrderedIds[D: BSONDocumentReader](ids: Iterable[String])(docId: D => String): Fu[List[Option[D]]] =
-      byIds[D](ids) map { docs =>
-        val docsMap = docs.map(u => docId(u) -> u).toMap
-        ids.map(docsMap.get).toList
+    def optionsByOrderedIds[D: BSONDocumentReader, I: BSONValueWriter](ids: Iterable[I], readPreference: ReadPreference = ReadPreference.primary)(docId: D => I): Fu[List[Option[D]]] =
+      byIds[D, I](ids, readPreference) map { docs =>
+        val docsMap: Map[I, D] = docs.map(u => docId(u) -> u)(breakOut)
+        ids.map(docsMap.get)(breakOut)
+      }
+
+    def idsMap[D: BSONDocumentReader, I: BSONValueWriter](ids: Iterable[I], readPreference: ReadPreference = ReadPreference.primary)(docId: D => I): Fu[Map[I, D]] =
+      byIds[D, I](ids, readPreference) map { docs =>
+        docs.map(u => docId(u) -> u)(breakOut)
       }
 
     def primitive[V: BSONValueReader](selector: Bdoc, field: String): Fu[List[V]] =
       coll.find(selector, $doc(field -> true))
         .list[Bdoc]()
-        .map {
+        .dmap {
           _ flatMap { _.getAs[V](field) }
         }
 
@@ -61,7 +85,7 @@ trait CollExt { self: dsl with QueryBuilderExt =>
       coll.find(selector, $doc(field -> true))
         .sort(sort)
         .list[Bdoc]()
-        .map {
+        .dmap {
           _ flatMap { _.getAs[V](field) }
         }
 
@@ -69,14 +93,14 @@ trait CollExt { self: dsl with QueryBuilderExt =>
       coll.find(selector, $doc(field -> true))
         .sort(sort)
         .list[Bdoc](nb)
-        .map {
+        .dmap {
           _ flatMap { _.getAs[V](field) }
         }
 
     def primitiveOne[V: BSONValueReader](selector: Bdoc, field: String): Fu[Option[V]] =
       coll.find(selector, $doc(field -> true))
         .uno[Bdoc]
-        .map {
+        .dmap {
           _ flatMap { _.getAs[V](field) }
         }
 
@@ -84,21 +108,21 @@ trait CollExt { self: dsl with QueryBuilderExt =>
       coll.find(selector, $doc(field -> true))
         .sort(sort)
         .uno[Bdoc]
-        .map {
+        .dmap {
           _ flatMap { _.getAs[V](field) }
         }
 
     def updateField[V: BSONValueWriter](selector: Bdoc, field: String, value: V) =
       coll.update(selector, $set(field -> value))
 
-    def updateFieldUnchecked[V: BSONValueWriter](selector: Bdoc, field: String, value: V) =
-      coll.uncheckedUpdate(selector, $set(field -> value))
+    def updateFieldUnchecked[V: BSONValueWriter](selector: Bdoc, field: String, value: V): Unit =
+      coll.update(selector, $set(field -> value), writeConcern = GetLastError.Unacknowledged)
 
     def incField(selector: Bdoc, field: String, value: Int = 1) =
       coll.update(selector, $inc(field -> value))
 
-    def incFieldUnchecked(selector: Bdoc, field: String, value: Int = 1) =
-      coll.uncheckedUpdate(selector, $inc(field -> value))
+    def incFieldUnchecked(selector: Bdoc, field: String, value: Int = 1): Unit =
+      coll.update(selector, $inc(field -> value), writeConcern = GetLastError.Unacknowledged)
 
     def unsetField(selector: Bdoc, field: String, multi: Boolean = false) =
       coll.update(selector, $unset(field), multi = multi)
@@ -109,5 +133,41 @@ trait CollExt { self: dsl with QueryBuilderExt =>
           coll.update(selector, update(doc)).void
         }
       }
+
+    // sadly we can't access the connection metadata
+    private val mongoWireVersion = MongoWireVersion.V34
+
+    // because mongodb collection.aggregate doesn't have the readPreference argument!
+    def aggregateWithReadPreference(
+      firstOperator: AggregationFramework.PipelineOperator,
+      otherOperators: List[AggregationFramework.PipelineOperator] = Nil,
+      readPreference: ReadPreference
+    ): Fu[AggregationFramework.AggregationResult] = {
+
+      coll.runWithResponse(AggregationFramework.Aggregate(
+        firstOperator :: otherOperators,
+        allowDiskUse = false,
+        cursor = None,
+        wireVersion = mongoWireVersion,
+        bypassDocumentValidation = false,
+        readConcern = None
+      ), readPreference).map(_.value)
+    }
+
+    def distinctWithReadPreference[T, M[_] <: Iterable[_]](
+      key: String,
+      selector: Option[Bdoc],
+      readPreference: ReadPreference
+    )(implicit reader: BSONValueReader[T], cbf: CanBuildFrom[M[_], T, M[T]]): Fu[M[T]] = {
+      implicit val widenReader = pack.widenReader(reader)
+      coll.runCommand(DistinctCommand.Distinct(
+        key, selector, ReadConcern.Local, mongoWireVersion
+      ), readPreference).flatMap {
+        _.result[T, M] match {
+          case Failure(cause) => scala.concurrent.Future.failed[M[T]](cause)
+          case Success(result) => fuccess(result)
+        }
+      }
+    }
   }
 }

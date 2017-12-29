@@ -3,11 +3,18 @@ package lila.socket
 import chess.format.{ Uci, UciCharPair }
 import chess.opening._
 import chess.variant.Variant
-import play.api.libs.json.JsObject
+import play.api.libs.json._
 import scalaz.Validation.FlatMap._
 
-import lila.common.PimpedJson._
-import tree.Branch
+import lila.tree.Branch
+
+trait AnaAny {
+
+  def branch: Valid[Branch]
+  def json(b: Branch): JsObject
+  def chapterId: Option[String]
+  def path: String
+}
 
 case class AnaMove(
     orig: chess.Pos,
@@ -15,13 +22,15 @@ case class AnaMove(
     variant: Variant,
     fen: String,
     path: String,
-    promotion: Option[chess.PromotableRole]) {
+    chapterId: Option[String],
+    promotion: Option[chess.PromotableRole]
+) extends AnaAny {
 
   def branch: Valid[Branch] =
     chess.Game(variant.some, fen.some)(orig, dest, promotion) flatMap {
       case (game, move) => game.pgnMoves.lastOption toValid "Moved but no last move!" map { san =>
         val uci = Uci(move)
-        val movable = !game.situation.end
+        val movable = game.situation playable false
         val fen = chess.format.Forsyth >> game
         Branch(
           id = UciCharPair(uci),
@@ -30,13 +39,19 @@ case class AnaMove(
           fen = fen,
           check = game.situation.check,
           dests = Some(movable ?? game.situation.destinations),
-          opening = Variant.openingSensibleVariants(variant) ?? {
+          opening = (game.turns <= 30 && Variant.openingSensibleVariants(variant)) ?? {
             FullOpeningDB findByFen fen
           },
           drops = movable.fold(game.situation.drops, Some(Nil)),
-          crazyData = game.situation.board.crazyData)
+          crazyData = game.situation.board.crazyData
+        )
       }
     }
+
+  def json(b: Branch): JsObject = Json.obj(
+    "node" -> b,
+    "path" -> path
+  ).add("ch" -> chapterId)
 }
 
 object AnaMove {
@@ -48,12 +63,13 @@ object AnaMove {
     variant = chess.variant.Variant orDefault ~d.str("variant")
     fen ← d str "fen"
     path ← d str "path"
-    prom = d str "promotion" flatMap chess.Role.promotable
   } yield AnaMove(
     orig = orig,
     dest = dest,
     variant = variant,
     fen = fen,
     path = path,
-    promotion = prom)
+    chapterId = d str "ch",
+    promotion = d str "promotion" flatMap chess.Role.promotable
+  )
 }

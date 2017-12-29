@@ -2,7 +2,8 @@
   "name": "game",
   "version": "1.0.0",
   "description": "lichess.org game",
-  "main": "src/main.js",
+  "main": "dist/main.js",
+  "types": "dist/main",
   "repository": {
     "type": "git",
     "url": "https://github.com/ornicar/lila"
@@ -14,21 +15,17 @@
     "replay"
   ],
   "author": "Thibault Duplessis",
-  "license": "MIT",
+  "license": "AGPL-3.0",
   "bugs": {
     "url": "https://github.com/ornicar/lila/issues"
   },
   "homepage": "https://github.com/ornicar/lila",
-  "devDependencies": {
-    "browserify": "~13.0",
-    "gulp": "~3.9",
-    "gulp-streamify": "~1.0",
-    "gulp-uglify": "~1.5",
-    "gulp-util": "~3.0",
-    "vinyl-source-stream": "~1.1",
-    "watchify": "~3.7"
+  "scripts": {
+    "compile": "tsc"
   },
-  "dependencies": {
-    "mithril": "github:ornicar/mithril.js#v1.0.1"
-  }
+  "devDependencies": {
+    "@types/lichess": "1.0.0",
+    "typescript": "^2"
+  },
+  "dependencies": {}
 }

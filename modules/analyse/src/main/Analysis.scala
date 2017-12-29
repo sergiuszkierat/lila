@@ -1,6 +1,7 @@
 package lila.analyse
 
 import chess.Color
+import chess.format.Uci
 
 import org.joda.time.DateTime
 
@@ -10,7 +11,8 @@ case class Analysis(
     startPly: Int,
     uid: Option[String], // requester lichess ID
     by: Option[String], // analyser lichess ID
-    date: DateTime) {
+    date: DateTime
+) {
 
   def requestedBy = uid | "lichess"
 
@@ -27,11 +29,6 @@ case class Analysis(
   }.toList
 
   lazy val advices: List[Advice] = infoAdvices.flatMap(_._2)
-
-  // ply -> UCI
-  def bestMoves: Map[Int, String] = infos.flatMap { i =>
-    i.best map { b => i.ply -> b.keys }
-  }.toMap
 
   def summary: List[(Color, List[(Advice.Judgment, Int)])] = Color.all map { color =>
     color -> (Advice.Judgment.all map { judgment =>
@@ -50,8 +47,9 @@ case class Analysis(
 object Analysis {
 
   import lila.db.BSON
-  import lila.db.BSON.BSONJodaDateTimeHandler
   import reactivemongo.bson._
+
+  type ID = String
 
   private[analyse] implicit val analysisBSONHandler = new BSON[Analysis] {
     def reads(r: BSON.Reader) = {
@@ -63,7 +61,8 @@ object Analysis {
         startPly = startPly,
         uid = r strO "uid",
         by = r strO "by",
-        date = r date "date")
+        date = r date "date"
+      )
     }
     def writes(w: BSON.Writer, o: Analysis) = BSONDocument(
       "_id" -> o.id,
@@ -71,6 +70,7 @@ object Analysis {
       "ply" -> w.intO(o.startPly),
       "uid" -> o.uid,
       "by" -> o.by,
-      "date" -> w.date(o.date))
+      "date" -> w.date(o.date)
+    )
   }
 }

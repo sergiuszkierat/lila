@@ -2,16 +2,15 @@ package lila.push
 
 import akka.actor._
 import com.typesafe.config.Config
-import java.io.InputStream
-
-import lila.common.PimpedConfig._
 
 final class Env(
     config: Config,
     db: lila.db.Env,
-    getLightUser: String => Option[lila.common.LightUser],
+    getLightUser: lila.common.LightUser.GetterSync,
     roundSocketHub: ActorSelection,
-    system: ActorSystem) {
+    scheduler: lila.common.Scheduler,
+    system: ActorSystem
+) {
 
   private val CollectionDevice = config getString "collection.device"
   private val GooglePushUrl = config getString "google.url"
@@ -29,28 +28,35 @@ final class Env(
     deviceApi.findLastManyByUserId("onesignal", 3) _,
     url = OneSignalUrl,
     appId = OneSignalAppId,
-    key = OneSignalKey)
+    key = OneSignalKey
+  )
 
   private lazy val googlePush = new GooglePush(
     deviceApi.findLastOneByUserId("android") _,
     url = GooglePushUrl,
-    key = GooglePushKey)
+    key = GooglePushKey
+  )
 
   private lazy val pushApi = new PushApi(
     googlePush,
     oneSignalPush,
     getLightUser,
-    roundSocketHub)
+    roundSocketHub,
+    scheduler = scheduler
+  )
 
   system.lilaBus.subscribe(system.actorOf(Props(new Actor {
-    import akka.pattern.pipe
     def receive = {
       case lila.game.actorApi.FinishGame(game, _, _) => pushApi finish game
-      case move: lila.hub.actorApi.round.MoveEvent   => pushApi move move
-      case lila.challenge.Event.Create(c)            => pushApi challengeCreate c
-      case lila.challenge.Event.Accept(c, joinerId)  => pushApi.challengeAccept(c, joinerId)
+      case lila.hub.actorApi.round.CorresMoveEvent(move, _, pushable, _, _) if pushable => pushApi move move
+      case lila.hub.actorApi.round.CorresTakebackOfferEvent(gameId) => pushApi takebackOffer gameId
+      case lila.hub.actorApi.round.CorresDrawOfferEvent(gameId) => pushApi drawOffer gameId
+      case lila.message.Event.NewMessage(t, p) => pushApi newMessage (t, p)
+      case lila.challenge.Event.Create(c) => pushApi challengeCreate c
+      case lila.challenge.Event.Accept(c, joinerId) => pushApi.challengeAccept(c, joinerId)
+      case lila.game.actorApi.CorresAlarmEvent(pov) => pushApi corresAlarm pov
     }
-  })), 'finishGame, 'moveEvent, 'challenge)
+  })), 'finishGame, 'moveEventCorres, 'newMessage, 'challenge, 'corresAlarm, 'offerEventCorres)
 }
 
 object Env {
@@ -58,7 +64,9 @@ object Env {
   lazy val current: Env = "push" boot new Env(
     db = lila.db.Env.current,
     system = lila.common.PlayApp.system,
-    getLightUser = lila.user.Env.current.lightUser,
+    getLightUser = lila.user.Env.current.lightUserSync,
     roundSocketHub = lila.hub.Env.current.socket.round,
-    config = lila.common.PlayApp loadConfig "push")
+    scheduler = lila.common.PlayApp.scheduler,
+    config = lila.common.PlayApp loadConfig "push"
+  )
 }

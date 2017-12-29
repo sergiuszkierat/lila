@@ -3,10 +3,8 @@ package mashup
 
 import scala.concurrent.duration._
 
-import lila.db.dsl._
 import lila.forum.MiniForumPost
-import lila.game.{ GameRepo, Game }
-import lila.team.{ Team, Request, RequestRepo, MemberRepo, RequestWithUser, TeamApi }
+import lila.team.{ Team, RequestRepo, MemberRepo, RequestWithUser, TeamApi }
 import lila.user.{ User, UserRepo }
 
 case class TeamInfo(
@@ -17,31 +15,40 @@ case class TeamInfo(
     bestUserIds: List[User.ID],
     toints: Int,
     forumNbPosts: Int,
-    forumPosts: List[MiniForumPost]) {
+    forumPosts: List[MiniForumPost]
+) {
 
   def hasRequests = requests.nonEmpty
+
+  def userIds = bestUserIds ::: forumPosts.flatMap(_.userId)
 }
 
-object TeamInfo {
+final class TeamInfoApi(
+    api: TeamApi,
+    getForumNbPosts: String => Fu[Int],
+    getForumPosts: String => Fu[List[MiniForumPost]],
+    asyncCache: lila.memo.AsyncCache.Builder
+) {
 
   private case class Cachable(bestUserIds: List[User.ID], toints: Int)
 
-  private val cache = lila.memo.AsyncCache[String, Cachable](
-    teamId => for {
-      userIds ← MemberRepo userIdsByTeam teamId
-      bestUserIds ← UserRepo.idsByIdsSortRating(userIds, 10)
-      toints ← UserRepo.idsSumToints(userIds)
-    } yield Cachable(bestUserIds, toints),
-    timeToLive = 10 minutes)
+  private def fetchCachable(id: String): Fu[Cachable] = for {
+    userIds ← (MemberRepo userIdsByTeam id)
+    bestUserIds ← UserRepo.idsByIdsSortRating(userIds, 10)
+    toints ← UserRepo.idsSumToints(userIds)
+  } yield Cachable(bestUserIds, toints)
 
-  def apply(
-    api: TeamApi,
-    getForumNbPosts: String => Fu[Int],
-    getForumPosts: String => Fu[List[MiniForumPost]])(team: Team, me: Option[User]): Fu[TeamInfo] = for {
+  private val cache = asyncCache.multi[String, Cachable](
+    name = "teamInfo",
+    f = fetchCachable,
+    expireAfter = _.ExpireAfterWrite(10 minutes)
+  )
+
+  def apply(team: Team, me: Option[User]): Fu[TeamInfo] = for {
     requests ← (team.enabled && me.??(m => team.isCreator(m.id))) ?? api.requestsWithUsers(team)
-    mine = me.??(m => api.belongsTo(team.id, m.id))
+    mine <- me.??(m => api.belongsTo(team.id, m.id))
     requestedByMe ← !mine ?? me.??(m => RequestRepo.exists(team.id, m.id))
-    cachable <- cache(team.id)
+    cachable <- cache get team.id
     forumNbPosts ← getForumNbPosts(team.id)
     forumPosts ← getForumPosts(team.id)
   } yield TeamInfo(
@@ -52,5 +59,6 @@ object TeamInfo {
     bestUserIds = cachable.bestUserIds,
     toints = cachable.toints,
     forumNbPosts = forumNbPosts,
-    forumPosts = forumPosts)
+    forumPosts = forumPosts
+  )
 }

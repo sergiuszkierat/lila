@@ -4,9 +4,9 @@ import org.joda.time.DateTime
 import play.api.data._
 import play.api.data.Forms._
 import play.api.data.validation.Constraints._
-import scala.util.Try
+import play.api.i18n.Lang
 
-import lila.common.Form._
+import lila.i18n.LangList
 
 object EventForm {
 
@@ -18,10 +18,21 @@ object EventForm {
     "description" -> optional(nonEmptyText(minLength = 5, maxLength = 4000)),
     "homepageHours" -> number(min = 0, max = 24),
     "url" -> nonEmptyText,
+    "lang" -> nonEmptyText.verifying(l => LangList.choices.exists(_._1 == l)),
     "enabled" -> boolean,
     "startsAt" -> utcDate,
     "finishesAt" -> utcDate
-  )(Data.apply)(Data.unapply))
+  )(Data.apply)(Data.unapply)) fill Data(
+    title = "",
+    headline = "",
+    description = none,
+    homepageHours = 0,
+    url = "",
+    lang = lila.i18n.enLang.language,
+    enabled = true,
+    startsAt = DateTime.now,
+    finishesAt = DateTime.now
+  )
 
   case class Data(
       title: String,
@@ -29,9 +40,11 @@ object EventForm {
       description: Option[String],
       homepageHours: Int,
       url: String,
+      lang: String,
       enabled: Boolean,
       startsAt: DateTime,
-      finishesAt: DateTime) {
+      finishesAt: DateTime
+  ) {
 
     def update(event: Event) = event.copy(
       title = title,
@@ -39,9 +52,11 @@ object EventForm {
       description = description,
       homepageHours = homepageHours,
       url = url,
+      lang = Lang(lang),
       enabled = enabled,
       startsAt = startsAt,
-      finishesAt = finishesAt)
+      finishesAt = finishesAt
+    )
 
     def make(userId: String) = Event(
       _id = Event.makeId,
@@ -50,11 +65,13 @@ object EventForm {
       description = description,
       homepageHours = homepageHours,
       url = url,
+      lang = Lang(lang),
       enabled = enabled,
       startsAt = startsAt,
       finishesAt = finishesAt,
       createdBy = Event.UserId(userId),
-      createdAt = DateTime.now)
+      createdAt = DateTime.now
+    )
   }
 
   object Data {
@@ -65,8 +82,10 @@ object EventForm {
       description = event.description,
       homepageHours = event.homepageHours,
       url = event.url,
+      lang = event.lang.language,
       enabled = event.enabled,
       startsAt = event.startsAt,
-      finishesAt = event.finishesAt)
+      finishesAt = event.finishesAt
+    )
   }
 }

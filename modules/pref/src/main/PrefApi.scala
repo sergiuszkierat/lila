@@ -1,28 +1,31 @@
 package lila.pref
 
-import play.api.libs.json.Json
-import scala.concurrent.duration.Duration
+import play.api.mvc.RequestHeader
+import reactivemongo.bson._
+import scala.concurrent.duration.FiniteDuration
 
 import lila.db.BSON
 import lila.db.dsl._
-import lila.hub.actorApi.SendTo
-import lila.memo.AsyncCache
 import lila.user.User
-import reactivemongo.bson._
 
 final class PrefApi(
     coll: Coll,
-    cacheTtl: Duration,
-    bus: lila.common.Bus) {
+    asyncCache: lila.memo.AsyncCache.Builder,
+    cacheTtl: FiniteDuration
+) {
 
-  private def fetchPref(id: String): Fu[Option[Pref]] = coll.find(BSONDocument("_id" -> id)).uno[Pref]
-  private val cache = AsyncCache(fetchPref, timeToLive = cacheTtl)
+  private def fetchPref(id: String): Fu[Option[Pref]] = coll.find($id(id)).uno[Pref]
+  private val cache = asyncCache.multi(
+    name = "pref.fetchPref",
+    f = fetchPref,
+    expireAfter = _.ExpireAfterAccess(cacheTtl)
+  )
 
   private implicit val prefBSONHandler = new BSON[Pref] {
 
     import lila.db.BSON.MapValue.{ MapReader, MapWriter }
-    implicit val tagsReader = MapReader[String]
-    implicit val tagsWriter = MapWriter[String]
+    implicit val tagsReader = MapReader[String, String]
+    implicit val tagsWriter = MapWriter[String, String]
 
     def reads(r: BSON.Reader): Pref = Pref(
       _id = r str "_id",
@@ -52,17 +55,20 @@ final class PrefApi(
       replay = r.getD("replay", Pref.default.replay),
       challenge = r.getD("challenge", Pref.default.challenge),
       message = r.getD("message", Pref.default.message),
+      studyInvite = r.getD("studyInvite", Pref.default.studyInvite),
       coordColor = r.getD("coordColor", Pref.default.coordColor),
-      puzzleDifficulty = r.getD("puzzleDifficulty", Pref.default.puzzleDifficulty),
       submitMove = r.getD("submitMove", Pref.default.submitMove),
       confirmResign = r.getD("confirmResign", Pref.default.confirmResign),
       insightShare = r.getD("insightShare", Pref.default.insightShare),
       keyboardMove = r.getD("keyboardMove", Pref.default.keyboardMove),
+      zen = r.getD("zen", Pref.default.zen),
+      rookCastle = r.getD("rookCastle", Pref.default.rookCastle),
       pieceNotation = r.getD("pieceNotation", Pref.default.pieceNotation),
       moveEvent = r.getD("moveEvent", Pref.default.moveEvent),
-      tags = r.getD("tags", Pref.default.tags))
+      tags = r.getD("tags", Pref.default.tags)
+    )
 
-    def writes(w: BSON.Writer, o: Pref) = BSONDocument(
+    def writes(w: BSON.Writer, o: Pref) = $doc(
       "_id" -> o._id,
       "dark" -> o.dark,
       "transp" -> o.transp,
@@ -72,7 +78,7 @@ final class PrefApi(
       "pieceSet" -> o.pieceSet,
       "theme3d" -> o.theme3d,
       "pieceSet3d" -> o.pieceSet3d,
-      "soundSet" -> o.soundSet,
+      "soundSet" -> SoundSet.name2key(o.soundSet),
       "blindfold" -> o.blindfold,
       "autoQueen" -> o.autoQueen,
       "autoThreefold" -> o.autoThreefold,
@@ -90,24 +96,28 @@ final class PrefApi(
       "replay" -> o.replay,
       "challenge" -> o.challenge,
       "message" -> o.message,
+      "studyInvite" -> o.studyInvite,
       "coordColor" -> o.coordColor,
-      "puzzleDifficulty" -> o.puzzleDifficulty,
       "submitMove" -> o.submitMove,
       "confirmResign" -> o.confirmResign,
       "insightShare" -> o.insightShare,
       "keyboardMove" -> o.keyboardMove,
+      "zen" -> o.zen,
+      "rookCastle" -> o.rookCastle,
       "moveEvent" -> o.moveEvent,
       "pieceNotation" -> o.pieceNotation,
-      "tags" -> o.tags)
+      "tags" -> o.tags
+    )
   }
 
   def saveTag(user: User, name: String, value: String) =
     coll.update(
-      BSONDocument("_id" -> user.id),
-      BSONDocument("$set" -> BSONDocument(s"tags.$name" -> value)),
-      upsert = true).void >>- { cache remove user.id }
+      $id(user.id),
+      $set(s"tags.$name" -> value),
+      upsert = true
+    ).void >>- { cache refresh user.id }
 
-  def getPrefById(id: String): Fu[Pref] = cache(id) map (_ getOrElse Pref.create(id))
+  def getPrefById(id: String): Fu[Pref] = cache get id dmap (_ getOrElse Pref.create(id))
   val getPref = getPrefById _
   def getPref(user: User): Fu[Pref] = getPref(user.id)
   def getPref(user: Option[User]): Fu[Pref] = user.fold(fuccess(Pref.default))(getPref)
@@ -115,8 +125,11 @@ final class PrefApi(
   def getPref[A](user: User, pref: Pref => A): Fu[A] = getPref(user) map pref
   def getPref[A](userId: String, pref: Pref => A): Fu[A] = getPref(userId) map pref
 
+  def getPref(user: User, req: RequestHeader): Fu[Pref] =
+    getPref(user) map RequestPref.queryParamOverride(req)
+
   def followable(userId: String): Fu[Boolean] =
-    coll.find(BSONDocument("_id" -> userId), BSONDocument("follow" -> true)).uno[BSONDocument] map {
+    coll.find($id(userId), $doc("follow" -> true)).uno[Bdoc] map {
       _ flatMap (_.getAs[Boolean]("follow")) getOrElse Pref.default.follow
     }
 
@@ -132,9 +145,8 @@ final class PrefApi(
     followableIds(userIds) map { followables => userIds map followables.contains }
 
   def setPref(pref: Pref, notifyChange: Boolean): Funit =
-    coll.update(BSONDocument("_id" -> pref.id), pref, upsert = true).void >>- {
-      cache remove pref.id
-      if (notifyChange) bus.publish(SendTo(pref.id, "prefChange", true), 'users)
+    coll.update($id(pref.id), pref, upsert = true).void >>- {
+      cache refresh pref.id
     }
 
   def setPref(user: User, change: Pref => Pref, notifyChange: Boolean): Funit =

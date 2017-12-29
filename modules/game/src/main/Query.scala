@@ -1,6 +1,6 @@
 package lila.game
 
-import chess.{ Color, Status }
+import chess.Status
 import org.joda.time.DateTime
 import reactivemongo.bson._
 
@@ -28,9 +28,7 @@ object Query {
 
   val mate: Bdoc = status(Status.Mate)
 
-  val draw: Bdoc = F.status $in List(Status.Draw.id, Status.Stalemate.id)
-
-  def draw(u: String): Bdoc = user(u) ++ draw
+  def draw(u: String): Bdoc = user(u) ++ finished ++ F.winnerId.$exists(false)
 
   val finished: Bdoc = F.status $gte Status.Mate.id
 
@@ -48,33 +46,53 @@ object Query {
 
   def clock(c: Boolean): Bdoc = F.clock $exists c
 
+  def clockHistory(c: Boolean): Bdoc = F.whiteClockHistory $exists c
+
   def user(u: String): Bdoc = F.playerUids $eq u
   def user(u: User): Bdoc = F.playerUids $eq u.id
-  def users(u: Seq[String]) = F.playerUids $in u
 
   val noAi: Bdoc = $doc(
     "p0.ai" $exists false,
-    "p1.ai" $exists false)
+    "p1.ai" $exists false
+  )
 
   def nowPlaying(u: String) = $doc(F.playingUids -> u)
 
   def recentlyPlaying(u: String) =
-    nowPlaying(u) ++ $doc(F.updatedAt $gt DateTime.now.minusMinutes(5))
+    nowPlaying(u) ++ $doc(F.movedAt $gt DateTime.now.minusMinutes(5))
+
+  def nowPlayingVs(u1: String, u2: String) = $doc(F.playingUids $all List(u1, u2))
+
+  def nowPlayingVs(userIds: Iterable[String]) = $doc(
+    F.playingUids $in userIds, // as to use the index
+    s"${F.playingUids}.0" $in userIds,
+    s"${F.playingUids}.1" $in userIds
+  )
 
   // use the us index
   def win(u: String) = user(u) ++ $doc(F.winnerId -> u)
 
   def loss(u: String) = user(u) ++ $doc(
     F.status $in Status.finishedWithWinner.map(_.id),
-    F.winnerId -> $exists(true).++($ne(u))
+    F.winnerId -> $doc(
+      "$exists" -> true,
+      "$ne" -> u
+    )
   )
 
   def opponents(u1: User, u2: User) =
     $doc(F.playerUids $all List(u1, u2).sortBy(_.count.game).map(_.id))
 
+  def opponents(userIds: Iterable[String]) = $doc(
+    F.playerUids $in userIds, // as to use the index
+    s"${F.playerUids}.0" $in userIds,
+    s"${F.playerUids}.1" $in userIds
+  )
+
   val noProvisional: Bdoc = $doc(
     "p0.p" $exists false,
-    "p1.p" $exists false)
+    "p1.p" $exists false
+  )
 
   def bothRatingsGreaterThan(v: Int) = $doc("p0.e" $gt v, "p1.e" $gt v)
 
@@ -87,7 +105,7 @@ object Query {
   def variant(v: chess.variant.Variant) =
     $doc(F.variant -> v.standard.fold[BSONValue]($exists(false), $int(v.id)))
 
-  lazy val  variantStandard = variant(chess.variant.Standard)
+  lazy val variantStandard = variant(chess.variant.Standard)
 
   lazy val notHordeOrSincePawnsAreWhite: Bdoc = $or(
     F.variant $ne chess.variant.Horde.id,
@@ -106,5 +124,5 @@ object Query {
   val sortCreated: Bdoc = $sort desc F.createdAt
   val sortChronological: Bdoc = $sort asc F.createdAt
   val sortAntiChronological: Bdoc = $sort desc F.createdAt
-  val sortUpdatedNoIndex: Bdoc = $sort desc F.updatedAt
+  val sortMovedAtNoIndex: Bdoc = $sort desc F.movedAt
 }

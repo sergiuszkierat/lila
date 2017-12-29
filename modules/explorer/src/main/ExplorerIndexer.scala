@@ -2,13 +2,12 @@ package lila.explorer
 
 import scala.util.Random.nextFloat
 import scala.util.{ Try, Success, Failure }
-
-import chess.variant.Variant
 import org.joda.time.DateTime
 import org.joda.time.format.DateTimeFormat
 import play.api.libs.iteratee._
 import play.api.libs.ws.WS
 import play.api.Play.current
+import chess.format.pgn.Tag
 
 import lila.db.dsl._
 import lila.game.BSONHandlers.gameBSONHandler
@@ -17,11 +16,11 @@ import lila.user.UserRepo
 
 private final class ExplorerIndexer(
     gameColl: Coll,
-    internalEndpoint: String) {
+    internalEndpoint: String
+) {
 
   private val maxGames = Int.MaxValue
   private val batchSize = 50
-  private val maxPlies = 50
   private val separator = "\n\n\n"
   private val datePattern = "yyyy-MM-dd"
   private val dateFormatter = DateTimeFormat forPattern datePattern
@@ -44,11 +43,14 @@ private final class ExplorerIndexer(
           Query.turnsMoreThan(8) ++
           Query.noProvisional ++
           Query.bothRatingsGreaterThan(1501)
+
       import reactivemongo.api._
+      import reactivemongo.play.iteratees.cursorProducer
+
       gameColl.find(query)
         .sort(Query.sortChronological)
         .cursor[Game](ReadPreference.secondary)
-        .enumerate(maxGames, stopOnError = true) &>
+        .enumerator(maxGames) &>
         Enumeratee.mapM[Game].apply[Option[GamePGN]] { game =>
           makeFastPgn(game) map {
             _ map { game -> _ }
@@ -84,7 +86,7 @@ private final class ExplorerIndexer(
   private object flowBuffer {
     private val max = 30
     private val buf = scala.collection.mutable.ArrayBuffer.empty[String]
-    def apply(pgn: String) {
+    def apply(pgn: String): Unit = {
       buf += pgn
       val startAt = nowMillis
       if (buf.size >= max) {
@@ -117,20 +119,20 @@ private final class ExplorerIndexer(
   private def probability(game: Game, rating: Int) = {
     import lila.rating.PerfType._
     game.perfType ?? {
-      case Correspondence              => 1
-      case Classical if rating >= 2000 => 1
-      case Classical if rating >= 1800 => 2 / 5f
-      case Classical                   => 1 / 8f
-      case Blitz if rating >= 2000     => 1
-      case Blitz if rating >= 1800     => 1 / 4f
-      case Blitz                       => 1 / 8f
-      case Bullet if rating >= 2300    => 1
-      case Bullet if rating >= 2200    => 4 / 5f
-      case Bullet if rating >= 2000    => 1 / 4f
-      case Bullet if rating >= 1800    => 1 / 7f
-      case Bullet                      => 1 / 9f
-      case _ if rating >= 1600         => 1 // variant games
-      case _                           => 1 / 2f // noob variant games
+      case Correspondence => 1
+      case Rapid | Classical if rating >= 2000 => 1
+      case Rapid | Classical if rating >= 1800 => 2 / 5f
+      case Rapid | Classical => 1 / 8f
+      case Blitz if rating >= 2000 => 1
+      case Blitz if rating >= 1800 => 1 / 4f
+      case Blitz => 1 / 15f
+      case Bullet if rating >= 2300 => 1
+      case Bullet if rating >= 2200 => 4 / 5f
+      case Bullet if rating >= 2000 => 1 / 4f
+      case Bullet if rating >= 1800 => 1 / 7f
+      case Bullet => 1 / 20f
+      case _ if rating >= 1600 => 1 // variant games
+      case _ => 1 / 2f // noob variant games
     }
   }
 
@@ -151,7 +153,7 @@ private final class ExplorerIndexer(
         usernames.find(_.toLowerCase == id)
       } orElse game.player(color).userId getOrElse "?"
       val fenTags = initialFen.?? { fen => List(s"[FEN $fen]") }
-      val timeControl = game.clock.fold("-") { c => s"${c.limit}+${c.increment}" }
+      val timeControl = Tag.timeControl(game.clock.map(_.config)).value
       val otherTags = List(
         s"[LichessID ${game.id}]",
         s"[Variant ${game.variant.name}]",
@@ -161,7 +163,8 @@ private final class ExplorerIndexer(
         s"[WhiteElo $whiteRating]",
         s"[BlackElo $blackRating]",
         s"[Result ${PgnDump.result(game)}]",
-        s"[Date ${pgnDateFormat.print(game.createdAt)}]")
+        s"[Date ${pgnDateFormat.print(game.createdAt)}]"
+      )
       val allTags = fenTags ::: otherTags
       s"${allTags.mkString("\n")}\n\n${game.pgnMoves.take(maxPlies).mkString(" ")}".some
     }

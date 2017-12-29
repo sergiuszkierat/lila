@@ -3,7 +3,7 @@ package lila
 import scala.concurrent.Future
 
 import kamon.Kamon.{ metrics, tracer }
-import kamon.trace.{ TraceContext, Segment }
+import kamon.trace.{ TraceContext, Segment, Status }
 import kamon.util.RelativeNanoTimestamp
 
 object mon {
@@ -15,6 +15,7 @@ object mon {
     }
     object response {
       val code400 = inc("http.response.4.00")
+      val code403 = inc("http.response.4.03")
       val code404 = inc("http.response.4.04")
       val code500 = inc("http.response.5.00")
       val home = rec("http.response.home")
@@ -54,30 +55,98 @@ object mon {
       val websocket = inc("http.csrf.websocket")
     }
   }
+  object mobile {
+    def version(v: String) = inc(s"mobile.version.$v")
+  }
+  object syncache {
+    def miss(name: String) = inc(s"syncache.miss.$name")
+    def wait(name: String) = inc(s"syncache.wait.$name")
+    def preload(name: String) = inc(s"syncache.preload.$name")
+    def timeout(name: String) = inc(s"syncache.timeout.$name")
+    def waitMicros(name: String) = incX(s"syncache.wait_micros.$name")
+    def computeNanos(name: String) = rec(s"syncache.compute_nanos.$name")
+  }
+  class Caffeine(name: String) {
+    val hitCount = rec(s"caffeine.count.hit.$name")
+    val hitRate = rate(s"caffeine.rate.hit.$name")
+    val missCount = rec(s"caffeine.count.miss.$name")
+    val loadSuccessCount = rec(s"caffeine.count.load.success.$name")
+    val loadFailureCount = rec(s"caffeine.count.load.failure.$name")
+    val totalLoadTime = rec(s"caffeine.total.load_time.$name") // in millis
+    val averageLoadPenalty = rec(s"caffeine.penalty.load_time.$name")
+    val evictionCount = rec(s"caffeine.count.eviction.$name")
+    val entryCount = rec(s"caffeine.count.entry.$name")
+  }
+  object evalCache {
+    private val hit = inc("eval_Cache.all.hit")
+    private val miss = inc("eval_Cache.all.miss")
+    private def hitIf(cond: Boolean) = if (cond) hit else miss
+    private object byPly {
+      def hit(ply: Int) = inc(s"eval_Cache.ply.$ply.hit")
+      def miss(ply: Int) = inc(s"eval_Cache.ply.$ply.miss")
+      def hitIf(ply: Int, cond: Boolean) = if (cond) hit(ply) else miss(ply)
+    }
+    def register(ply: Int, isHit: Boolean) = {
+      hitIf(isHit)()
+      if (ply <= 10) byPly.hitIf(ply, isHit)()
+    }
+  }
   object lobby {
     object hook {
       val create = inc("lobby.hook.create")
       val join = inc("lobby.hook.join")
       val size = rec("lobby.hook.size")
+      def joinMobile(isMobile: Boolean) = inc(s"lobby.hook.join_mobile.$isMobile")
+      def createdLikePoolFiveO(isMobile: Boolean) = inc(s"lobby.hook.like_pool_5_0.$isMobile")
+      def acceptedLikePoolFiveO(isMobile: Boolean) = inc(s"lobby.hook.like_pool_5_0_accepted.$isMobile")
     }
     object seek {
       val create = inc("lobby.seek.create")
       val join = inc("lobby.seek.join")
+      def joinMobile(isMobile: Boolean) = inc(s"lobby.seek.join_mobile.$isMobile")
     }
     object socket {
       val getUids = rec("lobby.socket.get_uids")
       val member = rec("lobby.socket.member")
-      val resync = inc("lobby.socket.resync")
+      val idle = rec("lobby.socket.idle")
+      val hookSubscribers = rec("lobby.socket.hook_subscribers")
+      val mobile = rec(s"lobby.socket.mobile")
     }
-    object cache {
-      val user = inc("lobby.cache.count.user")
-      val anon = inc("lobby.cache.count.anon")
-      val miss = inc("lobby.cache.count.miss")
+    object pool {
+      object wave {
+        def scheduled(id: String) = inc(s"lobby.pool.$id.wave.scheduled")
+        def full(id: String) = inc(s"lobby.pool.$id.wave.full")
+        def candidates(id: String) = rec(s"lobby.pool.$id.wave.candidates")
+        def paired(id: String) = rec(s"lobby.pool.$id.wave.paired")
+        def missed(id: String) = rec(s"lobby.pool.$id.wave.missed")
+        def wait(id: String) = rec(s"lobby.pool.$id.wave.wait")
+        def ratingDiff(id: String) = rec(s"lobby.pool.$id.wave.rating_diff")
+        def withRange(id: String) = rec(s"lobby.pool.$id.wave.with_range")
+      }
+      object thieve {
+        def timeout(id: String) = inc(s"lobby.pool.$id.thieve.timeout")
+        def candidates(id: String) = rec(s"lobby.pool.$id.thieve.candidates")
+        def stolen(id: String) = rec(s"lobby.pool.$id.thieve.stolen")
+      }
+      object join {
+        def count(id: String) = inc(s"lobby.pool.$id.join.count")
+      }
+      object leave {
+        def count(id: String) = inc(s"lobby.pool.$id.leave.count")
+        def wait(id: String) = rec(s"lobby.pool.$id.leave.wait")
+      }
+      object matchMaking {
+        def duration(id: String) = rec(s"lobby.pool.$id.match_making.duration")
+      }
+      object gameStart {
+        def duration(id: String) = rec(s"lobby.pool.$id.game_start.duration")
+      }
     }
   }
   object round {
     object api {
       val player = rec("round.api.player")
+      val playerInner = rec("round.api.player_inner")
       val watcher = rec("round.api.watcher")
     }
     object actor {
@@ -93,7 +162,14 @@ object mon {
       object trace {
         def create = makeTrace("round.move.trace")
       }
-      val networkLag = rec("round.move.network_lag")
+      object lag {
+        val avgReported = rec("round.move.lag.avg_reported")
+        private val estErrorRec = rec("round.move.lag.estimate_error_1000")
+        def estimateError(e: Int) = estErrorRec(e + 1000)
+        val compDeviation = rec("round.move.lag.comp_deviation")
+        def uncomped(key: String) = rec(s"round.move.lag.uncomped.$key")
+        val uncompedAll = rec(s"round.move.lag.uncomped.all")
+      }
     }
     object error {
       val client = inc("round.error.client")
@@ -105,6 +181,20 @@ object mon {
       val game = rec("round.titivate.game") // how many games were processed
       val total = rec("round.titivate.total") // how many games should have been processed
       val old = rec("round.titivate.old") // how many old games remain
+    }
+    object alarm {
+      val time = rec("round.alarm.time")
+      val count = rec("round.alarm.count")
+    }
+    object expiration {
+      val count = inc("round.expiration.count")
+    }
+  }
+  object playban {
+    def outcome(out: String) = inc(s"playban.outcome.$out")
+    object ban {
+      val count = inc("playban.ban.count")
+      val mins = incX("playban.ban.mins")
     }
   }
   object explorer {
@@ -156,21 +246,55 @@ object mon {
       val mobile = inc("user.register.mobile")
       def mustConfirmEmail(v: Boolean) = inc(s"user.register.must_confirm_email.$v")
       def confirmEmailResult(v: Boolean) = inc(s"user.register.confirm_email.$v")
+      val modConfirmEmail = inc(s"user.register.mod_confirm_email")
+    }
+    object auth {
+      val bcFullMigrate = inc("user.auth.bc_full_migrate")
+      val hashTime = rec("user.auth.hash_time")
+      val hashTimeInc = incX("user.auth.hash_time_inc")
+      def result(v: Boolean) = inc(s"user.auth.result.$v")
+
+      def passwordResetRequest(s: String) = inc(s"user.auth.password_reset_request.$s")
+      def passwordResetConfirm(s: String) = inc(s"user.auth.password_reset_confirm.$s")
     }
   }
   object socket {
     val member = rec("socket.count")
     val open = inc("socket.open")
     val close = inc("socket.close")
+    def eject(userId: String) = inc(s"socket.eject.user.$userId")
+    val ejectAll = inc(s"socket.eject.all")
   }
   object mod {
     object report {
       val unprocessed = rec("mod.report.unprocessed")
       val close = inc("mod.report.close")
       def create(reason: String) = inc(s"mod.report.create.$reason")
+      def discard(reason: String) = inc(s"mod.report.discard.$reason")
     }
     object log {
       val create = inc("mod.log.create")
+    }
+    object irwin {
+      // val discard = inc(s"mod.report.irwin.discard")
+      val report = inc(s"mod.report.irwin.report")
+      val mark = inc(s"mod.report.irwin.mark")
+    }
+  }
+  object relay {
+    val ongoing = rec("relay.ongoing")
+    val moves = incX("relay.moves")
+    object sync {
+      def result(res: String) = inc(s"relay.sync.result.$res")
+      object duration {
+        val each = rec("relay.sync.duration.each")
+        val total = rec("relay.sync.duration.total")
+      }
+    }
+    object fetch {
+      object duration {
+        val each = rec("relay.sync.duration.each")
+      }
     }
   }
   object cheat {
@@ -210,6 +334,9 @@ object mon {
     object rateLimit {
       def generic(key: String) = inc(s"security.rate_limit.generic.$key")
     }
+    object linearLimit {
+      def generic(key: String) = inc(s"security.linear_limit.generic.$key")
+    }
   }
   object tv {
     object stream {
@@ -246,11 +373,6 @@ object mon {
       val tickTime = rec("tournament.created_organizer.tick_time")
     }
   }
-  object donation {
-    val goal = rec("donation.goal")
-    val current = rec("donation.current")
-    val percent = rec("donation.percent")
-  }
   object plan {
     object amount {
       val paypal = incX("plan.amount.paypal")
@@ -278,7 +400,14 @@ object mon {
       val time = rec("puzzle.selector")
       def vote(v: Int) = rec("puzzle.selector.vote")(1000 + v) // vote sum of selected puzzle
     }
-    object attempt {
+    object batch {
+      object selector {
+        val count = incX("puzzle.batch.selector")
+        val time = rec("puzzle.batch.selector")
+      }
+      val solve = incX("puzzle.batch.solve")
+    }
+    object round {
       val user = inc("puzzle.attempt.user")
       val anon = inc("puzzle.attempt.anon")
       val mate = inc("puzzle.attempt.mate")
@@ -316,7 +445,10 @@ object mon {
     }
     object send {
       def move(platform: String) = inc(s"push.send.$platform.move")()
+      def takeback(platform: String) = inc(s"push.send.$platform.takeback")()
+      def corresAlarm(platform: String) = inc(s"push.send.$platform.corresAlarm")()
       def finish(platform: String) = inc(s"push.send.$platform.finish")()
+      def message(platform: String) = inc(s"push.send.$platform.message")()
       object challenge {
         def create(platform: String) = inc(s"push.send.$platform.challenge_create")()
         def accept(platform: String) = inc(s"push.send.$platform.challenge_accept")()
@@ -355,10 +487,12 @@ object mon {
     object work {
       def acquired(skill: String) = rec(s"fishnet.work.$skill.acquired")
       def queued(skill: String) = rec(s"fishnet.work.$skill.queued")
+      def forUser(skill: String) = rec(s"fishnet.work.$skill.for_user")
       val moveDbSize = rec("fishnet.work.move.db_size")
     }
     object move {
       def time(client: String) = rec(s"fishnet.move.time.$client")
+      def fullTimeLvl1(client: String) = rec(s"fishnet.move.full_time_lvl_1.$client")
       val post = rec("fishnet.move.post")
       val dbDrop = inc("fishnet.move.db_drop")
     }
@@ -371,13 +505,16 @@ object mon {
         def nps = rec(s"fishnet.analysis.nps.$client")
         def depth = rec(s"fishnet.analysis.depth.$client")
         def pvSize = rec(s"fishnet.analysis.pv_size.$client")
+        def pvTotal = incX(s"fishnet.analysis.pvs.total.$client")
+        def pvShort = incX(s"fishnet.analysis.pvs.short.$client")
+        def pvLong = incX(s"fishnet.analysis.pvs.long.$client")
         def totalMeganode = incX(s"fishnet.analysis.total.meganode.$client")
         def totalSecond = incX(s"fishnet.analysis.total.second.$client")
         def totalPosition = incX(s"fishnet.analysis.total.position.$client")
-        def endgameCount = incX(s"fishnet.analysis.total.endgame.count.$client")
-        def endgameTime = incX(s"fishnet.analysis.total.endgame.time.$client")
       }
       val post = rec("fishnet.analysis.post")
+      val requestCount = inc("fishnet.analysis.request")
+      val evalCacheHits = rec("fishnet.analysis.eval_cache_hits")
     }
   }
   object api {
@@ -387,27 +524,44 @@ object mon {
     object userGames {
       val cost = incX("api.user-games.cost")
     }
+    object users {
+      val cost = incX("api.users.cost")
+    }
     object game {
       val cost = incX("api.game.cost")
+    }
+    object activity {
+      val cost = incX("api.activity.cost")
     }
   }
   object export {
     object pgn {
       def game = inc("export.pgn.game")
       def study = inc("export.pgn.study")
+      def studyChapter = inc("export.pgn.study_chapter")
     }
     object png {
       def game = inc("export.png.game")
       def puzzle = inc("export.png.puzzle")
     }
     def pdf = inc("export.pdf.game")
-    def visualizer = inc("export.visualizer.game")
   }
 
-  def measure[A](path: RecPath)(op: => A) = {
+  object jsmon {
+    val socketGap = inc("jsmon.socket_gap")
+    val unknown = inc("jsmon.unknown")
+  }
+
+  def measure[A](path: RecPath)(op: => A): A = {
     val start = System.nanoTime()
     val res = op
     path(this)(System.nanoTime() - start)
+    res
+  }
+  def measureIncMicros[A](path: IncXPath)(op: => A): A = {
+    val start = System.nanoTime()
+    val res = op
+    path(this)(((System.nanoTime() - start) / 1000).toInt)
     res
   }
 
@@ -416,9 +570,11 @@ object mon {
   type Rec = Long => Unit
   type Inc = () => Unit
   type IncX = Int => Unit
+  type Rate = Double => Unit
 
   type RecPath = lila.mon.type => Rec
   type IncPath = lila.mon.type => Inc
+  type IncXPath = lila.mon.type => IncX
 
   def recPath(f: lila.mon.type => Rec): Rec = f(this)
   def incPath(f: lila.mon.type => Inc): Inc = f(this)
@@ -436,6 +592,16 @@ object mon {
     value => {
       if (value < 0) logger.warn(s"Negative histogram value: $name=$value")
       else hist.record(value)
+    }
+  }
+
+  // to record Double rates [0..1],
+  // we multiply by 100,000 and convert to Int [0..100000]
+  private def rate(name: String): Rate = {
+    val hist = metrics.histogram(name)
+    value => {
+      if (value < 0) logger.warn(s"Negative histogram value: $name=$value")
+      else hist.record((value * 100000).toInt)
     }
   }
 
@@ -458,7 +624,8 @@ object mon {
 
   private final class KamonTrace(
       context: TraceContext,
-      firstSegment: Segment) extends Trace {
+      firstSegment: Segment
+  ) extends Trace {
 
     def finishFirstSegment() = firstSegment.finish()
 
@@ -475,9 +642,11 @@ object mon {
     val context = tracer.newContext(
       name = name,
       token = None,
+      tags = Map.empty,
       timestamp = RelativeNanoTimestamp.now,
-      isOpen = true,
-      isLocal = false)
+      status = Status.Open,
+      isLocal = false
+    )
     val firstSegment = context.startSegment(firstName, "logic", "mon")
     new KamonTrace(context, firstSegment)
   }

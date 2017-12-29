@@ -18,7 +18,8 @@ case class PlayerAssessment(
     mtAvg: Int,
     mtSd: Int,
     blurs: Int,
-    hold: Boolean) {
+    hold: Boolean
+) {
 
   val color = Color(white)
 }
@@ -27,7 +28,8 @@ case class PlayerAggregateAssessment(
     user: User,
     playerAssessments: List[PlayerAssessment],
     relatedUsers: List[String],
-    relatedCheaters: List[String]) {
+    relatedCheaters: Set[String]
+) {
   import Statistics._
   import AccountAction._
   import GameAssessment.{ Cheating, LikelyCheating }
@@ -56,7 +58,8 @@ case class PlayerAggregateAssessment(
     val difs = List(
       (sfAvgBlurs, sfAvgNoBlurs),
       (sfAvgLowVar, sfAvgHighVar),
-      (sfAvgHold, sfAvgNoHold))
+      (sfAvgHold, sfAvgNoHold)
+    )
 
     val actionable: Boolean = {
       val difFlags = difs map (sigDif(10)_).tupled
@@ -71,8 +74,7 @@ case class PlayerAggregateAssessment(
       else if (reportable && exceptionalDif && cheatingSum >= 1) Engine
       else if (reportable) reportVariousReasons
       else Nothing
-    }
-    else {
+    } else {
       if (markable) reportVariousReasons
       else if (reportable) reportVariousReasons
       else Nothing
@@ -83,7 +85,7 @@ case class PlayerAggregateAssessment(
     _.assessment == assessment
   }
 
-  val relatedCheatersCount = relatedCheaters.distinct.size
+  val relatedCheatersCount = relatedCheaters.size
   val relatedUsersCount = relatedUsers.distinct.size
   val assessmentsCount = playerAssessments.size match {
     case 0 => 1
@@ -121,7 +123,7 @@ case class PlayerAggregateAssessment(
 
   def reportText(reason: String, maxGames: Int = 10): String = {
     val gameLinks: String = (playerAssessments.sortBy(-_.assessment.id).take(maxGames).map { a =>
-      a.assessment.emoticon + " //lichess.org/" + a.gameId + "/" + a.color.name
+      a.assessment.emoticon + " lichess.org/" + a.gameId + "/" + a.color.name
     }).mkString("\n")
 
     s"""[AUTOREPORT] $reason
@@ -139,13 +141,14 @@ object PlayerAggregateAssessment {
 }
 
 case class PlayerFlags(
-  suspiciousErrorRate: Boolean,
-  alwaysHasAdvantage: Boolean,
-  highBlurRate: Boolean,
-  moderateBlurRate: Boolean,
-  consistentMoveTimes: Boolean,
-  noFastMoves: Boolean,
-  suspiciousHoldAlert: Boolean)
+    suspiciousErrorRate: Boolean,
+    alwaysHasAdvantage: Boolean,
+    highBlurRate: Boolean,
+    moderateBlurRate: Boolean,
+    consistentMoveTimes: Boolean,
+    noFastMoves: Boolean,
+    suspiciousHoldAlert: Boolean
+)
 
 object PlayerFlags {
 
@@ -161,7 +164,8 @@ object PlayerFlags {
       moderateBlurRate = r boolD "mbr",
       consistentMoveTimes = r boolD "cmt",
       noFastMoves = r boolD "nfm",
-      suspiciousHoldAlert = r boolD "sha")
+      suspiciousHoldAlert = r boolD "sha"
+    )
 
     def writes(w: BSON.Writer, o: PlayerFlags) = BSONDocument(
       "ser" -> w.boolO(o.suspiciousErrorRate),
@@ -170,6 +174,7 @@ object PlayerFlags {
       "mbr" -> w.boolO(o.moderateBlurRate),
       "cmt" -> w.boolO(o.consistentMoveTimes),
       "nfm" -> w.boolO(o.noFastMoves),
-      "sha" -> w.boolO(o.suspiciousHoldAlert))
+      "sha" -> w.boolO(o.suspiciousHoldAlert)
+    )
   }
 }

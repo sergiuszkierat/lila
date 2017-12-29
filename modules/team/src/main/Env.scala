@@ -1,11 +1,18 @@
 package lila.team
 
 import com.typesafe.config.Config
+import akka.actor._
 
-import lila.common.PimpedConfig._
 import lila.notify.NotifyApi
 
-final class Env(config: Config, hub: lila.hub.Env, notifyApi: NotifyApi, db: lila.db.Env) {
+final class Env(
+    config: Config,
+    hub: lila.hub.Env,
+    notifyApi: NotifyApi,
+    system: ActorSystem,
+    asyncCache: lila.memo.AsyncCache.Builder,
+    db: lila.db.Env
+) {
 
   private val settings = new {
     val CollectionTeam = config getString "collection.team"
@@ -19,7 +26,8 @@ final class Env(config: Config, hub: lila.hub.Env, notifyApi: NotifyApi, db: lil
   private[team] lazy val colls = new Colls(
     team = db(CollectionTeam),
     request = db(CollectionRequest),
-    member = db(CollectionMember))
+    member = db(CollectionMember)
+  )
 
   lazy val forms = new DataForm(colls.team, hub.actor.captcher)
 
@@ -29,20 +37,28 @@ final class Env(config: Config, hub: lila.hub.Env, notifyApi: NotifyApi, db: lil
     coll = colls,
     cached = cached,
     notifier = notifier,
-    forum = hub.actor.forum,
+    bus = system.lilaBus,
     indexer = hub.actor.teamSearch,
-    timeline = hub.actor.timeline)
+    timeline = hub.actor.timeline
+  )
 
   lazy val paginator = new PaginatorBuilder(
     coll = colls,
     maxPerPage = PaginatorMaxPerPage,
-    maxUserPerPage = PaginatorMaxUserPerPage)
+    maxUserPerPage = PaginatorMaxUserPerPage
+  )
 
   lazy val cli = new Cli(api, colls)
 
-  lazy val cached = new Cached
+  lazy val cached = new Cached(asyncCache)(system)
 
   private lazy val notifier = new Notifier(notifyApi = notifyApi)
+
+  system.lilaBus.subscribe(system.actorOf(Props(new Actor {
+    def receive = {
+      case lila.hub.actorApi.mod.Shadowban(userId, true) => api deleteRequestsByUserId userId
+    }
+  })), 'shadowban)
 }
 
 object Env {
@@ -51,5 +67,8 @@ object Env {
     config = lila.common.PlayApp loadConfig "team",
     hub = lila.hub.Env.current,
     notifyApi = lila.notify.Env.current.api,
-    db = lila.db.Env.current)
+    system = lila.common.PlayApp.system,
+    asyncCache = lila.memo.Env.current.asyncCache,
+    db = lila.db.Env.current
+  )
 }

@@ -10,6 +10,7 @@ case class Query(
     user1: Option[String] = None,
     user2: Option[String] = None,
     winner: Option[String] = None,
+    loser: Option[String] = None,
     winnerColor: Option[Int] = None,
     perf: Option[Int] = None,
     source: Option[Int] = None,
@@ -25,12 +26,14 @@ case class Query(
     sorting: Sorting = Sorting.default,
     analysed: Option[Boolean] = None,
     whiteUser: Option[String] = None,
-    blackUser: Option[String] = None) {
+    blackUser: Option[String] = None
+) {
 
   def nonEmpty =
     user1.nonEmpty ||
       user2.nonEmpty ||
       winner.nonEmpty ||
+      loser.nonEmpty ||
       winnerColor.nonEmpty ||
       perf.nonEmpty ||
       source.nonEmpty ||
@@ -57,28 +60,22 @@ object Query {
   implicit val jsonWriter = Json.writes[Query]
 
   val durations = {
+    val day = 60 * 60 * 24
     ((30, "30 seconds") ::
       options(List(60, 60 * 2, 60 * 3, 60 * 5, 60 * 10, 60 * 15, 60 * 20, 60 * 30), _ / 60, "%d minute{s}").toList) :+
       (60 * 60 * 1, "One hour") :+
-      (60 * 60 * 3, "Three hours") :+
-      (60 * 60 * 24, "One day") :+
-      (60 * 60 * 24 * 3, "Three days") :+
-      (60 * 60 * 24 * 7, "One week") :+
-      (60 * 60 * 24 * 7 * 2, "Two weeks") :+
-      (60 * 60 * 24 * 30, "One month") :+
-      (60 * 60 * 24 * 30 * 3, "Three months") :+
-      (60 * 60 * 24 * 30 * 6, "6 months") :+
-      (60 * 60 * 24 * 365, "One year")
+      (60 * 60 * 2, "Two hours") :+
+      (60 * 60 * 3, "Three hours")
   }
 
   val clockInits = List(
     (0, "0 seconds"),
     (30, "30 seconds"),
     (45, "45 seconds")
-  ) ::: options(List(60 * 1, 60 * 2, 60 * 3, 60 * 5, 60 * 10, 60 * 15, 60 * 20, 60 * 30, 60 * 60, 60 * 90, 60 * 120, 60 * 150, 60 * 180), _ / 60, "%d minute{s}").toList
+  ) ::: options(List(60 * 1, 60 * 2, 60 * 3, 60 * 5, 60 * 10, 60 * 15, 60 * 20, 60 * 30, 60 * 45, 60 * 60, 60 * 90, 60 * 120, 60 * 150, 60 * 180), _ / 60, "%d minute{s}").toList
 
   val clockIncs =
-    options(List(0, 1, 2, 3, 5, 10, 15, 20, 30, 60, 90, 120, 150, 180), "%d second{s}").toList
+    options(List(0, 1, 2, 3, 5, 10, 15, 20, 30, 45, 60, 90, 120, 150, 180), "%d second{s}").toList
 
   val winnerColors = List(1 -> "White", 2 -> "Black", 3 -> "None")
 
@@ -90,7 +87,8 @@ object Query {
 
   val turns = options(
     (1 to 5) ++ (10 to 45 by 5) ++ (50 to 90 by 10) ++ (100 to 300 by 25),
-    "%d move{s}")
+    "%d move{s}"
+  )
 
   val averageRatings = (RatingRange.min to RatingRange.max by 100).toList map { e => e -> (e + " Rating") }
 
@@ -106,10 +104,11 @@ object Query {
     options(1 to 5, "y", "%d year{s} ago")
 
   val statuses = Status.finishedNotCheated.map {
-    case s if s.is(_.Timeout)    => none
-    case s if s.is(_.NoStart)    => none
-    case s if s.is(_.Outoftime)  => Some(s.id -> "Clock Flag")
+    case s if s.is(_.Timeout) => none
+    case s if s.is(_.NoStart) => none
+    case s if s.is(_.UnknownFinish) => none
+    case s if s.is(_.Outoftime) => Some(s.id -> "Clock Flag")
     case s if s.is(_.VariantEnd) => Some(s.id -> "Variant End")
-    case s                       => Some(s.id -> s.toString)
+    case s => Some(s.id -> s.toString)
   }.flatten
 }

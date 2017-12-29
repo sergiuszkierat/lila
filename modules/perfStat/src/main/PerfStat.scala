@@ -15,7 +15,8 @@ case class PerfStat(
     worstLosses: Results,
     count: Count,
     resultStreak: ResultStreak,
-    playStreak: PlayStreak) {
+    playStreak: PlayStreak
+) {
 
   def id = _id
 
@@ -31,6 +32,8 @@ case class PerfStat(
       playStreak = playStreak agg pov
     )
   }
+
+  def userIds = bestWins.userIds ::: worstLosses.userIds
 }
 
 object PerfStat {
@@ -56,17 +59,18 @@ object PerfStat {
 case class ResultStreak(win: Streaks, loss: Streaks) {
   def agg(pov: Pov) = copy(
     win = win(~pov.win, pov)(1),
-    loss = loss(~pov.loss, pov)(1))
+    loss = loss(~pov.loss, pov)(1)
+  )
 }
 
 case class PlayStreak(nb: Streaks, time: Streaks, lastDate: Option[DateTime]) {
-  def agg(pov: Pov) = {
-    val seconds = pov.game.durationSeconds
+  def agg(pov: Pov) = pov.game.durationSeconds.fold(this) { seconds =>
     val cont = seconds < 3 * 60 * 60 && isContinued(pov.game.createdAt)
     copy(
       nb = nb(cont, pov)(1),
       time = time(cont, pov)(seconds),
-      lastDate = pov.game.updatedAtOrCreatedAt.some)
+      lastDate = pov.game.movedAt.some
+    )
   }
   def checkCurrent =
     if (isContinued(DateTime.now)) this
@@ -94,7 +98,8 @@ case class Streak(v: Int, from: Option[RatingAt], to: Option[RatingAt]) {
   private def inc(pov: Pov, by: Int) = copy(
     v = v + by,
     from = from orElse pov.player.rating.map { RatingAt(_, pov.game.createdAt, pov.gameId) },
-    to = pov.player.ratingAfter.map { RatingAt(_, pov.game.updatedAtOrCreatedAt, pov.gameId) })
+    to = pov.player.ratingAfter.map { RatingAt(_, pov.game.movedAt, pov.gameId) }
+  )
 }
 object Streak {
   val init = Streak(0, none, none)
@@ -112,7 +117,8 @@ case class Count(
     berserk: Int,
     opAvg: Avg,
     seconds: Int,
-    disconnects: Int) {
+    disconnects: Int
+) {
   def apply(pov: Pov) = copy(
     all = all + 1,
     rated = rated + pov.game.rated.fold(1, 0),
@@ -123,12 +129,13 @@ case class Count(
     berserk = berserk + pov.player.berserk.fold(1, 0),
     opAvg = pov.opponent.stableRating.fold(opAvg)(opAvg.agg),
     seconds = seconds + (pov.game.durationSeconds match {
-      case s if s > 3 * 60 * 60 => 0
-      case s                    => s
+      case Some(s) if s <= 3 * 60 * 60 => s
+      case _ => 0
     }),
     disconnects = disconnects + {
       ~pov.loss && pov.game.status == chess.Status.Timeout
-    }.fold(1, 0))
+    }.fold(1, 0)
+  )
 }
 object Count {
   val init = Count(all = 0, rated = 0, win = 0, loss = 0, draw = 0, tour = 0, berserk = 0, opAvg = Avg(0, 0), seconds = 0, disconnects = 0)
@@ -137,7 +144,8 @@ object Count {
 case class Avg(avg: Double, pop: Int) {
   def agg(v: Int) = copy(
     avg = ((avg * pop) + v) / (pop + 1),
-    pop = pop + 1)
+    pop = pop + 1
+  )
 }
 
 case class RatingAt(int: Int, at: DateTime, gameId: String)
@@ -146,25 +154,31 @@ object RatingAt {
     pov.player.stableRatingAfter.filter { r =>
       cur.fold(true) { c => r.compare(c.int) == comp }
     }.map {
-      RatingAt(_, pov.game.updatedAtOrCreatedAt, pov.game.id)
+      RatingAt(_, pov.game.movedAt, pov.game.id)
     } orElse cur
 }
 
 case class Result(opInt: Int, opId: UserId, at: DateTime, gameId: String)
 
-case class Results(results: List[Result]) {
-  def agg(pov: Pov, comp: Int) = pov.opponent.rating.ifTrue(pov.game.rated).fold(this) { opInt =>
-    copy(
-      results = (Result(
-        opInt,
-        UserId(~pov.opponent.userId),
-        pov.game.updatedAtOrCreatedAt,
-        pov.game.id
-      ) :: results).sortBy(_.opInt * comp) take Results.nb)
-  }
+case class Results(results: List[Result]) extends AnyVal {
+  def agg(pov: Pov, comp: Int) =
+    pov.opponent.stableRating
+      .ifTrue(pov.game.rated)
+      .ifTrue(pov.game.bothPlayersHaveMoved)
+      .fold(this) { opInt =>
+        Results(
+          (Result(
+            opInt,
+            UserId(~pov.opponent.userId),
+            pov.game.movedAt,
+            pov.game.id
+          ) :: results).sortBy(_.opInt * comp) take Results.nb
+        )
+      }
+  def userIds = results.map(_.opId)
 }
 object Results {
   val nb = 5
 }
 
-case class UserId(value: String)
+case class UserId(value: String) extends AnyVal

@@ -1,25 +1,21 @@
 package lila.hub
 
-import scala.concurrent.duration._
-
 import actorApi.map._
 import akka.actor._
-import akka.pattern.{ ask, pipe }
-import makeTimeout.short
 
 trait ActorMap extends Actor {
 
-  private val actors = scala.collection.mutable.Map.empty[String, ActorRef]
+  private val actors = scala.collection.mutable.AnyRefMap.empty[String, ActorRef]
 
   def mkActor(id: String): Actor
 
   def actorMapReceive: Receive = {
 
-    case Get(id)       => sender ! getOrMake(id)
+    case Get(id) => sender ! getOrMake(id)
 
     case Tell(id, msg) => getOrMake(id) forward msg
 
-    case TellAll(msg)  => actors.values foreach (_ forward msg)
+    case TellAll(msg) => actors.foreachValue(_ forward msg)
 
     case TellIds(ids, msg) => ids foreach { id =>
       actors get id foreach (_ forward msg)

@@ -1,19 +1,18 @@
 package lila.mod
 
-import chess.Color
-import chess.variant
+import chess.{ Color, variant }
 import lila.db.dsl._
 import lila.game.Game
 import lila.user.User
 
 import reactivemongo.bson._
-import scala.concurrent._
 
 final class BoostingApi(
     modApi: ModApi,
     collBoosting: Coll,
     nbGamesToMark: Int,
-    ratioGamesToMark: Double) {
+    ratioGamesToMark: Double
+) {
   import BoostingApi._
 
   private implicit val boostingRecordBSONHandler = Macros.handler[BoostingRecord]
@@ -22,7 +21,8 @@ final class BoostingApi(
     variant.Standard,
     variant.Chess960,
     variant.KingOfTheHill,
-    variant.ThreeCheck)
+    variant.ThreeCheck
+  )
 
   def getBoostingRecord(id: String): Fu[Option[BoostingRecord]] =
     collBoosting.byId[BoostingRecord](id)
@@ -35,7 +35,7 @@ final class BoostingApi(
       {
         (record.games >= (winner.count.rated * ratioGamesToMark)) ?? modApi.autoBooster(winner.id, loser.id)
       } >> {
-        (record.games >= (loser.count.rated * ratioGamesToMark)) ?? modApi.autoBooster(loser.id, winner.id)
+        (record.games >= (loser.count.rated * ratioGamesToMark)) ?? modApi.autoBooster(winner.id, loser.id)
       }
     }
 
@@ -61,17 +61,18 @@ final class BoostingApi(
             case Some(record) =>
               val newRecord = BoostingRecord(
                 _id = id,
-                games = record.games + 1)
+                games = record.games + 1
+              )
               createBoostRecord(newRecord) >> determineBoosting(newRecord, result.winner, result.loser)
             case none => createBoostRecord(BoostingRecord(
               _id = id,
-              games = 1))
+              games = 1
+            ))
           }
         }
         case none => funit
       }
-    }
-    else {
+    } else {
       funit
     }
   }
@@ -85,6 +86,7 @@ object BoostingApi {
   }
 
   case class GameResult(
-    winner: User,
-    loser: User)
+      winner: User,
+      loser: User
+  )
 }

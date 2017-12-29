@@ -1,7 +1,6 @@
 package lila.security
 
 import org.specs2.mutable.Specification
-import play.api.libs.json._
 
 class SpamTest extends Specification {
 
@@ -9,21 +8,21 @@ class SpamTest extends Specification {
 
   val foobar = """foo bar"""
   val _vc = """almost as cool as lichess.  \r\n\r\nhttps://www.velocitychess.com/ref/2573698"""
+  val _c2 = """https://chess24.com?ref=masterpart"""
   val _cb = s"""with $cb cheat. http://$cb.com/ http://$cb.com/bot/ChessBot.RAR"""
-  val _in = s"""his webpage: http://$in/2014/04/23/lichess-org-chess-bot/ http://$in/pages/lichess-bot/#lichess-bot"""
 
   "spam" should {
     "detect" in {
       detect(foobar) must beFalse
       detect(_vc) must beTrue
+      detect(_c2) must beTrue
       detect(_cb) must beTrue
-      detect(_in) must beTrue
     }
     "replace" in {
       replace(foobar) must_== foobar
       replace(_vc) must_== """almost as cool as lichess.  \r\n\r\nhttps://www.velocitychess.com"""
+      replace(_c2) must_== """https://chess24.com"""
       replace(_cb) must_== s"""with $tosUrl cheat. $tosUrl $tosUrl"""
-      replace(_in) must_== s"""his webpage: $tosUrl $tosUrl"""
     }
   }
 }

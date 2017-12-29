@@ -8,11 +8,12 @@ import lila.hub.actorApi.round.NbRounds
 import lila.socket.actorApi.NbMembers
 
 private final class KamonPusher(
-    countUsers: () => Int) extends Actor {
+    countUsers: () => Int
+) extends Actor {
 
   import KamonPusher._
 
-  override def preStart() {
+  override def preStart(): Unit = {
     scheduleTick
   }
 
@@ -45,21 +46,4 @@ object KamonPusher {
 
   def start(system: ActorSystem)(instance: => Actor) =
     system.lilaBus.subscribe(system.actorOf(Props(instance)), 'nbMembers, 'nbRounds)
-}
-
-import com.typesafe.config.Config
-import kamon.metric.{ MetricKey, Entity }
-import kamon.statsd._
-
-// don't replace . with _
-// replace / with .
-class KeepDotsMetricKeyGenerator(config: Config) extends SimpleMetricKeyGenerator(config) {
-
-  override def createNormalizer(strategy: String): Normalizer = strategy match {
-    case "keep-dots" => (s: String) ⇒ s
-      .replace(": ", "-")
-      .replace(" ", "_")
-      .replace("/", ".")
-    case _ => super.createNormalizer(strategy)
-  }
 }

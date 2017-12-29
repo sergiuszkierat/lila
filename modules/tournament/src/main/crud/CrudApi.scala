@@ -1,9 +1,8 @@
 package lila.tournament
 package crud
 
-import org.joda.time.{ DateTime, DateTimeZone }
-
 import lila.user.User
+import lila.user.UserRepo.lichessId
 
 final class CrudApi {
 
@@ -15,14 +14,16 @@ final class CrudApi {
     name = tour.name,
     homepageHours = ~tour.spotlight.flatMap(_.homepageHours),
     clockTime = tour.clock.limitInMinutes,
-    clockIncrement = tour.clock.increment,
+    clockIncrement = tour.clock.incrementSeconds,
     minutes = tour.minutes,
     variant = tour.variant.id,
+    position = tour.position.eco,
     date = tour.startsAt,
     image = ~tour.spotlight.flatMap(_.iconImg),
     headline = tour.spotlight.??(_.headline),
     description = tour.spotlight.??(_.description),
-    conditions = Condition.DataForm.AllSetup(tour.conditions))
+    conditions = Condition.DataForm.AllSetup(tour.conditions)
+  )
 
   def update(old: Tournament, data: CrudForm.Data) =
     TournamentRepo update updateTour(old, data) void
@@ -35,8 +36,9 @@ final class CrudApi {
   }
 
   private def empty = Tournament.make(
-    createdByUserId = "lichess",
-    clock = TournamentClock(0, 0),
+    by = Left(lichessId),
+    name = none,
+    clock = chess.Clock.Config(0, 0),
     minutes = 0,
     system = System.Arena,
     variant = chess.variant.Standard,
@@ -44,11 +46,12 @@ final class CrudApi {
     mode = chess.Mode.Rated,
     `private` = false,
     password = None,
-    waitMinutes = 0)
+    waitMinutes = 0
+  )
 
   private def updateTour(tour: Tournament, data: CrudForm.Data) = {
     import data._
-    val clock = TournamentClock((clockTime * 60).toInt, clockIncrement)
+    val clock = chess.Clock.Config((clockTime * 60).toInt, clockIncrement)
     val v = chess.variant.Variant.orDefault(variant)
     tour.copy(
       name = name,
@@ -61,13 +64,17 @@ final class CrudApi {
         speed = Schedule.Speed.fromClock(clock),
         variant = v,
         position = chess.StartingPosition.initial,
-        at = date).some,
+        at = date
+      ).some,
       spotlight = Spotlight(
         headline = headline,
         description = description,
         homepageHours = homepageHours.some.filterNot(0 ==),
         iconFont = none,
-        iconImg = image.some.filter(_.nonEmpty)).some,
-      conditions = data.conditions.convert)
+        iconImg = image.some.filter(_.nonEmpty)
+      ).some,
+      position = DataForm.startingPosition(data.position, v),
+      conditions = data.conditions.convert
+    )
   }
 }

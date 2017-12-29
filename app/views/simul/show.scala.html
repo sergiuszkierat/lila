@@ -1,7 +1,7 @@
 @(sim: lila.simul.Simul, socketVersion: Int, data: play.api.libs.json.JsObject, chatOption: Option[lila.chat.UserChat.Mine])(implicit ctx: Context)
 
 @underchat = {
-<div class="watchers hidden" data-icon="v">
+<div class="watchers hidden">
   <span class="list inline_userlist"></span>
 </div>
 }
@@ -10,15 +10,20 @@
 @jsAt(s"compiled/lichess.simul${isProd??(".min")}.js")
 @embedJs {
 lichess.simul = {
-data: @Html(J.stringify(data)),
+data: @safeJson(data),
 i18n: @jsI18n(),
 socketVersion: @socketVersion,
 userId: @jsUserId,
 chat: @jsOrNull(chatOption map { c =>
-chat.ChatJsData.json(c.chat, name = trans.chatRoom.str(), timeout = c.timeout)
+chat.ChatJsData.json(c.chat, name = trans.chatRoom.txt(), timeout = c.timeout, public = true)
 })
 };
 }
+}
+
+@moreCss = {
+@cssTag("chat.css")
+@if(sim.isCreated) { @cssTag("quote.css") }
 }
 
 @simul.layout(
@@ -27,6 +32,6 @@ side = simul.side(sim).some,
 underchat = underchat.some,
 chat = chat.dom().some,
 moreJs = moreJs,
-chessground = false) {
+moreCss = moreCss) {
 <div id="simul"></div>
 }

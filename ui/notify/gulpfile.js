@@ -1,54 +1,53 @@
-var source = require('vinyl-source-stream');
-var gulp = require('gulp');
-var gutil = require('gulp-util');
-var watchify = require('watchify');
-var browserify = require('browserify');
-var uglify = require('gulp-uglify');
-var streamify = require('gulp-streamify');
+const gulp = require("gulp");
+const browserify = require("browserify");
+const source = require('vinyl-source-stream');
+const tsify = require("tsify");
+const watchify = require("watchify");
+const gutil = require("gulp-util");
+const uglify = require('gulp-uglify');
+const buffer = require('vinyl-buffer');
 
-var sources = ['./src/main.js'];
-var destination = '../../public/compiled/';
-var onError = function(error) {
-  gutil.log(gutil.colors.red(error.message));
-};
-var standalone = 'LichessNotify';
+const destination = '../../public/compiled/';
 
-gulp.task('prod', function() {
-  return browserify('./src/main.js', {
-    standalone: standalone
-  }).bundle()
+function onError(error) {
+  return gutil.log(gutil.colors.red(error.message));
+}
+
+function build(debug) {
+  return browserify('src/main.ts', {
+      standalone: 'LichessNotify',
+      debug: debug
+    })
+    .plugin(tsify);
+}
+
+const watchedBrowserify = watchify(build(true));
+
+function bundle() {
+  return watchedBrowserify
+    .bundle()
     .on('error', onError)
-    .pipe(source('lichess.notify.min.js'))
-    .pipe(streamify(uglify()))
+    .pipe(source('lichess.notify.js'))
+    .pipe(buffer())
     .pipe(gulp.dest(destination));
-});
+}
+
+gulp.task("default", [], bundle);
+watchedBrowserify.on("update", bundle);
+watchedBrowserify.on("log", gutil.log);
 
 gulp.task('dev', function() {
-  return browserify('./src/main.js', {
-    standalone: standalone
-  }).bundle()
-    .on('error', onError)
+  return build(true)
+    .bundle()
     .pipe(source('lichess.notify.js'))
     .pipe(gulp.dest(destination));
 });
 
-gulp.task('watch', function() {
-  var opts = watchify.args;
-  opts.debug = true;
-  opts.standalone = standalone;
-
-  var bundleStream = watchify(browserify(sources, opts))
-    .on('update', rebundle)
-    .on('log', gutil.log);
-
-  function rebundle() {
-    return bundleStream.bundle()
-      .on('error', onError)
-      .pipe(source('lichess.notify.js'))
-      .pipe(gulp.dest(destination));
-  }
-
-  return rebundle();
+gulp.task("prod", [], function() {
+  return build(false)
+    .bundle()
+    .pipe(source('lichess.notify.min.js'))
+    .pipe(buffer())
+    .pipe(uglify())
+    .pipe(gulp.dest(destination));
 });
-
-gulp.task('default', ['watch']);

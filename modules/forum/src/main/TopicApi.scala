@@ -18,7 +18,9 @@ private[forum] final class TopicApi(
     shutup: ActorSelection,
     timeline: ActorSelection,
     detectLanguage: lila.common.DetectLanguage,
-    mentionNotifier: MentionNotifier) {
+    mentionNotifier: MentionNotifier,
+    bus: lila.common.Bus
+) {
 
   import BSONHandlers._
 
@@ -38,7 +40,8 @@ private[forum] final class TopicApi(
 
   def makeTopic(
     categ: Categ,
-    data: DataForm.TopicData)(implicit ctx: UserContext): Fu[Topic] =
+    data: DataForm.TopicData
+  )(implicit ctx: UserContext): Fu[Topic] =
     TopicRepo.nextSlug(categ, data.name) zip detectLanguage(data.post.text) flatMap {
       case (slug, lang) =>
         val topic = Topic.make(
@@ -46,10 +49,11 @@ private[forum] final class TopicApi(
           slug = slug,
           name = data.name,
           troll = ctx.troll,
-          hidden = categ.quiet)
+          hidden = categ.quiet || data.looksLikeVenting
+        )
         val post = Post.make(
           topicId = topic.id,
-          author = data.post.author,
+          author = none,
           userId = ctx.me map (_.id),
           ip = ctx.isAnon option ctx.req.remoteAddress,
           troll = ctx.troll,
@@ -57,36 +61,43 @@ private[forum] final class TopicApi(
           text = lila.security.Spam.replace(data.post.text),
           lang = lang map (_.language),
           number = 1,
-          categId = categ.id)
+          categId = categ.id,
+          modIcon = (~data.post.modIcon && ~ctx.me.map(MasterGranter(_.PublicMod))).option(true)
+        )
         env.postColl.insert(post) >>
           env.topicColl.insert(topic withPost post) >>
           env.categColl.update($id(categ.id), categ withTopic post) >>-
-          (!categ.quiet ?? (indexer ! InsertPost(post))) >>
+          (!categ.quiet ?? (indexer ! InsertPost(post))) >>-
           (!categ.quiet ?? env.recent.invalidate) >>-
           ctx.userId.?? { userId =>
             val text = topic.name + " " + post.text
             shutup ! post.isTeam.fold(
               lila.hub.actorApi.shutup.RecordTeamForumMessage(userId, text),
-              lila.hub.actorApi.shutup.RecordPublicForumMessage(userId, text))
+              lila.hub.actorApi.shutup.RecordPublicForumMessage(userId, text)
+            )
           } >>- {
             (ctx.userId ifFalse post.troll ifFalse categ.quiet) ?? { userId =>
               timeline ! Propagate(ForumPost(userId, topic.id.some, topic.name, post.id)).|>(prop =>
-                post.isStaff.fold(prop toStaffFriendsOf userId, prop toFollowersOf userId)
-              )
+                post.isStaff.fold(prop toStaffFriendsOf userId, prop toFollowersOf userId))
             }
             lila.mon.forum.post.create()
-          } >>- mentionNotifier.notifyMentionedUsers(post, topic) inject topic
+          } >>- {
+            mentionNotifier.notifyMentionedUsers(post, topic)
+            bus.publish(actorApi.CreatePost(post, topic), 'forumPost)
+          } inject topic
     }
 
   def paginator(categ: Categ, page: Int, troll: Boolean): Fu[Paginator[TopicView]] = {
     val adapter = new Adapter[Topic](
       collection = env.topicColl,
-      selector = TopicRepo(troll) byCategQuery categ,
+      selector = TopicRepo(troll) byCategNotStickyQuery categ,
       projection = $empty,
       sort = $sort.updatedDesc
-    ) mapFuture { topic =>
-      env.postColl.byId[Post](topic lastPostId troll) map { post =>
-        TopicView(categ, topic, post, env.postApi lastPageOf topic, troll)
+    ) mapFutureList { topics =>
+      env.postColl.optionsByOrderedIds[Post, String](topics.map(_ lastPostId troll))(_.id) map { posts =>
+        topics zip posts map {
+          case topic ~ post => TopicView(categ, topic, post, env.postApi lastPageOf topic, troll)
+        }
       }
     }
     val cachedAdapter =
@@ -95,14 +106,27 @@ private[forum] final class TopicApi(
     Paginator(
       adapter = cachedAdapter,
       currentPage = page,
-      maxPerPage = maxPerPage)
+      maxPerPage = maxPerPage
+    )
   }
+
+  def getSticky(categ: Categ, troll: Boolean): Fu[List[TopicView]] =
+    TopicRepo.stickyByCateg(categ) flatMap { topics =>
+      scala.concurrent.Future.sequence(topics map {
+        topic =>
+          {
+            env.postColl.byId[Post](topic lastPostId troll) map { post =>
+              TopicView(categ, topic, post, env.postApi lastPageOf topic, troll)
+            }
+          }
+      })
+    }
 
   def delete(categ: Categ, topic: Topic): Funit =
     PostRepo.idsByTopicId(topic.id) flatMap { postIds =>
       (PostRepo removeByTopic topic.id zip env.topicColl.remove($id(topic.id))) >>
         (env.categApi denormalize categ) >>-
-        (indexer ! RemovePosts(postIds)) >>
+        (indexer ! RemovePosts(postIds)) >>-
         env.recent.invalidate
     }
 
@@ -115,16 +139,22 @@ private[forum] final class TopicApi(
   def toggleHide(categ: Categ, topic: Topic, mod: User): Funit =
     TopicRepo.hide(topic.id, topic.visibleOnHome) >> {
       MasterGranter(_.ModerateForum)(mod) ?? {
-        PostRepo.hideByTopic(topic.id, topic.visibleOnHome) zip
+        PostRepo.hideByTopic(topic.id, topic.visibleOnHome) >>
           modLog.toggleHideTopic(mod.id, categ.name, topic.name, topic.visibleOnHome)
-      } >> env.recent.invalidate
+      } >>- env.recent.invalidate
+    }
+
+  def toggleSticky(categ: Categ, topic: Topic, mod: User): Funit =
+    TopicRepo.sticky(topic.id, !topic.isSticky) >> {
+      MasterGranter(_.ModerateForum)(mod) ??
+        modLog.toggleStickyTopic(mod.id, categ.name, topic.name, topic.isSticky)
     }
 
   def denormalize(topic: Topic): Funit = for {
-    nbPosts ← PostRepo countByTopics List(topic.id)
-    lastPost ← PostRepo lastByTopics List(topic.id)
-    nbPostsTroll ← PostRepoTroll countByTopics List(topic.id)
-    lastPostTroll ← PostRepoTroll lastByTopics List(topic.id)
+    nbPosts ← PostRepo countByTopic topic
+    lastPost ← PostRepo lastByTopic topic
+    nbPostsTroll ← PostRepoTroll countByTopic topic
+    lastPostTroll ← PostRepoTroll lastByTopic topic
     _ ← env.topicColl.update($id(topic.id), topic.copy(
       nbPosts = nbPosts,
       lastPostId = lastPost ?? (_.id),

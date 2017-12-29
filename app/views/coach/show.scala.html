@@ -1,4 +1,4 @@
-@(c: lila.coach.Coach.WithUser, coachReviews: lila.coach.CoachReview.Reviews, studies: Seq[lila.study.Study.WithChaptersAndLiked], reviewApproval: Boolean)(implicit ctx: Context)
+@(c: lila.coach.Coach.WithUser, coachReviews: lila.coach.CoachReview.Reviews, studies: Seq[lila.study.Study.WithChaptersAndLiked], myReview: Option[lila.coach.CoachReview])(implicit ctx: Context)
 
 @moreCss = {
 @cssTag("coach.css")
@@ -13,7 +13,7 @@ $(function() {
 $(".bar-rating").barrating();
 $('.review-form .toggle').click(function() {
 $(this).remove();
-$('.review-form form').slideDown(500);
+$('.review-form form').show();
 });
 });
 }
@@ -21,8 +21,15 @@ $('.review-form form').slideDown(500);
 }
 
 @side = {
-@reviewForm(c, reviewApproval)
-@reviews(c, coachReviews)
+<div class="coach-side">
+  <div class="profile">
+    <a class="blue" href="@routes.User.show(c.user.username)">View @c.user.username lichess profile</a>
+  </div>
+  @if(ctx.me.exists(_.id != c.user.id)) {
+  @reviewForm(c, myReview)
+  }
+  @reviews(c, coachReviews)
+</div>
 }
 
 @section(title: String, text: Option[lila.coach.CoachProfile.RichText]) = {
@@ -43,7 +50,7 @@ moreCss = moreCss) {
     @pic(c, 250)
     @defining(c.user.profileOrDefault) { profile =>
     <div class="overview">
-      <h1>
+      <h1 class="@if(c.user.realNameOrUsername.size > 20) { large }">
         @c.user.title.map { t => @t }@c.user.realNameOrUsername
       </h1>
       @c.coach.profile.headline.map { h =>
@@ -57,10 +64,8 @@ moreCss = moreCss) {
               @profile.nonEmptyLocation.map { l =>
               <span class="location">@l</span>,
               }
-              @profile.countryInfo.map {
-              case (code, name) => {
-              <span class="country"><img class="flag" src="@staticUrl(s"images/flags/$code.png")" /> @name</span>
-              }
+              @profile.countryInfo.map { c =>
+              <span class="country"><img class="flag" src="@staticUrl(s"images/flags/${c.code}.png")" /> @c.name</span>
               }
             </td>
           </tr>

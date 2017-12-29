@@ -20,9 +20,10 @@ private final class Photographer(coll: Coll) {
 
       val image = DbImage.make(
         id = pictureId(coachId),
-        name = uploaded.filename,
+        name = sanitizeName(uploaded.filename),
         contentType = uploaded.contentType,
-        file = uploaded.ref.file)
+        file = uploaded.ref.file
+      )
 
       coll.update($id(image.id), image, upsert = true) inject image
     }
@@ -32,6 +33,11 @@ private final class Photographer(coll: Coll) {
     import com.sksamuel.scrimage._
 
     Image.fromFile(file).cover(500, 500).output(file)
+  }
+
+  private def sanitizeName(name: String) = {
+    // the char `^` breaks play, even URL encoded
+    java.net.URLEncoder.encode(name, "UTF-8").replace("%", "")
   }
 }
 

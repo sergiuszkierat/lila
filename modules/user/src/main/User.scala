@@ -2,9 +2,8 @@ package lila.user
 
 import scala.concurrent.duration._
 
-import lila.common.LightUser
+import lila.common.{ LightUser, EmailAddress }
 
-import chess.Speed
 import lila.rating.PerfType
 import org.joda.time.DateTime
 
@@ -21,25 +20,25 @@ case class User(
     engine: Boolean = false,
     booster: Boolean = false,
     toints: Int = 0,
-    playTime: Option[User.PlayTime] = None,
+    playTime: Option[User.PlayTime],
     title: Option[String] = None,
     createdAt: DateTime,
     seenAt: Option[DateTime],
     kid: Boolean,
     lang: Option[String],
-    plan: Plan) extends Ordered[User] {
+    plan: Plan,
+    reportban: Boolean = false
+) extends Ordered[User] {
 
   override def equals(other: Any) = other match {
     case u: User => id == u.id
-    case _       => false
+    case _ => false
   }
 
   override def toString =
     s"User $username(${perfs.bestRating}) games:${count.game}${troll ?? " troll"}${engine ?? " engine"}"
 
   def light = LightUser(id = id, name = username, title = title, isPatron = isPatron)
-
-  def titleName = title.fold(username)(_ + " " + username)
 
   def realNameOrUsername = profileOrDefault.nonEmptyRealName | username
 
@@ -73,6 +72,8 @@ case class User(
     (nowMillis - s.getMillis).millis
   }
 
+  def everLoggedIn = seenAt.??(createdAt !=)
+
   def lame = booster || engine
 
   def lameOrTroll = lame || troll
@@ -84,11 +85,15 @@ case class User(
   def lightCount = User.LightCount(light, count.game)
 
   private def best4Of(perfTypes: List[PerfType]) =
-    perfTypes.sortBy { pt => -perfs(pt).nb } take 4
+    perfTypes.sortBy { pt =>
+      -(perfs(pt).nb * PerfType.totalTimeRoughEstimation.get(pt).fold(0)(_.centis))
+    } take 4
+
+  private val firstRow: List[PerfType] = List(PerfType.Bullet, PerfType.Blitz, PerfType.Rapid, PerfType.Classical, PerfType.Correspondence)
+  private val secondRow: List[PerfType] = List(PerfType.UltraBullet, PerfType.Crazyhouse, PerfType.Chess960, PerfType.KingOfTheHill, PerfType.ThreeCheck, PerfType.Antichess, PerfType.Atomic, PerfType.Horde, PerfType.RacingKings)
 
   def best8Perfs: List[PerfType] =
-    best4Of(List(PerfType.Bullet, PerfType.Blitz, PerfType.Classical, PerfType.Correspondence)) :::
-      best4Of(List(PerfType.Crazyhouse, PerfType.Chess960, PerfType.KingOfTheHill, PerfType.ThreeCheck, PerfType.Antichess, PerfType.Atomic, PerfType.Horde, PerfType.RacingKings))
+    best4Of(firstRow) ::: best4Of(secondRow)
 
   def hasEstablishedRating(pt: PerfType) = perfs(pt).established
 
@@ -97,40 +102,52 @@ case class User(
   def activePlan: Option[Plan] = if (plan.active) Some(plan) else None
 
   def planMonths: Option[Int] = activePlan.map(_.months)
+
+  def createdSinceDays(days: Int) = createdAt isBefore DateTime.now.minusDays(days)
 }
 
 object User {
 
   type ID = String
 
-  type CredentialCheck = String => Boolean
+  type CredentialCheck = ClearPassword => Boolean
   case class LoginCandidate(user: User, check: CredentialCheck) {
-    def apply(password: String): Option[User] = check(password) option user
+    def apply(p: ClearPassword): Option[User] = {
+      val res = check(p)
+      lila.mon.user.auth.result(res)()
+      res option user
+    }
   }
 
   val anonymous = "Anonymous"
+
+  val idPattern = """^[\w-]{3,20}$""".r.pattern
 
   case class LightPerf(user: LightUser, perfKey: String, rating: Int, progress: Int)
   case class LightCount(user: LightUser, count: Int)
 
   case class Active(user: User)
 
+  case class Emails(current: Option[EmailAddress], previous: Option[EmailAddress])
+
+  case class ClearPassword(value: String) extends AnyVal {
+    override def toString = "ClearPassword(****)"
+  }
+
   case class PlayTime(total: Int, tv: Int) {
     import org.joda.time.Period
     def totalPeriod = new Period(total * 1000l)
-    def tvPeriod = (tv > 0) option new Period(tv * 1000l)
+    def tvPeriod = new Period(tv * 1000l)
+    def nonEmptyTvPeriod = (tv > 0) option tvPeriod
   }
-  import lila.db.BSON.BSONJodaDateTimeHandler
   implicit def playTimeHandler = reactivemongo.bson.Macros.handler[PlayTime]
 
-  // Matches a lichess username with an '@' prefix if it is used as a single
-  // word (i.e. preceded and followed by space or appropriate punctuation):
-  // Yes: everyone says @ornicar is a pretty cool guy
-  // No: contact@lichess.org, @1, http://example.com/@happy0
-  val atUsernameRegex = """(?<=\s|^)@(?>([a-zA-Z_-][\w-]{1,19}))(?![\w-])""".r
+  // what existing usernames are like
+  val historicalUsernameRegex = """(?i)[a-z0-9][\w-]*[a-z0-9]""".r
+  // what new usernames should be like
+  val newUsernameRegex = """(?i)[a-z][\w-]*[a-z0-9]""".r
 
-  val usernameRegex = """^[\w-]+$""".r
-  def couldBeUsername(str: String) = usernameRegex.pattern.matcher(str).matches
+  def couldBeUsername(str: User.ID) = historicalUsernameRegex.pattern.matcher(str).matches
 
   def normalize(username: String) = username.toLowerCase
 
@@ -145,7 +162,8 @@ object User {
     "CM" -> "Candidate Master",
     "WCM" -> "Woman Candidate Master",
     "WNM" -> "Woman National Master",
-    "LM" -> "Lichess Master")
+    "LM" -> "Lichess Master"
+  )
 
   val titlesMap = titles.toMap
 
@@ -174,8 +192,13 @@ object User {
     def glicko(perf: String) = s"$perfs.$perf.gl"
     val email = "email"
     val mustConfirmEmail = "mustConfirmEmail"
+    val prevEmail = "prevEmail"
     val colorIt = "colorIt"
     val plan = "plan"
+    val reportban = "reportban"
+    val salt = "salt"
+    val bpass = "bpass"
+    val sha512 = "sha512"
   }
 
   import lila.db.BSON
@@ -209,7 +232,9 @@ object User {
       kid = r boolD kid,
       lang = r strO lang,
       title = r strO title,
-      plan = r.getO[Plan](plan) | Plan.empty)
+      plan = r.getO[Plan](plan) | Plan.empty,
+      reportban = r boolD reportban
+    )
 
     def writes(w: BSON.Writer, o: User) = BSONDocument(
       id -> o.id,
@@ -230,6 +255,8 @@ object User {
       kid -> w.boolO(o.kid),
       lang -> o.lang,
       title -> o.title,
-      plan -> o.plan.nonEmpty)
+      plan -> o.plan.nonEmpty,
+      reportban -> w.boolO(o.reportban)
+    )
   }
 }

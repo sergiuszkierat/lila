@@ -1,7 +1,7 @@
 package lila.chat
 
 import lila.db.dsl._
-import lila.user.{ User, UserRepo }
+import lila.user.User
 
 import org.joda.time.DateTime
 import reactivemongo.bson._
@@ -9,7 +9,8 @@ import scala.concurrent.duration._
 
 final class ChatTimeout(
     coll: Coll,
-    duration: FiniteDuration) {
+    duration: FiniteDuration
+) {
 
   import ChatTimeout._
 
@@ -23,17 +24,19 @@ final class ChatTimeout(
         "user" -> user.id,
         "reason" -> reason,
         "createdAt" -> DateTime.now,
-        "expiresAt" -> DateTime.now.plusSeconds(duration.toSeconds.toInt))).void
+        "expiresAt" -> DateTime.now.plusSeconds(duration.toSeconds.toInt)
+      )).void
     }
 
-  def isActive(chatId: String, userId: User.ID): Fu[Boolean] =
+  def isActive(chatId: Chat.Id, userId: User.ID): Fu[Boolean] =
     coll.exists($doc(
       "chat" -> chatId,
       "user" -> userId,
-      "expiresAt" $exists true))
+      "expiresAt" $exists true
+    ))
 
-  def activeUserIds(chat: UserChat): Fu[List[String]] =
-    coll.primitive[String]($doc(
+  def activeUserIds(chat: UserChat): Fu[List[User.ID]] =
+    coll.primitive[User.ID]($doc(
       "chat" -> chat.id,
       "expiresAt" $exists true
     ), "user")

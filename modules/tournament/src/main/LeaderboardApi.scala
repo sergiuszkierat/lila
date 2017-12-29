@@ -1,13 +1,11 @@
 package lila.tournament
 
 import org.joda.time.DateTime
-import play.api.libs.iteratee._
 import reactivemongo.bson._
-import scala.concurrent.duration._
+import reactivemongo.api.ReadPreference
 
 import lila.common.Maths
 import lila.common.paginator.Paginator
-import lila.db.BSON._
 import lila.db.dsl._
 import lila.db.paginator.Adapter
 import lila.rating.PerfType
@@ -15,21 +13,29 @@ import lila.user.User
 
 final class LeaderboardApi(
     coll: Coll,
-    maxPerPage: Int) {
+    maxPerPage: Int
+) {
 
   import LeaderboardApi._
   import BSONHandlers._
 
-  def recentByUser(user: User, page: Int) = paginator(user, page, $doc("d" -> -1))
+  def recentByUser(user: User, page: Int) = paginator(user, page, $sort desc "d")
 
-  def bestByUser(user: User, page: Int) = paginator(user, page, $doc("w" -> 1))
+  def bestByUser(user: User, page: Int) = paginator(user, page, $sort asc "w")
+
+  def timeRange(userId: User.ID, range: (DateTime, DateTime)): Fu[List[Entry]] =
+    coll.find($doc(
+      "u" -> userId,
+      "d" $gt range._1 $lt range._2
+    )).sort($sort desc "d").list[Entry]()
 
   def chart(user: User): Fu[ChartData] = {
     import reactivemongo.bson._
     import reactivemongo.api.collections.bson.BSONBatchCommands.AggregationFramework._
-    coll.aggregate(
+    coll.aggregateWithReadPreference(
       Match($doc("u" -> user.id)),
-      List(GroupField("v")("nb" -> SumValue(1), "points" -> Push("s"), "ratios" -> Push("w")))
+      List(GroupField("v")("nb" -> SumValue(1), "points" -> PushField("s"), "ratios" -> PushField("w"))),
+      ReadPreference.secondaryPreferred
     ).map {
         _.firstBatch map leaderboardAggregationResultBSONHandler.read
       }.map { aggs =>
@@ -39,7 +45,8 @@ final class LeaderboardApi(
               _ -> ChartData.PerfResult(
                 nb = agg.nb,
                 points = ChartData.Ints(agg.points),
-                rank = ChartData.Ints(agg.ratios))
+                rank = ChartData.Ints(agg.ratios)
+              )
             }
           }.sortLike(PerfType.leaderboardable, _._1)
         }
@@ -51,10 +58,12 @@ final class LeaderboardApi(
       collection = coll,
       selector = $doc("u" -> user.id),
       projection = $empty,
-      sort = sort
+      sort = sort,
+      readPreference = ReadPreference.secondaryPreferred
     ) mapFutureList withTournaments,
     currentPage = page,
-    maxPerPage = maxPerPage)
+    maxPerPage = maxPerPage
+  )
 
   private def withTournaments(entries: Seq[Entry]): Fu[Seq[TourEntry]] =
     TournamentRepo byIds entries.map(_.tourId) map { tours =>
@@ -70,20 +79,21 @@ object LeaderboardApi {
 
   case class TourEntry(tour: Tournament, entry: Entry)
 
-  case class Ratio(value: Double)
+  case class Ratio(value: Double) extends AnyVal
 
   case class Entry(
-    id: String, // same as tournament player id
-    userId: String,
-    tourId: String,
-    nbGames: Int,
-    score: Int,
-    rank: Int,
-    rankRatio: Ratio, // ratio * rankRatioMultiplier. function of rank and tour.nbPlayers. less is better.
-    freq: Option[Schedule.Freq],
-    speed: Option[Schedule.Speed],
-    perf: PerfType,
-    date: DateTime)
+      id: String, // same as tournament player id
+      userId: String,
+      tourId: Tournament.ID,
+      nbGames: Int,
+      score: Int,
+      rank: Int,
+      rankRatio: Ratio, // ratio * rankRatioMultiplier. function of rank and tour.nbPlayers. less is better.
+      freq: Option[Schedule.Freq],
+      speed: Option[Schedule.Speed],
+      perf: PerfType,
+      date: DateTime
+  )
 
   case class ChartData(perfResults: List[(PerfType, ChartData.PerfResult)]) {
     import ChartData._
@@ -92,7 +102,8 @@ object LeaderboardApi {
         case (acc, res) => PerfResult(
           nb = acc.nb + res.nb,
           points = res.points ::: acc.points,
-          rank = res.rank ::: acc.rank)
+          rank = res.rank ::: acc.rank
+        )
       }
       case Nil => PerfResult(0, Ints(Nil), Ints(Nil))
     }
@@ -101,8 +112,8 @@ object LeaderboardApi {
   object ChartData {
 
     case class Ints(v: List[Int]) {
-      def mean = v.toNel map Maths.mean[Int]
-      def median = v.toNel map Maths.median[Int]
+      def mean = Maths.mean(v)
+      def median = Maths.median(v)
       def sum = v.sum
       def :::(i: Ints) = Ints(v ::: i.v)
     }

@@ -9,15 +9,15 @@ private[forum] final class DataForm(val captcher: akka.actor.ActorSelection) ext
 
   val postMapping = mapping(
     "text" -> text(minLength = 3),
-    "author" -> optional(text),
-    "gameId" -> nonEmptyText,
-    "move" -> nonEmptyText
+    "gameId" -> text,
+    "move" -> text,
+    "modIcon" -> optional(boolean)
   )(PostData.apply)(PostData.unapply)
     .verifying(captchaFailMessage, validateCaptcha _)
 
   val post = Form(postMapping)
 
-  val postEdit = Form(mapping("changes" -> text(minLength=3))(PostEdit.apply)(PostEdit.unapply))
+  val postEdit = Form(mapping("changes" -> text(minLength = 3))(PostEdit.apply)(PostEdit.unapply))
 
   def postWithCaptcha = withCaptcha(post)
 
@@ -30,14 +30,30 @@ private[forum] final class DataForm(val captcher: akka.actor.ActorSelection) ext
 object DataForm {
 
   case class PostData(
-    text: String,
-    author: Option[String],
-    gameId: String,
-    move: String)
+      text: String,
+      gameId: String,
+      move: String,
+      modIcon: Option[Boolean]
+  )
 
   case class TopicData(
-    name: String,
-    post: PostData)
+      name: String,
+      post: PostData
+  ) {
 
-    case class PostEdit(changes: String)
+    def looksLikeVenting = List(name, post.text) exists { txt =>
+      mostlyUpperCase(txt) || ventingPattern.matcher(txt).find
+    }
+  }
+
+  private def mostlyUpperCase(txt: String) = {
+    val extract = txt.take(300)
+    (extract.contains(' ') || extract.size > 5) && {
+      extract.count(_.isUpper) > extract.count(_.isLower) * 2
+    }
+  }
+
+  private val ventingPattern = """cheat|engine|rating|loser|banned|abort""".r.pattern
+
+  case class PostEdit(changes: String)
 }

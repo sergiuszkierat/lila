@@ -2,12 +2,11 @@ package controllers
 
 import akka.pattern.ask
 import play.api.data._, Forms._
-import play.api.libs.concurrent.Akka
-import play.api.libs.iteratee._
 import play.api.libs.json._
-import play.api.mvc._, Results._
+import play.api.mvc._
 
 import lila.app._
+import lila.api.Context
 import lila.common.HTTPRequest
 import lila.hub.actorApi.captcha.ValidCaptcha
 import makeTimeout.large
@@ -30,13 +29,15 @@ object Main extends LilaController {
               Env.api.Accessibility.blindCookieName,
               if (enable == "0") "" else Env.api.Accessibility.hash,
               maxAge = Env.api.Accessibility.blindCookieMaxAge.some,
-              httpOnly = true.some)
-        })
+              httpOnly = true.some
+            )
+        }
+      )
     }
   }
 
   def websocket = SocketOption { implicit ctx =>
-    get("sri") ?? { uid =>
+    getSocketUid("sri") ?? { uid =>
       Env.site.socketHandler(uid, ctx.userId, get("flag")) map some
     }
   }
@@ -63,12 +64,6 @@ object Main extends LilaController {
     }
   }
 
-  def themepicker = Open { implicit ctx =>
-    fuccess {
-      html.base.themepicker()
-    }
-  }
-
   def lag = Open { implicit ctx =>
     fuccess {
       html.site.lag()
@@ -90,35 +85,38 @@ object Main extends LilaController {
   }
 
   def jslog(id: String) = Open { ctx =>
-    val known = ctx.me.??(_.engine)
-    val referer = HTTPRequest.referer(ctx.req)
-    val name = get("n", ctx.req) | "?"
-    if (!known) {
-      lila.log("cheat").branch("jslog").info(s"${ctx.req.remoteAddress} ${ctx.userId} $referer $name")
-    }
-    lila.mon.cheat.cssBot()
-    ctx.userId.ifFalse(known) ?? {
-      Env.report.api.autoBotReport(_, referer, name)
-    }
-    lila.game.GameRepo pov id map {
-      _ ?? lila.game.GameRepo.setBorderAlert
-    } inject Ok
+    Env.round.selfReport(
+      userId = ctx.userId,
+      ip = HTTPRequest lastRemoteAddress ctx.req,
+      fullId = id,
+      name = get("n", ctx.req) | "?"
+    )
+    NoContent.fuccess
+  }
+
+  /**
+   * Event monitoring endpoint
+   */
+  def jsmon(event: String) = Action {
+    if (event == "socket_gap") lila.mon.jsmon.socketGap()
+    else lila.mon.jsmon.unknown()
+    NoContent
   }
 
   private lazy val glyphsResult: Result = {
     import chess.format.pgn.Glyph
-    import lila.socket.tree.Node.glyphWriter
+    import lila.tree.Node.glyphWriter
     Ok(Json.obj(
       "move" -> Glyph.MoveAssessment.display,
       "position" -> Glyph.PositionAssessment.display,
       "observation" -> Glyph.Observation.display
     )) as JSON
   }
-  def glyphs = Action { req =>
+  def glyphs = Action {
     glyphsResult
   }
 
-  def image(id: String, hash: String, name: String) = Action.async { req =>
+  def image(id: String, hash: String, name: String) = Action.async {
     Env.db.image.fetch(id) map {
       case None => NotFound
       case Some(image) =>
@@ -126,22 +124,31 @@ object Main extends LilaController {
         Ok(image.data).withHeaders(
           CONTENT_TYPE -> image.contentType.getOrElse("image/jpeg"),
           CONTENT_DISPOSITION -> image.name,
-          CONTENT_LENGTH -> image.size.toString)
+          CONTENT_LENGTH -> image.size.toString
+        )
     }
   }
 
-  val robots = Action { _ =>
+  val robots = Action {
     Ok {
-      if (Env.api.Net.Crawlable)
-        "User-agent: *\nAllow: /\nDisallow: /game/export"
-      else
-        "User-agent: *\nDisallow: /"
+      if (Env.api.Net.Crawlable) "User-agent: *\nAllow: /\nDisallow: /game/export"
+      else "User-agent: *\nDisallow: /"
     }
   }
 
-  def notFound(req: RequestHeader): Fu[Result] =
-    reqToCtx(req) map { implicit ctx =>
-      lila.mon.http.response.code404()
-      NotFound(html.base.notFound())
-    }
+  def renderNotFound(req: RequestHeader): Fu[Result] =
+    reqToCtx(req) map renderNotFound
+
+  def renderNotFound(ctx: Context): Result = {
+    lila.mon.http.response.code404()
+    NotFound(html.base.notFound()(ctx))
+  }
+
+  def fpmenu = Open { implicit ctx =>
+    Ok(html.base.fpmenu()).fuccess
+  }
+
+  def getFishnet = Open { implicit ctx =>
+    Ok(html.site.getFishnet()).fuccess
+  }
 }

@@ -9,14 +9,15 @@ import scala.collection.JavaConversions._
 object PlayApp {
 
   val startedAt = DateTime.now
+  val startedAtMillis = nowMillis
 
   def uptime = new Period(startedAt, DateTime.now)
 
   def startedSinceMinutes(minutes: Int) =
-    startedAt.isBefore(DateTime.now minusMinutes minutes)
+    startedSinceSeconds(minutes * 60)
 
   def startedSinceSeconds(seconds: Int) =
-    startedAt.isBefore(DateTime.now minusSeconds seconds)
+    startedAtMillis < (nowMillis - (seconds * 1000))
 
   def loadConfig: Config = withApp(_.configuration.underlying)
 
@@ -29,13 +30,15 @@ object PlayApp {
     play.api.libs.concurrent.Akka.system
   }
 
-  lazy val langs = loadConfig.getStringList("play.i18n.langs").toList map Lang.apply
+  lazy val langs = loadConfig.getStringList("play.i18n.langs").map(Lang.apply)(scala.collection.breakOut)
 
   private def enableScheduler = !(loadConfig getBoolean "app.scheduler.disabled")
 
-  def scheduler = new Scheduler(system.scheduler,
+  lazy val scheduler = new Scheduler(
+    system.scheduler,
     enabled = enableScheduler && isServer,
-    debug = loadConfig getBoolean "app.scheduler.debug")
+    debug = loadConfig getBoolean "app.scheduler.debug"
+  )
 
   def lifecycle = withApp(_.injector.instanceOf[play.api.inject.ApplicationLifecycle])
 

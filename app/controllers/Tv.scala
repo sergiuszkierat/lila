@@ -1,11 +1,10 @@
 package controllers
 
 import play.api.mvc._
-import play.twirl.api.Html
 
 import lila.api.Context
 import lila.app._
-import lila.game.{ GameRepo, Game => GameModel, Pov }
+import lila.game.{ GameRepo, Pov }
 import views._
 
 object Tv extends LilaController {
@@ -22,7 +21,7 @@ object Tv extends LilaController {
       case Some(channel) =>
         OptionFuResult(GameRepo.pov(gameId, color)) { pov =>
           Env.tv.tv.getChampions zip
-            Env.game.crosstableApi(pov.game) map {
+            Env.game.crosstableApi.withMatchup(pov.game) map {
               case (champions, crosstable) => Ok(html.tv.sides(channel, champions, pov, crosstable, streams = Nil))
             }
         }
@@ -34,14 +33,16 @@ object Tv extends LilaController {
       case (game, history) =>
         val flip = getBool("flip")
         val pov = flip.fold(Pov second game, Pov first game)
-        val onTv = lila.round.OnTv(channel.key, flip)
+        val onTv = lila.round.OnLichessTv(channel.key, flip)
         negotiate(
           html = {
             Env.api.roundApi.watcher(pov, lila.api.Mobile.Api.currentVersion, tv = onTv.some) zip
-              Env.game.crosstableApi(game) zip
+              Env.game.crosstableApi.withMatchup(game) zip
               Env.tv.tv.getChampions map {
                 case ((data, cross), champions) => NoCache {
-                  Ok(html.tv.index(channel, champions, pov, data, cross, flip, history))
+                  NoIframe { // can be heavy as TV reloads for each game
+                    Ok(html.tv.index(channel, champions, pov, data, cross, flip, history))
+                  }
                 }
               }
           },
@@ -68,7 +69,7 @@ object Tv extends LilaController {
       Env.tv.streamsOnAir.all flatMap { streams =>
         val others = streams.filter(_.id != id)
         streams find (_.id == id) match {
-          case None    => fuccess(Ok(html.tv.notStreaming(streamer, others)))
+          case None => fuccess(Ok(html.tv.notStreaming(streamer, others)))
           case Some(s) => fuccess(Ok(html.tv.stream(s, others)))
         }
       }
@@ -80,31 +81,28 @@ object Tv extends LilaController {
     import akka.pattern.ask
     import lila.round.TvBroadcast
     import play.api.libs.EventSource
-    implicit val encoder = play.api.libs.Comet.CometMessage.jsonMessages
     Env.round.tvBroadcast ? TvBroadcast.GetEnumerator mapTo
       manifest[TvBroadcast.EnumeratorType] map { enum =>
         Ok.chunked(enum &> EventSource()).as("text/event-stream")
       }
   }
 
-  def streamConfig = Auth { implicit ctx =>
-    me => for {
-      text <- Env.tv.streamerList.store.get
-      streamers <- Env.tv.streamerList.get
-    } yield Ok(html.tv.streamConfig(streamers, Env.tv.streamerList.form.fill(text)))
+  def streamConfig = Auth { implicit ctx => me => for {
+    text <- Env.tv.streamerList.store.get
+    streamers <- Env.tv.streamerList.get
+  } yield Ok(html.tv.streamConfig(streamers, Env.tv.streamerList.form.fill(text)))
   }
 
-  def streamConfigSave = SecureBody(_.StreamConfig) { implicit ctx =>
-    me =>
-      implicit val req = ctx.body
-      FormFuResult(Env.tv.streamerList.form) { err =>
-        Env.tv.streamerList.get map { streamers =>
-          html.tv.streamConfig(streamers, err)
-        }
-      } { text =>
-        Env.tv.streamerList.store.set(text) >>
-          Env.mod.logApi.streamConfig(me.id) inject Redirect(routes.Tv.streamConfig)
+  def streamConfigSave = SecureBody(_.StreamConfig) { implicit ctx => me =>
+    implicit val req = ctx.body
+    FormFuResult(Env.tv.streamerList.form) { err =>
+      Env.tv.streamerList.get map { streamers =>
+        html.tv.streamConfig(streamers, err)
       }
+    } { text =>
+      Env.tv.streamerList.store.set(text) >>
+        Env.mod.logApi.streamConfig(me.id) inject Redirect(routes.Tv.streamConfig)
+    }
   }
 
   def embed = Action { req =>
@@ -122,7 +120,8 @@ object Tv extends LilaController {
       case Some(game) => Ok(views.html.tv.embed(
         Pov first game,
         get("bg", req) | "light",
-        lila.pref.Theme(~get("theme", req)).cssClass
+        lila.pref.Theme(~get("theme", req)).cssClass,
+        assetVersion = getAssetVersion
       ))
     }
   }

@@ -12,7 +12,8 @@ private final class Cleaner(
     moveDb: MoveDB,
     analysisColl: Coll,
     monitor: Monitor,
-    scheduler: lila.common.Scheduler) {
+    scheduler: lila.common.Scheduler
+) {
 
   import BSONHandlers._
 
@@ -41,9 +42,6 @@ private final class Cleaner(
         ana.acquired.foreach { ack => Monitor.timeout(ana, ack.userId) }
     }.sequenceFu.void
   }
-
-  private def scheduleMoves = scheduler.once(1 second)(cleanMoves)
-  private def scheduleAnalysis = scheduler.once(5 second)(cleanAnalysis)
 
   scheduler.effect(3 seconds, "fishnet clean moves")(cleanMoves)
   scheduler.effect(10 seconds, "fishnet clean analysis")(cleanAnalysis)

@@ -1,19 +1,21 @@
 package views.html.board
 
 import controllers.routes
-import play.api.libs.json.{ JsArray, Json }
+import play.api.libs.json.Json
 import scala.concurrent.duration.Duration
 
 import lila.api.Context
 import lila.app.templating.Environment._
+import lila.i18n.I18nKeys
 
-object JsData extends lila.Steroids {
+object JsData extends lila.Lilaisms {
 
   def apply(
     sit: chess.Situation,
     fen: String,
-    animationDuration: Duration)(implicit ctx: Context) = Json.obj(
-    "fen" -> fen.split(" ").headOption,
+    animationDuration: Duration
+  )(implicit ctx: Context) = Json.obj(
+    "fen" -> fen.split(" ").take(4).mkString(" "),
     "baseUrl" -> s"$netBaseUrl${routes.Editor.load("")}",
     "color" -> sit.color.letter.toString,
     "castles" -> Json.obj(
@@ -25,21 +27,24 @@ object JsData extends lila.Steroids {
     "animation" -> Json.obj(
       "duration" -> ctx.pref.animationFactor * animationDuration.toMillis
     ),
+    "is3d" -> ctx.pref.is3d,
     "i18n" -> i18nJsObject(
-      trans.startPosition,
-      trans.clearBoard,
-      trans.flipBoard,
-      trans.loadPosition,
-      trans.castling,
-      trans.whiteCastlingKingside,
-      trans.whiteCastlingQueenside,
-      trans.blackCastlingKingside,
-      trans.blackCastlingQueenside,
-      trans.whitePlays,
-      trans.blackPlays,
-      trans.continueFromHere,
-      trans.playWithTheMachine,
-      trans.playWithAFriend,
-      trans.analysis)
+      I18nKeys.setTheBoard,
+      I18nKeys.boardEditor,
+      I18nKeys.startPosition,
+      I18nKeys.clearBoard,
+      I18nKeys.flipBoard,
+      I18nKeys.loadPosition,
+      I18nKeys.popularOpenings,
+      I18nKeys.castling,
+      I18nKeys.whiteCastlingKingside,
+      I18nKeys.blackCastlingKingside,
+      I18nKeys.whitePlays,
+      I18nKeys.blackPlays,
+      I18nKeys.continueFromHere,
+      I18nKeys.playWithTheMachine,
+      I18nKeys.playWithAFriend,
+      I18nKeys.analysis
+    )
   )
 }

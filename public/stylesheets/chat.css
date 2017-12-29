@@ -6,6 +6,9 @@ div.mchat {
 body.kid div.mchat {
   display: none;
 }
+div.mchat .spinner {
+  padding-top: 100px;
+}
 div.mchat .chat_tabs {
   flex: 0 0 auto;
   display: flex;
@@ -33,7 +36,7 @@ div.mchat .chat_tabs .tab.active {
 div.mchat .chat_tabs .tab input {
   cursor: pointer;
 }
-div.mchat .chat_tabs .tab.discussion {
+div.mchat.optional .chat_tabs .tab.discussion {
   display: flex;
   justify-content: space-between;
   align-items: center;
@@ -71,6 +74,12 @@ div.mchat .lichess_say {
   border-top: 1px solid #ccc;
   padding: 3px 20px 3px 4px;
   flex: 0 0 auto;
+  outline: none;
+}
+div.mchat .lichess_say.whisper {
+  color: #759900;
+  font-weight: bold;
+  font-style: italic;
 }
 div.mchat .messages {
   display: block;
@@ -79,6 +88,7 @@ div.mchat .messages {
   overflow-y: auto;
   word-wrap: break-word;
   padding-bottom: 2px;
+  cursor: initial;
 }
 div.mchat .messages li {
   padding: 0.4em 0 0.4em 5px;
@@ -102,10 +112,15 @@ div.mchat .messages .system {
 }
 div.mchat .messages span,
 div.mchat .messages .user_link {
-  font-family: 'Roboto';
+  font-weight: bold;
   padding: 0;
-  margin-right: 6px;
-  opacity: 0.8;
+  color: #888;
+  word-spacing: 0.3em;
+  letter-spacing: -1px;
+}
+body.dark div.mchat .messages span,
+body.dark div.mchat .messages .user_link {
+  color: #777;
 }
 div.mchat .messages a:not(.user_link) {
   font-family: 'Roboto';

@@ -1,11 +1,12 @@
-@(pov: Pov, data: play.api.libs.json.JsObject, initialFen: Option[String], pgn: String, analysis: Option[lila.analyse.Analysis], analysisInProgress: Option[lila.fishnet.Work.InProgress], simul: Option[lila.simul.Simul], cross: Option[lila.game.Crosstable], userTv: Option[User], chatOption: Option[lila.chat.UserChat.Mine], bookmarked: Boolean)(implicit ctx: Context)
+@(pov: Pov, data: play.api.libs.json.JsObject, initialFen: Option[String], pgn: String, analysis: Option[lila.analyse.Analysis], analysisInProgress: Option[lila.fishnet.Work.InProgress], simul: Option[lila.simul.Simul], cross: Option[lila.game.Crosstable.WithMatchup], userTv: Option[User], chatOption: Option[lila.chat.UserChat.Mine], bookmarked: Boolean)(implicit ctx: Context)
 
 @import pov._
 
-@title = @{ s"${playerText(pov.game.whitePlayer)} vs ${playerText(pov.game.blackPlayer)} in $gameId : ${game.opening.fold(trans.analysis.str())(_.opening.ecoName)}" }
+@title = @{ s"${playerText(pov.game.whitePlayer)} vs ${playerText(pov.game.blackPlayer)} in $gameId : ${game.opening.fold(trans.analysis.txt())(_.opening.ecoName)}" }
 
 @moreCss = {
 @cssTag("analyse.css")
+@cssTag("chat.css")
 }
 
 @moreJs = {
@@ -13,11 +14,11 @@
 @embedJs {
 lichess = lichess || {};
 lichess.analyse = {
-data: @Html(J.stringify(data)),
+data: @safeJson(data),
 i18n: @jsI18n(),
 userId: @jsUserId,
 chat: @jsOrNull(chatOption map { c =>
-chat.ChatJsData.json(c.chat, name = trans.spectatorRoom.str(), timeout = c.timeout, withNote = ctx.isAuth)
+chat.ChatJsData.json(c.chat, name = trans.spectatorRoom.txt(), timeout = c.timeout, withNote = ctx.isAuth, public = true)
 }),
 explorer: {
 endpoint: "@explorerEndpoint",
@@ -47,7 +48,9 @@ moreJs = moreJs,
 openGraph = povOpenGraph(pov).some,
 chessground = false,
 atom = atom.some) {
-<div class="analyse cg-512">@miniBoardContent</div>
+<div class="analyse cg-512">
+  @board.domPreload(none)
+</div>
 <div class="underboard_content none">
   <div class="analysis_panels">
     @if(game.analysable) {
@@ -62,28 +65,24 @@ atom = atom.some) {
     </div>
     }
     <div class="panel fen_pgn">
-      <p><strong>FEN</strong><input type="input" readonly="true" spellcheck="false" class="copyable autoselect fen" /></p>
-      <p><strong>PGN</strong>
-        <a data-icon="x" class="text" rel="nofollow" href="@routes.Export.pgn(game.id)">@trans.downloadAnnotated()</a>
-        @if(analysis.isDefined) {
-        /
-        <a data-icon="x" class="text" rel="nofollow" href="@routes.Export.pgn(game.id)?as=raw">@trans.downloadRaw()</a>
-        }
-        @if(game.isPgnImport) {
-        /
-        <a data-icon="x" class="text" rel="nofollow" href="@routes.Export.pgn(game.id)?as=imported">@trans.downloadImported()</a>
-        }
-        /
-        <a data-icon="x" class="text" target="_blank" rel="nofollow" href="@cdnUrl(routes.Export.pdf(game.id).url)">@trans.printFriendlyPDF()</a>
-        @if(lila.game.Game.visualisableVariants(game.variant)) {
-        /
-        <a data-icon="x" class="text" target="_blank" href="@routes.Export.visualizer(game.id)">Generate images</a>
-        }
-      </p>
-      <div class="pgn">@Html(nl2br(escapeHtml(pgn)))</div>
+      <div><strong>FEN</strong><input readonly="true" spellcheck="false" class="copyable autoselect fen" /></div>
+      <div class="pgn_options">
+        <strong>PGN</strong>
+        <div>
+          <a data-icon="x" class="text" rel="nofollow" href="@routes.Export.pgn(game.id)">@trans.downloadAnnotated()</a>
+          @if(analysis.isDefined) {
+          <a data-icon="x" class="text" rel="nofollow" href="@routes.Export.pgn(game.id)?as=raw">@trans.downloadRaw()</a>
+          }
+          @if(game.isPgnImport) {
+          <a data-icon="x" class="text" rel="nofollow" href="@routes.Export.pgn(game.id)?as=imported">@trans.downloadImported()</a>
+          }
+          <a data-icon="=" class="text embed_howto" target="_blank">@trans.embedInYourWebsite()</a>
+        </div>
+      </div>
+      <div class="pgn">@pgn</div>
     </div>
     <div class="panel move_times">
-      @if(game.turns > 3) {
+      @if(game.turns > 1) {
       <div id="movetimes_chart"></div>
       }
     </div>
@@ -99,7 +98,7 @@ atom = atom.some) {
       @analysis.map { a => title="Provided by @usernameOrId(a.providedBy)" }>@trans.computerAnalysis()</a>
     }
     @if(!game.isPgnImport) {
-    @if(game.turns > 3) {
+    @if(game.turns > 1) {
     <a data-panel="move_times" class="move_times">@trans.moveTimes()</a>
     }
     @if(cross.isDefined) {

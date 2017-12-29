@@ -1,33 +1,49 @@
 package lila.api
 
-import play.api.libs.json.{ JsObject, JsArray }
-import play.api.mvc.{ Request, RequestHeader }
+import play.api.mvc.RequestHeader
+import play.api.i18n.Lang
 
-import lila.common.HTTPRequest
-import lila.hub.actorApi.relation.OnlineFriends
+import lila.common.{ HTTPRequest, AssetVersion }
 import lila.pref.Pref
+import lila.relation.actorApi.OnlineFriends
 import lila.user.{ UserContext, HeaderUserContext, BodyUserContext }
 
 case class PageData(
-  onlineFriends: OnlineFriends,
-  teamNbRequests: Int,
-  nbChallenges: Int,
-  nbNotifications: Int,
-  pref: Pref,
-  blindMode: Boolean,
-  hasFingerprint: Boolean)
+    onlineFriends: OnlineFriends,
+    teamNbRequests: Int,
+    nbChallenges: Int,
+    nbNotifications: Int,
+    pref: Pref,
+    blindMode: Boolean,
+    hasFingerprint: Boolean,
+    assetVersion: AssetVersion,
+    inquiry: Option[lila.mod.Inquiry]
+)
 
 object PageData {
 
-  val default = PageData(OnlineFriends.empty, 0, 0, 0, Pref.default, false, false)
+  def empty(v: AssetVersion) =
+    PageData(OnlineFriends.empty, 0, 0, 0, Pref.default, false, false, v, none)
 
-  def anon(blindMode: Boolean) = default.copy(blindMode = blindMode)
+  def anon(req: RequestHeader, v: AssetVersion, blindMode: Boolean = false) = PageData(
+    OnlineFriends.empty,
+    teamNbRequests = 0,
+    nbChallenges = 0,
+    nbNotifications = 0,
+    lila.pref.RequestPref fromRequest req,
+    blindMode = blindMode,
+    hasFingerprint = false,
+    assetVersion = v,
+    none
+  )
 }
 
 sealed trait Context extends lila.user.UserContextWrapper {
 
   val userContext: UserContext
   val pageData: PageData
+
+  def lang = userContext.lang
 
   def onlineFriends = pageData.onlineFriends
 
@@ -37,28 +53,19 @@ sealed trait Context extends lila.user.UserContextWrapper {
   def pref = pageData.pref
   def blindMode = pageData.blindMode
 
-  def is3d = ctxPref("is3d") contains "true"
+  def currentTheme = lila.pref.Theme(pref.theme)
 
-  def currentTheme =
-    ctxPref("theme").fold(Pref.default.realTheme)(lila.pref.Theme.apply)
+  def currentTheme3d = lila.pref.Theme3d(pref.theme3d)
 
-  def currentTheme3d =
-    ctxPref("theme3d").fold(Pref.default.realTheme3d)(lila.pref.Theme3d.apply)
+  def currentPieceSet = lila.pref.PieceSet(pref.pieceSet)
 
-  def currentPieceSet =
-    ctxPref("pieceSet").fold(Pref.default.realPieceSet)(lila.pref.PieceSet.apply)
+  def currentPieceSet3d = lila.pref.PieceSet3d(pref.pieceSet3d)
 
-  def currentPieceSet3d =
-    ctxPref("pieceSet3d").fold(Pref.default.realPieceSet3d)(lila.pref.PieceSet3d.apply)
+  def currentSoundSet = lila.pref.SoundSet(pref.soundSet)
 
-  def currentSoundSet =
-    ctxPref("soundSet").fold(Pref.default.realSoundSet)(lila.pref.SoundSet.apply)
+  lazy val currentBg = if (pref.transp) "transp" else if (pref.dark) "dark" else "light"
 
-  lazy val currentBg = ctxPref("bg") | "light"
-
-  def transpBgImg = currentBg == "transp" option bgImg
-
-  def bgImg = ctxPref("bgImg") | Pref.defaultBgImg
+  def transpBgImg = currentBg == "transp" option pref.bgImgOrDefault
 
   lazy val mobileApiVersion = Mobile.Api requestVersion req
 
@@ -68,29 +75,31 @@ sealed trait Context extends lila.user.UserContextWrapper {
 
   def requiresFingerprint = isAuth && !pageData.hasFingerprint
 
-  private def ctxPref(name: String): Option[String] =
-    req.session get name orElse { pref get name }
+  def zoom: Option[Int] = req.session get "zoom" flatMap parseIntOption filter (100<)
 }
 
 sealed abstract class BaseContext(
-  val userContext: lila.user.UserContext,
-  val pageData: PageData) extends Context
+    val userContext: lila.user.UserContext,
+    val pageData: PageData
+) extends Context
 
 final class BodyContext[A](
     val bodyContext: BodyUserContext[A],
-    data: PageData) extends BaseContext(bodyContext, data) {
+    data: PageData
+) extends BaseContext(bodyContext, data) {
 
   def body = bodyContext.body
 }
 
 final class HeaderContext(
-  headerContext: HeaderUserContext,
-  data: PageData) extends BaseContext(headerContext, data)
+    headerContext: HeaderUserContext,
+    data: PageData
+) extends BaseContext(headerContext, data)
 
 object Context {
 
-  def apply(req: RequestHeader): HeaderContext =
-    new HeaderContext(UserContext(req, none), PageData.default)
+  def apply(req: RequestHeader, v: AssetVersion, lang: Lang): HeaderContext =
+    new HeaderContext(UserContext(req, none, none, lang), PageData.anon(req, v))
 
   def apply(userContext: HeaderUserContext, pageData: PageData): HeaderContext =
     new HeaderContext(userContext, pageData)

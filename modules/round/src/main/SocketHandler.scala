@@ -1,23 +1,25 @@
 package lila.round
 
-import scala.concurrent.duration._
 import scala.concurrent.Promise
+import scala.util.Try
 
 import akka.actor._
-import akka.pattern.{ ask, pipe }
-import chess.Color
+import akka.pattern.ask
 import chess.format.Uci
+import chess.{ Centis, MoveMetrics, Color }
 import play.api.libs.json.{ JsObject, Json }
 
 import actorApi._, round._
-import lila.common.ApiVersion
-import lila.common.PimpedJson._
-import lila.game.{ Game, Pov, PovRef, PlayerRef, GameRepo }
+import lila.common.IpAddress
+import lila.game.{ Pov, PovRef, GameRepo, Game }
 import lila.hub.actorApi.map._
 import lila.hub.actorApi.round.Berserk
+import lila.hub.actorApi.shutup.PublicSource
 import lila.socket.actorApi.{ Connected => _, _ }
 import lila.socket.Handler
+import lila.socket.Socket.Uid
 import lila.user.User
+import lila.chat.Chat
 import makeTimeout.short
 
 private[round] final class SocketHandler(
@@ -25,65 +27,71 @@ private[round] final class SocketHandler(
     socketHub: ActorRef,
     hub: lila.hub.Env,
     messenger: Messenger,
-    bus: lila.common.Bus) {
+    evalCacheHandler: lila.evalCache.EvalCacheSocketHandler,
+    selfReport: SelfReport,
+    bus: lila.common.Bus
+) {
 
   private def controller(
-    gameId: String,
+    gameId: Game.ID,
+    chat: Option[Chat.Setup], // if using a non-game chat (tournament, simul, ...)
     socket: ActorRef,
-    uid: String,
+    uid: Uid,
     ref: PovRef,
-    member: Member): Handler.Controller = {
+    member: Member,
+    me: Option[User]
+  ): Handler.Controller = {
 
-    def send(msg: Any) { roundMap ! Tell(gameId, msg) }
-
-    def ping(o: JsObject) =
-      o int "v" foreach { v => socket ! PingVersion(uid, v) }
+    def send(msg: Any): Unit = { roundMap ! Tell(gameId, msg) }
 
     member.playerIdOption.fold[Handler.Controller](({
-      case ("p", o)         => ping(o)
-      case ("talk", o)      => o str "d" foreach { messenger.watcher(gameId, member, _) }
-      case ("outoftime", _) => send(Outoftime)
-    }: Handler.Controller) orElse lila.chat.Socket.in(
-      chatId = s"$gameId/w",
+      case ("p", o) => socket ! Ping(uid, o)
+      case ("talk", o) => o str "d" foreach { messenger.watcher(gameId, member, _) }
+      case ("outoftime", _) => send(QuietFlag) // mobile app BC
+      case ("flag", o) => clientFlag(o, none) foreach send
+    }: Handler.Controller) orElse evalCacheHandler(member, me) orElse lila.chat.Socket.in(
+      chatId = Chat.Id(s"$gameId/w"),
       member = member,
       socket = socket,
-      chat = messenger.chat
+      chat = messenger.chat,
+      publicSource = PublicSource.Watcher(gameId).some
     )) { playerId =>
       ({
-        case ("p", o) => ping(o)
+        case ("p", o) => socket ! Ping(uid, o)
         case ("move", o) => parseMove(o) foreach {
           case (move, blur, lag) =>
             val promise = Promise[Unit]
             promise.future onFailure {
-              case _: Exception => socket ! Resync(uid)
+              case _: Exception => socket ! Resync(uid.value)
             }
-            send(HumanPlay(playerId, move, blur, lag.millis, promise.some))
+            send(HumanPlay(playerId, move, blur, lag, promise.some))
             member push ackEvent
         }
         case ("drop", o) => parseDrop(o) foreach {
           case (drop, blur, lag) =>
             val promise = Promise[Unit]
             promise.future onFailure {
-              case _: Exception => socket ! Resync(uid)
+              case _: Exception => socket ! Resync(uid.value)
             }
-            send(HumanPlay(playerId, drop, blur, lag.millis, promise.some))
+            send(HumanPlay(playerId, drop, blur, lag, promise.some))
             member push ackEvent
         }
-        case ("rematch-yes", _)  => send(RematchYes(playerId))
-        case ("rematch-no", _)   => send(RematchNo(playerId))
+        case ("rematch-yes", _) => send(RematchYes(playerId))
+        case ("rematch-no", _) => send(RematchNo(playerId))
         case ("takeback-yes", _) => send(TakebackYes(playerId))
-        case ("takeback-no", _)  => send(TakebackNo(playerId))
-        case ("draw-yes", _)     => send(DrawYes(playerId))
-        case ("draw-no", _)      => send(DrawNo(playerId))
-        case ("draw-claim", _)   => send(DrawClaim(playerId))
-        case ("resign", _)       => send(Resign(playerId))
+        case ("takeback-no", _) => send(TakebackNo(playerId))
+        case ("draw-yes", _) => send(DrawYes(playerId))
+        case ("draw-no", _) => send(DrawNo(playerId))
+        case ("draw-claim", _) => send(DrawClaim(playerId))
+        case ("resign", _) => send(Resign(playerId))
         case ("resign-force", _) => send(ResignForce(playerId))
-        case ("draw-force", _)   => send(DrawForce(playerId))
-        case ("abort", _)        => send(Abort(playerId))
-        case ("moretime", _)     => send(Moretime(playerId))
-        case ("outoftime", _)    => send(Outoftime)
-        case ("bye", _)          => socket ! Bye(ref.color)
-        case ("talk", o)         => o str "d" foreach { messenger.owner(gameId, member, _) }
+        case ("draw-force", _) => send(DrawForce(playerId))
+        case ("abort", _) => send(Abort(playerId))
+        case ("moretime", _) => send(Moretime(playerId))
+        case ("outoftime", _) => send(QuietFlag) // mobile app BC
+        case ("flag", o) => clientFlag(o, playerId.some) foreach send
+        case ("bye2", _) => socket ! Bye(ref.color)
+        case ("talk", o) if chat.isEmpty => o str "d" foreach { messenger.owner(gameId, member, _) }
         case ("hold", o) => for {
           d ← o obj "d"
           mean ← d int "mean"
@@ -93,56 +101,67 @@ private[round] final class SocketHandler(
           hub.actor.tournamentApi ! Berserk(gameId, userId)
           member push ackEvent
         }
+        case ("rep", o) => for {
+          d ← o obj "d"
+          name ← d str "n"
+        } selfReport(member.userId, member.ip, s"$gameId$playerId", name)
       }: Handler.Controller) orElse lila.chat.Socket.in(
-        chatId = gameId,
+        chatId = chat.fold(Chat.Id(gameId))(_.id),
+        publicSource = chat.map(_.publicSource),
         member = member,
         socket = socket,
-        chat = messenger.chat)
+        chat = messenger.chat
+      )
     }
   }
 
   def watcher(
     gameId: String,
     colorName: String,
-    uid: String,
+    uid: Uid,
     user: Option[User],
-    ip: String,
-    userTv: Option[String],
-    apiVersion: ApiVersion): Fu[Option[JsSocketHandler]] =
+    ip: IpAddress,
+    userTv: Option[String]
+  ): Fu[Option[JsSocketHandler]] =
     GameRepo.pov(gameId, colorName) flatMap {
-      _ ?? { join(_, none, uid, "", user, ip, userTv = userTv, apiVersion) map some }
+      _ ?? { join(_, none, uid, user, ip, userTv = userTv) map some }
     }
 
   def player(
     pov: Pov,
-    uid: String,
-    token: String,
+    uid: Uid,
     user: Option[User],
-    ip: String,
-    apiVersion: ApiVersion): Fu[JsSocketHandler] =
-    join(pov, Some(pov.playerId), uid, token, user, ip, userTv = none, apiVersion)
+    ip: IpAddress
+  ): Fu[JsSocketHandler] =
+    join(pov, Some(pov.playerId), uid, user, ip, userTv = none)
 
   private def join(
     pov: Pov,
     playerId: Option[String],
-    uid: String,
-    token: String,
+    uid: Uid,
     user: Option[User],
-    ip: String,
-    userTv: Option[String],
-    apiVersion: ApiVersion): Fu[JsSocketHandler] = {
+    ip: IpAddress,
+    userTv: Option[String]
+  ): Fu[JsSocketHandler] = {
     val join = Join(
       uid = uid,
       user = user,
       color = pov.color,
       playerId = playerId,
       ip = ip,
-      userTv = userTv,
-      apiVersion = apiVersion)
+      userTv = userTv
+    )
+    // non-game chat, for tournament or simul games; only for players
+    val chatSetup = playerId.isDefined ?? {
+      pov.game.tournamentId.map(Chat.tournamentSetup) orElse pov.game.simulId.map(Chat.simulSetup)
+    }
     socketHub ? Get(pov.gameId) mapTo manifest[ActorRef] flatMap { socket =>
       Handler(hub, socket, uid, join) {
         case Connected(enum, member) =>
-          (controller(pov.gameId, socket, uid, pov.ref, member), enum, member)
+          // register to the TV channel when watching TV
+          if (playerId.isEmpty && pov.game.isRecentTv)
+            hub.channel.tvSelect ! lila.socket.Channel.Sub(member)
+          (controller(pov.gameId, chatSetup, socket, uid, pov.ref, member, user), enum, member)
       }
     }
   }
@@ -168,8 +187,13 @@ private[round] final class SocketHandler(
     blur = d int "b" contains 1
   } yield (drop, blur, parseLag(d))
 
-  private def parseLag(d: JsObject): Int =
-    d.int("l") orElse d.int("lag") getOrElse 0
+  private def parseLag(d: JsObject) = MoveMetrics(
+    d.int("l") orElse d.int("lag") map Centis.ofMillis,
+    d.str("s") flatMap { v => Try(Centis(Integer.parseInt(v, 36))).toOption }
+  )
+
+  private def clientFlag(o: JsObject, playerId: Option[String]) =
+    o str "d" flatMap Color.apply map { ClientFlag(_, playerId) }
 
   private val ackEvent = Json.obj("t" -> "ack")
 }

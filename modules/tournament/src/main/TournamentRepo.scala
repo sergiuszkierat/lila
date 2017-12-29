@@ -18,7 +18,6 @@ object TournamentRepo {
   private val createdSelect = $doc("status" -> Status.Created.id)
   private val startedSelect = $doc("status" -> Status.Started.id)
   private[tournament] val finishedSelect = $doc("status" -> Status.Finished.id)
-  private val startedOrFinishedSelect = $doc("status" -> $doc("$gte" -> Status.Started.id))
   private val unfinishedSelect = $doc("status" -> $doc("$ne" -> Status.Finished.id))
   private[tournament] val scheduledSelect = $doc("schedule" -> $doc("$exists" -> true))
   private def sinceSelect(date: DateTime) = $doc("startsAt" -> $doc("$gt" -> date))
@@ -31,15 +30,13 @@ object TournamentRepo {
   def byId(id: String): Fu[Option[Tournament]] = coll.find($id(id)).uno[Tournament]
 
   def byIds(ids: Iterable[String]): Fu[List[Tournament]] =
-    coll.find($inIds(ids))
-      .cursor[Tournament]().gather[List]()
+    coll.find($inIds(ids)).list[Tournament](none)
 
   def uniqueById(id: String): Fu[Option[Tournament]] =
     coll.find($id(id) ++ selectUnique).uno[Tournament]
 
   def recentAndNext: Fu[List[Tournament]] =
-    coll.find(sinceSelect(DateTime.now minusDays 1))
-      .cursor[Tournament]().gather[List]()
+    coll.find(sinceSelect(DateTime.now minusDays 1)).list[Tournament]()
 
   def byIdAndPlayerId(id: String, userId: String): Fu[Option[Tournament]] =
     coll.find(
@@ -76,9 +73,15 @@ object TournamentRepo {
     coll.find(startedSelect).sort($doc("createdAt" -> -1)).list[Tournament](None)
 
   def publicStarted: Fu[List[Tournament]] =
-    coll.find(startedSelect ++ $doc("private" -> $doc("$exists" -> false)))
+    coll.find(startedSelect ++ $doc("private" $exists false))
       .sort($doc("createdAt" -> -1))
       .list[Tournament]()
+
+  def standardPublicStartedFromSecondary: Fu[List[Tournament]] =
+    coll.find(startedSelect ++ $doc(
+      "private" $exists false,
+      "variant" $exists false
+    )).list[Tournament](None, ReadPreference.secondaryPreferred)
 
   def finished(limit: Int): Fu[List[Tournament]] =
     coll.find(finishedSelect)
@@ -88,9 +91,10 @@ object TournamentRepo {
   def finishedNotable(limit: Int): Fu[List[Tournament]] =
     coll.find(finishedSelect ++ $doc(
       "$or" -> $arr(
-        $doc("nbPlayers" -> $doc("$gte" -> 15)),
+        $doc("nbPlayers" $gte 30),
         scheduledSelect
-      )))
+      )
+    ))
       .sort($doc("startsAt" -> -1))
       .list[Tournament](limit)
 
@@ -102,50 +106,51 @@ object TournamentRepo {
         projection = $empty,
         sort = $doc("startsAt" -> -1)
       ),
-      nbResults = fuccess(200 * 1000)),
+      nbResults = fuccess(200 * 1000)
+    ),
     currentPage = page,
-    maxPerPage = maxPerPage)
+    maxPerPage = maxPerPage
+  )
 
   def setStatus(tourId: String, status: Status) = coll.update(
     $id(tourId),
-    $doc("$set" -> $doc("status" -> status.id))
+    $set("status" -> status.id)
   ).void
 
   def setNbPlayers(tourId: String, nb: Int) = coll.update(
     $id(tourId),
-    $doc("$set" -> $doc("nbPlayers" -> nb))
+    $set("nbPlayers" -> nb)
   ).void
 
   def setWinnerId(tourId: String, userId: String) = coll.update(
     $id(tourId),
-    $doc("$set" -> $doc("winner" -> userId))
+    $set("winner" -> userId)
   ).void
 
   def setFeaturedGameId(tourId: String, gameId: String) = coll.update(
     $id(tourId),
-    $doc("$set" -> $doc("featured" -> gameId))
+    $set("featured" -> gameId)
   ).void
 
   def featuredGameId(tourId: String) = coll.primitiveOne[String]($id(tourId), "featured")
 
   private def allCreatedSelect(aheadMinutes: Int) = createdSelect ++ $doc(
     "$or" -> $arr(
-      $doc("schedule" -> $doc("$exists" -> false)),
-      $doc("startsAt" -> $doc("$lt" -> (DateTime.now plusMinutes aheadMinutes)))
+      $doc("schedule" $exists false),
+      $doc("startsAt" $lt (DateTime.now plusMinutes aheadMinutes))
     )
   )
 
   def publicCreatedSorted(aheadMinutes: Int): Fu[List[Tournament]] = coll.find(
-    allCreatedSelect(aheadMinutes) ++ $doc("private" -> $doc("$exists" -> false))
+    allCreatedSelect(aheadMinutes) ++ $doc("private" $exists false)
   ).sort($doc("startsAt" -> 1)).list[Tournament](none)
 
   def allCreated(aheadMinutes: Int): Fu[List[Tournament]] =
-    coll.find(allCreatedSelect(aheadMinutes)).cursor[Tournament]().gather[List]()
+    coll.find(allCreatedSelect(aheadMinutes)).list[Tournament]()
 
-  private def stillWorthEntering: Fu[List[Tournament]] =
-    coll.find(startedSelect ++ $doc(
-      "private" -> $doc("$exists" -> false)
-    )).sort($doc("startsAt" -> 1)).list[Tournament](none) map {
+  private def stillWorthEntering: Fu[List[Tournament]] = coll.find(
+    startedSelect ++ $doc("private" $exists false)
+  ).sort($doc("startsAt" -> 1)).list[Tournament]() map {
       _.filter(_.isStillWorthEntering)
     }
 
@@ -153,19 +158,19 @@ object TournamentRepo {
     import Schedule.Freq._
     tour.schedule.map(_.freq) map {
       case Unique | Yearly | Marathon => 24 * 60
-      case Monthly                    => 6 * 60
-      case Weekly | Weekend           => 3 * 60
-      case Daily                      => 1 * 60
-      case _                          => 30
+      case Monthly | Shield => 6 * 60
+      case Weekly | Weekend => 3 * 60
+      case Daily => 1 * 60
+      case _ => 30
     } getOrElse 30
   }
 
   private[tournament] def promotable: Fu[List[Tournament]] =
     stillWorthEntering zip publicCreatedSorted(24 * 60) map {
       case (started, created) => (started ::: created).foldLeft(List.empty[Tournament]) {
-        case (acc, tour) if !isPromotable(tour)          => acc
+        case (acc, tour) if !isPromotable(tour) => acc
         case (acc, tour) if acc.exists(_ similarTo tour) => acc
-        case (acc, tour)                                 => tour :: acc
+        case (acc, tour) => tour :: acc
       }.reverse
     }
 
@@ -190,9 +195,9 @@ object TournamentRepo {
     }.foldLeft(List[Tournament]() -> none[Freq]) {
       case ((tours, skip), (_, sched)) if skip.contains(sched.freq) => (tours, skip)
       case ((tours, skip), (tour, sched)) => (tour :: tours, sched.freq match {
-        case Freq.Daily   => Freq.Eastern.some
+        case Freq.Daily => Freq.Eastern.some
         case Freq.Eastern => Freq.Daily.some
-        case _            => skip
+        case _ => skip
       })
     }._1.reverse
   }
@@ -219,13 +224,19 @@ object TournamentRepo {
   def exists(id: String) = coll exists $id(id)
 
   def toursToWithdrawWhenEntering(tourId: String): Fu[List[Tournament]] = {
-    import Schedule.Freq._
     coll.find(
       enterableSelect ++
         nonEmptySelect ++
         $doc(
           "_id" $ne tourId,
-          "startsAt" $lt DateTime.now)
-    ).cursor[Tournament](readPreference = ReadPreference.secondaryPreferred).gather[List]()
+          "startsAt" $lt DateTime.now
+        )
+    ).list[Tournament](none, ReadPreference.secondaryPreferred)
   }
+
+  def calendar(from: DateTime, to: DateTime): Fu[List[Tournament]] =
+    coll.find($doc(
+      "startsAt" $gte from $lte to,
+      "schedule.freq" $in Schedule.Freq.all.filter(_.isWeeklyOrBetter)
+    )).sort($sort asc "startsAt").list[Tournament](none, ReadPreference.secondaryPreferred)
 }

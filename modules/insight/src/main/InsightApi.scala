@@ -1,10 +1,7 @@
 package lila.insight
 
 import org.joda.time.DateTime
-import reactivemongo.api.collections.bson.BSONBatchCommands.AggregationFramework._
-import reactivemongo.bson._
 
-import lila.db.dsl._
 import lila.game.{ Game, GameRepo, Pov }
 import lila.user.User
 
@@ -12,9 +9,9 @@ final class InsightApi(
     storage: Storage,
     userCacheApi: UserCacheApi,
     pipeline: AggregationPipeline,
-    indexer: Indexer) {
+    indexer: Indexer
+) {
 
-  import lila.insight.{ Dimension => D, Metric => M }
   import InsightApi._
 
   def userCache(user: User): Fu[UserCache] = userCacheApi find user.id flatMap {

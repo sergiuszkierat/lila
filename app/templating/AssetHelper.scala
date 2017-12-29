@@ -2,12 +2,12 @@ package lila.app
 package templating
 
 import controllers.routes
-import play.api.i18n.Lang
 import play.twirl.api.Html
 
-trait AssetHelper { self: I18nHelper =>
+import lila.api.Context
+import lila.common.AssetVersion
 
-  def assetVersion = lila.api.Env.current.assetVersion.get
+trait AssetHelper { self: I18nHelper =>
 
   def isProd: Boolean
 
@@ -20,71 +20,60 @@ trait AssetHelper { self: I18nHelper =>
 
   def dbImageUrl(path: String) = s"$assetBaseUrl/image/$path"
 
-  def cssTag(name: String, staticDomain: Boolean = true) = cssAt("stylesheets/" + name, staticDomain)
+  def cssTag(name: String, staticDomain: Boolean = true)(implicit ctx: Context): Html =
+    cssAt("stylesheets/" + name, staticDomain)
 
-  def cssVendorTag(name: String, staticDomain: Boolean = true) = cssAt("vendor/" + name, staticDomain)
+  def cssVendorTag(name: String, staticDomain: Boolean = true)(implicit ctx: Context) =
+    cssAt("vendor/" + name, staticDomain)
 
-  def cssAt(path: String, staticDomain: Boolean = true) = Html {
+  def cssAt(path: String, staticDomain: Boolean, version: AssetVersion): Html = Html {
     val href = if (staticDomain) staticUrl(path) else routes.Assets.at(path)
-    s"""<link href="$href?v=$assetVersion" type="text/css" rel="stylesheet"/>"""
+    s"""<link href="$href?v=$version" type="text/css" rel="stylesheet"/>"""
+  }
+  def cssAt(path: String, staticDomain: Boolean = true)(implicit ctx: Context): Html =
+    cssAt(path, staticDomain, ctx.pageData.assetVersion)
+
+  def jsTag(name: String, async: Boolean = false)(implicit ctx: Context) =
+    jsAt("javascripts/" + name, async = async)
+
+  def jsTagCompiled(name: String)(implicit ctx: Context) =
+    if (isProd) jsAt("compiled/" + name) else jsTag(name)
+
+  def jsAt(path: String, static: Boolean, async: Boolean, version: AssetVersion): Html = Html {
+    s"""<script${if (async) " async defer" else ""} src="${static.fold(staticUrl(path), path)}?v=$version"></script>"""
+  }
+  def jsAt(path: String, static: Boolean = true, async: Boolean = false)(implicit ctx: Context): Html =
+    jsAt(path, static, async, ctx.pageData.assetVersion)
+
+  val jQueryTag = Html {
+    s"""<script src="${staticUrl("javascripts/vendor/jquery.min.js")}"></script>"""
   }
 
-  def jsTag(name: String) = jsAt("javascripts/" + name)
+  def roundTag(implicit ctx: Context) =
+    jsAt(s"compiled/lichess.round${isProd ?? (".min")}.js", async = true)
 
-  def jsTagCompiled(name: String) = if (isProd) jsAt("compiled/" + name) else jsTag(name)
-
-  val jQueryTag = cdnOrLocal(
-    cdn = "//cdnjs.cloudflare.com/ajax/libs/jquery/3.1.1/jquery.min.js",
-    test = "window.jQuery",
-    local = staticUrl("javascripts/vendor/jquery.min.js"))
-
-  val highchartsTag = cdnOrLocal(
-    cdn = "//code.highcharts.com/4.1.4/highcharts.js",
-    test = "window.Highcharts",
-    local = staticUrl("vendor/highcharts4/highcharts.js"))
-
-  val highchartsLatestTag = cdnOrLocal(
-    cdn = "//code.highcharts.com/4.2/highcharts.js",
-    test = "window.Highcharts",
-    local = staticUrl("vendor/highcharts4/highcharts-4.2.5.js"))
+  val highchartsLatestTag = Html {
+    s"""<script src="${staticUrl("vendor/highcharts-4.2.5/highcharts.js")}"></script>"""
+  }
 
   val highchartsMoreTag = Html {
-    """<script src="//code.highcharts.com/4.1.4/highcharts-more.js"></script>"""
-  }
-
-  val momentjsTag = cdnOrLocal(
-    cdn = "//cdnjs.cloudflare.com/ajax/libs/moment.js/2.10.6/moment.min.js",
-    test = "window.moment",
-    local = staticUrl("vendor/moment/min/moment.min.js"))
-
-  def momentLangTag(implicit ctx: lila.api.Context) = {
-    val l = lang(ctx)
-    ((l.language, l.country.toLowerCase) match {
-      case ("en", "us")               => none
-      case ("en", "au" | "ca" | "gb") => l.code.some
-      case ("pt", "br")               => l.code.some
-      case ("zh", "tw")               => l.code.some
-      case ("zh", _)                  => "zh-cn".some
-      case ("ar", "ma" | "sa" | "tn") => l.code.some
-      case ("fr", "ca")               => l.code.some
-      case _                          => l.language.some
-    }).fold(Html("")) { locale =>
-      jsAt(s"vendor/moment/locale/${locale.toLowerCase}.js", static = true)
-    }
+    s"""<script src="${staticUrl("vendor/highcharts-4.2.5/highcharts-more.js")}"></script>"""
   }
 
   val tagmanagerTag = cdnOrLocal(
-    cdn = "//cdnjs.cloudflare.com/ajax/libs/tagmanager/3.0.0/tagmanager.js",
+    cdn = "https://cdnjs.cloudflare.com/ajax/libs/tagmanager/3.0.0/tagmanager.js",
     test = "$.tagsManager",
-    local = staticUrl("vendor/tagmanager/tagmanager.js"))
+    local = staticUrl("vendor/tagmanager/tagmanager.js")
+  )
 
   val typeaheadTag = cdnOrLocal(
-    cdn = "//cdnjs.cloudflare.com/ajax/libs/typeahead.js/0.11.1/typeahead.bundle.min.js",
+    cdn = "https://cdnjs.cloudflare.com/ajax/libs/typeahead.js/0.11.1/typeahead.bundle.min.js",
     test = "$.typeahead",
-    local = staticUrl("javascripts/vendor/typeahead.bundle.min.js"))
+    local = staticUrl("javascripts/vendor/typeahead.bundle.min.js")
+  )
 
   val fingerprintTag = Html {
-    """<script src="//cdn.jsdelivr.net/fingerprintjs2/0.7/fingerprint2.min.js"></script>"""
+    s"""<script async defer src="${staticUrl("javascripts/vendor/fp2.min.js")}"></script>"""
   }
 
   private def cdnOrLocal(cdn: String, test: String, local: String) = Html {
@@ -94,13 +83,6 @@ trait AssetHelper { self: I18nHelper =>
       s"""<script src="$local"></script>"""
   }
 
-  def jsAt(path: String, static: Boolean = true) = Html {
-    s"""<script src="${static.fold(staticUrl(path), path)}?v=$assetVersion"></script>"""
-  }
-
-  def embedJs(js: String): Html = Html {
-    val escaped = js.replace("</script", "<|script")
-    s"""<script>$escaped</script>"""
-  }
-  def embedJs(js: Html): Html = embedJs(js.body)
+  def embedJsUnsafe(js: String): Html = Html(s"""<script>$js</script>""")
+  def embedJs(js: Html): Html = embedJsUnsafe(js.body)
 }

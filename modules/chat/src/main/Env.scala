@@ -2,9 +2,6 @@ package lila.chat
 
 import akka.actor.{ ActorSystem, Props, ActorSelection }
 import com.typesafe.config.Config
-import scala.concurrent.duration._
-
-import lila.common.PimpedConfig._
 
 final class Env(
     config: Config,
@@ -12,7 +9,9 @@ final class Env(
     flood: lila.security.Flood,
     shutup: ActorSelection,
     modLog: ActorSelection,
-    system: ActorSystem) {
+    asyncCache: lila.memo.AsyncCache.Builder,
+    system: ActorSystem
+) {
 
   private val settings = new {
     val CollectionChat = config getString "collection.chat"
@@ -27,7 +26,8 @@ final class Env(
 
   val timeout = new ChatTimeout(
     coll = timeoutColl,
-    duration = TimeoutDuration)
+    duration = TimeoutDuration
+  )
 
   val api = new ChatApi(
     coll = chatColl,
@@ -35,9 +35,13 @@ final class Env(
     flood = flood,
     shutup = shutup,
     modLog = modLog,
+    asyncCache = asyncCache,
     lilaBus = system.lilaBus,
     maxLinesPerChat = MaxLinesPerChat,
-    netDomain = NetDomain)
+    netDomain = NetDomain
+  )
+
+  val panic = new ChatPanic
 
   system.scheduler.schedule(TimeoutCheckEvery, TimeoutCheckEvery) {
     timeout.checkExpired foreach api.userChat.reinstate
@@ -57,5 +61,7 @@ object Env {
     flood = lila.security.Env.current.flood,
     shutup = lila.hub.Env.current.actor.shutup,
     modLog = lila.hub.Env.current.actor.mod,
-    system = lila.common.PlayApp.system)
+    asyncCache = lila.memo.Env.current.asyncCache,
+    system = lila.common.PlayApp.system
+  )
 }

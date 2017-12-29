@@ -1,6 +1,5 @@
 package lila.tournament
 
-import lila.game.PerfPicker
 import lila.rating.Perf
 import lila.user.{ User, Perfs }
 
@@ -15,7 +14,8 @@ private[tournament] case class Player(
     ratingDiff: Int = 0,
     magicScore: Int = 0,
     fire: Boolean = false,
-    performance: Option[Int] = none) {
+    performance: Option[Int] = none
+) {
 
   def id = _id
 
@@ -30,7 +30,9 @@ private[tournament] case class Player(
 
   def finalRating = rating + ratingDiff
 
-  def recomputeMagicScore = copy(magicScore = (score * 1000000) + (ratingDiff * 1000) + rating)
+  def recomputeMagicScore = copy(
+    magicScore = ((score * 100000) + (ratingDiff * 100) + (rating / 10)) atMost Int.MaxValue
+  )
 }
 
 private[tournament] object Player {

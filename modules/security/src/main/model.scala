@@ -1,15 +1,18 @@
 package lila.security
 
 import org.joda.time.DateTime
+import lila.user.User
+import lila.common.IpAddress
 
-case class FingerprintedUser(user: lila.user.User, hasFingerprint: Boolean)
+case class FingerprintedUser(user: User, hasFingerprint: Boolean)
 
 case class UserSession(
     _id: String,
-    ip: String,
+    ip: IpAddress,
     ua: String,
     api: Option[Int],
-    date: Option[DateTime]) {
+    date: Option[DateTime]
+) {
 
   def id = _id
 
@@ -17,3 +20,5 @@ case class UserSession(
 }
 
 case class LocatedSession(session: UserSession, location: Option[Location])
+
+case class IpAndFp(ip: IpAddress, fp: Option[String], user: User.ID)

@@ -1,17 +1,19 @@
 package lila.socket
 
-import scala.concurrent.duration.Duration
+import com.github.blemale.scaffeine.{ Cache, Scaffeine }
+import scala.concurrent.duration.FiniteDuration
 
 import play.api.libs.json._
 
-import actorApi._
-
-final class History[Metadata](ttl: Duration) {
+final class History[Metadata](ttl: FiniteDuration) {
 
   type Message = History.Message[Metadata]
 
   private var privateVersion = 0
-  private val messages = lila.memo.Builder.expiry[Int, Message](ttl)
+
+  private val cache: Cache[Int, Message] = Scaffeine()
+    .expireAfterWrite(ttl)
+    .build[Int, Message]
 
   def version = privateVersion
 
@@ -21,16 +23,16 @@ final class History[Metadata](ttl: Duration) {
     if (v > version) None
     else if (v == version) Some(Nil)
     else {
-      val msgs = (v + 1 to version).toList flatMap message
+      val msgs: List[Message] = (v + 1 to version).flatMap(message)(scala.collection.breakOut)
       (msgs.size == version - v) option msgs
     }
 
-  private def message(v: Int) = Option(messages getIfPresent v)
+  private def message(v: Int) = cache getIfPresent v
 
   def +=(payload: JsObject, metadata: Metadata): Message = {
     privateVersion = privateVersion + 1
     val vmsg = History.Message(payload, privateVersion, metadata)
-    messages.put(privateVersion, vmsg)
+    cache.put(privateVersion, vmsg)
     vmsg
   }
 }

@@ -3,28 +3,33 @@ package lila.chat
 import akka.actor._
 import play.api.libs.json._
 
-import lila.common.PimpedJson._
-import lila.socket.{ Handler, SocketMember, Historical }
+import lila.socket.{ Handler, SocketMember }
+import lila.hub.actorApi.shutup.PublicSource
 
 object Socket {
 
   def in(
-    chatId: String,
+    chatId: Chat.Id,
     member: SocketMember,
     socket: ActorRef,
-    chat: ActorSelection): Handler.Controller = {
+    chat: ActorSelection,
+    publicSource: Option[PublicSource],
+    canTimeout: Option[() => Fu[Boolean]] = None
+  ): Handler.Controller = {
 
     case ("talk", o) => for {
       text <- o str "d"
       userId <- member.userId
-    } chat ! actorApi.UserTalk(chatId, userId, text)
+    } chat ! actorApi.UserTalk(chatId, userId, text, publicSource)
 
     case ("timeout", o) => for {
       data ← o obj "d"
       modId <- member.userId
-      userId <- data.str("userId")
+      userId <- data.str("userId") map lila.user.User.normalize
       reason <- data.str("reason") flatMap ChatTimeout.Reason.apply
-    } chat ! actorApi.Timeout(chatId, modId, userId, reason)
+    } canTimeout.??(ct => ct()) foreach { localTimeout =>
+      chat ! actorApi.Timeout(chatId, modId, userId, reason, local = localTimeout)
+    }
   }
 
   type Send = (String, JsValue, Boolean) => Unit
@@ -33,7 +38,7 @@ object Socket {
 
     case actorApi.ChatLine(_, line) => line match {
       case line: UserLine => send("message", JsonView(line), line.troll)
-      case _              =>
+      case _ =>
     }
 
     case actorApi.OnTimeout(username) => send("chat_timeout", JsString(username), false)

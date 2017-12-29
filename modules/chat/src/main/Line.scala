@@ -17,7 +17,8 @@ case class UserLine(
     username: String,
     text: String,
     troll: Boolean,
-    deleted: Boolean) extends Line {
+    deleted: Boolean
+) extends Line {
 
   def author = username
 
@@ -29,39 +30,34 @@ case class UserLine(
 }
 case class PlayerLine(
     color: Color,
-    text: String) extends Line {
+    text: String
+) extends Line {
   def deleted = false
   def author = color.name
 }
 
 object Line {
 
-  import lila.db.BSON
   import reactivemongo.bson.{ BSONHandler, BSONString }
-  import org.apache.commons.lang3.StringEscapeUtils.unescapeHtml4
 
   private val invalidLine = UserLine("", "[invalid character]", troll = false, deleted = true)
 
-  def userLineBSONHandler(encoded: Boolean) = new BSONHandler[BSONString, UserLine] {
-    def read(bsonStr: BSONString) = strToUserLine {
-      if (encoded) unescapeHtml4(bsonStr.value) else bsonStr.value
-    } | invalidLine
+  private[chat] implicit val userLineBSONHandler = new BSONHandler[BSONString, UserLine] {
+    def read(bsonStr: BSONString) = strToUserLine(bsonStr.value) getOrElse invalidLine
     def write(x: UserLine) = BSONString(userLineToStr(x))
   }
 
-  def lineBSONHandler(encoded: Boolean) = new BSONHandler[BSONString, Line] {
-    def read(bsonStr: BSONString) = strToLine {
-      if (encoded) unescapeHtml4(bsonStr.value) else bsonStr.value
-    } | invalidLine
+  private[chat] implicit val lineBSONHandler = new BSONHandler[BSONString, Line] {
+    def read(bsonStr: BSONString) = strToLine(bsonStr.value) getOrElse invalidLine
     def write(x: Line) = BSONString(lineToStr(x))
   }
 
-  private val UserLineRegex = """^([\w-]{2,})(.)(.+)$""".r
+  private val UserLineRegex = """^(?s)([\w-]{2,})(.)(.+)$""".r
   def strToUserLine(str: String): Option[UserLine] = str match {
     case UserLineRegex(username, " ", text) => UserLine(username, text, troll = false, deleted = false).some
     case UserLineRegex(username, "!", text) => UserLine(username, text, troll = true, deleted = false).some
     case UserLineRegex(username, "?", text) => UserLine(username, text, troll = false, deleted = true).some
-    case _                                  => none
+    case _ => none
   }
   def userLineToStr(x: UserLine) = {
     val sep = if (x.troll) "!"
@@ -76,7 +72,7 @@ object Line {
     }
   }
   def lineToStr(x: Line) = x match {
-    case u: UserLine   => userLineToStr(u)
+    case u: UserLine => userLineToStr(u)
     case p: PlayerLine => s"${p.color.letter} ${p.text}"
   }
 }

@@ -7,7 +7,8 @@ import lila.db.BSON
 case class Glicko(
     rating: Double,
     deviation: Double,
-    volatility: Double) {
+    volatility: Double
+) {
 
   def intRating = rating.toInt
   def intDeviation = deviation.toInt
@@ -30,7 +31,9 @@ case class Glicko(
       deviation > 0 &&
       deviation < 1000 &&
       volatility > 0 &&
-      volatility < 1
+      volatility < (Glicko.maxVolatility * 2)
+
+  def cap = copy(volatility = volatility min Glicko.maxVolatility)
 
   override def toString = s"$intRating $intDeviation"
 }
@@ -41,7 +44,12 @@ case object Glicko {
 
   val default = Glicko(1500d, 350d, 0.06d)
 
+  val defaultIntRating = default.rating.toInt
+
   val provisionalDeviation = 110
+
+  // past this, it might not stabilize ever again
+  val maxVolatility = 0.1d
 
   def range(rating: Double, deviation: Double) = (
     rating - (deviation * 2),
@@ -53,12 +61,14 @@ case object Glicko {
     def reads(r: BSON.Reader): Glicko = Glicko(
       rating = r double "r",
       deviation = r double "d",
-      volatility = r double "v")
+      volatility = r double "v"
+    )
 
     def writes(w: BSON.Writer, o: Glicko) = BSONDocument(
       "r" -> w.double(o.rating),
       "d" -> w.double(o.deviation),
-      "v" -> w.double(o.volatility))
+      "v" -> w.double(o.volatility)
+    )
   }
 
   sealed abstract class Result(val v: Double) {

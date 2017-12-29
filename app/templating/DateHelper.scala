@@ -2,7 +2,7 @@ package lila.app
 package templating
 
 import java.util.Locale
-import scala.collection.mutable
+import scala.collection.mutable.AnyRefMap
 
 import org.joda.time.format._
 import org.joda.time.format.ISODateTimeFormat
@@ -16,13 +16,14 @@ trait DateHelper { self: I18nHelper =>
   private val dateTimeStyle = "MS"
   private val dateStyle = "M-"
 
-  private val dateTimeFormatters = mutable.Map[String, DateTimeFormatter]()
-  private val dateFormatters = mutable.Map[String, DateTimeFormatter]()
-  private val periodFormatters = mutable.Map[String, PeriodFormatter]()
+  private val dateTimeFormatters = AnyRefMap.empty[String, DateTimeFormatter]
+  private val dateFormatters = AnyRefMap.empty[String, DateTimeFormatter]
+  private val periodFormatters = AnyRefMap.empty[String, PeriodFormatter]
   private val periodType = PeriodType forFields Array(
     DurationFieldType.days,
     DurationFieldType.hours,
-    DurationFieldType.minutes)
+    DurationFieldType.minutes
+  )
 
   private val isoFormatter = ISODateTimeFormat.dateTime
 
@@ -31,22 +32,22 @@ trait DateHelper { self: I18nHelper =>
   private def dateTimeFormatter(ctx: Context): DateTimeFormatter =
     dateTimeFormatters.getOrElseUpdate(
       lang(ctx).code,
-      DateTimeFormat forStyle dateTimeStyle withLocale lang(ctx).toLocale)
+      DateTimeFormat forStyle dateTimeStyle withLocale lang(ctx).toLocale
+    )
 
   private def dateFormatter(ctx: Context): DateTimeFormatter =
     dateFormatters.getOrElseUpdate(
       lang(ctx).code,
-      DateTimeFormat forStyle dateStyle withLocale lang(ctx).toLocale)
+      DateTimeFormat forStyle dateStyle withLocale lang(ctx).toLocale
+    )
 
   private def periodFormatter(ctx: Context): PeriodFormatter =
     periodFormatters.getOrElseUpdate(
       lang(ctx).code, {
         Locale setDefault Locale.ENGLISH
         PeriodFormat wordBased lang(ctx).toLocale
-      })
-
-  def showDateTime(date: DateTime)(implicit ctx: Context): String =
-    dateTimeFormatter(ctx) print date
+      }
+    )
 
   def showDateTimeZone(date: DateTime, zone: DateTimeZone)(implicit ctx: Context): String =
     dateTimeFormatter(ctx) print date.toDateTime(zone)
@@ -72,25 +73,20 @@ trait DateHelper { self: I18nHelper =>
 
   def isoDate(date: DateTime): String = isoFormatter print date
 
-  def momentFormat(date: DateTime, format: String): Html = Html {
-    s"""<time class="moment" datetime="${isoDate(date)}" data-format="$format"></time>"""
+  private val oneDayMillis = 1000 * 60 * 60 * 24
+  def momentFromNow(date: DateTime, alwaysRelative: Boolean = false) = Html {
+    if (!alwaysRelative && (date.getMillis - nowMillis) > oneDayMillis) absClientDateTime(date)
+    s"""<time class="timeago" datetime="${isoDate(date)}"></time>"""
   }
-  def momentFormat(date: DateTime): Html = momentFormat(date, "calendar")
-
-  def momentFromNow(date: DateTime)(implicit ctx: Context) = Html {
-    s"""<time class="moment-from-now" title="${showDate(date)}" datetime="${isoDate(date)}"></time>"""
-  }
-  def momentFromNowNoCtx(date: DateTime) = Html {
-    s"""<time class="moment-from-now" datetime="${isoDate(date)}"></time>"""
+  def absClientDateTime(date: DateTime) = Html {
+    s"""<time class="timeago abs" datetime="${isoDate(date)}"></time>"""
   }
 
-  def secondsFromNow(seconds: Int)(implicit ctx: Context) =
-    momentFromNow(DateTime.now plusSeconds seconds)
+  def secondsFromNow(seconds: Int, alwaysRelative: Boolean = false)(implicit ctx: Context) =
+    momentFromNow(DateTime.now plusSeconds seconds, alwaysRelative)
 
   private val atomDateFormatter = ISODateTimeFormat.dateTime
   def atomDate(date: DateTime): String = atomDateFormatter print date
   def atomDate(field: String)(doc: io.prismic.Document): Option[String] =
     doc getDate field map (_.value.toDateTimeAtStartOfDay) map atomDate
-
-  def nowSeconds = (System.currentTimeMillis() / 1000).toInt
 }

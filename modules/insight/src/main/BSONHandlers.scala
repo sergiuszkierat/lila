@@ -1,24 +1,19 @@
 package lila.insight
 
 import reactivemongo.bson._
-import reactivemongo.bson.Macros
 
 import chess.opening.{ Ecopening, EcopeningDB }
 import chess.{ Role, Color }
 import lila.db.BSON
 import lila.db.dsl._
-import lila.game.BSONHandlers.StatusBSONHandler
 import lila.rating.PerfType
+import lila.rating.BSONHandlers.perfTypeIdHandler
 
 private object BSONHandlers {
 
   implicit val ColorBSONHandler = new BSONHandler[BSONBoolean, Color] {
     def read(b: BSONBoolean) = Color(b.value)
     def write(c: Color) = BSONBoolean(c.white)
-  }
-  implicit val PerfTypeBSONHandler = new BSONHandler[BSONInteger, PerfType] {
-    def read(b: BSONInteger) = PerfType.byId get b.value err s"Invalid perf type id ${b.value}"
-    def write(p: PerfType) = BSONInteger(p.id)
   }
   implicit val EcopeningBSONHandler = new BSONHandler[BSONString, Ecopening] {
     def read(b: BSONString) = EcopeningDB.allByEco get b.value err s"Invalid ECO ${b.value}"
@@ -60,6 +55,11 @@ private object BSONHandlers {
     def read(b: BSONInteger) = MaterialRange.byId get b.value err s"Invalid material range ${b.value}"
     def write(e: MaterialRange) = BSONInteger(e.id)
   }
+
+  implicit val DateRangeBSONHandler = Macros.handler[lila.insight.DateRange]
+
+  implicit val PeriodBSONHandler = intIsoHandler(lila.common.Iso.int[Period](Period.apply, _.days))
+
   implicit def MoveBSONHandler = new BSON[Move] {
     def reads(r: BSON.Reader) = Move(
       phase = r.get[Phase]("p"),
@@ -70,7 +70,8 @@ private object BSONHandlers {
       cpl = r.intO("c"),
       material = r.int("i"),
       opportunism = r.boolO("o"),
-      luck = r.boolO("l"))
+      luck = r.boolO("l")
+    )
     def writes(w: BSON.Writer, b: Move) = BSONDocument(
       "p" -> b.phase,
       "t" -> b.tenths,
@@ -80,7 +81,8 @@ private object BSONHandlers {
       "c" -> b.cpl,
       "i" -> b.material,
       "o" -> b.opportunism,
-      "l" -> b.luck)
+      "l" -> b.luck
+    )
   }
 
   implicit def EntryBSONHandler = new BSON[Entry] {
@@ -103,7 +105,8 @@ private object BSONHandlers {
       ratingDiff = r.int(ratingDiff),
       analysed = r.boolD(analysed),
       provisional = r.boolD(provisional),
-      date = r.date(date))
+      date = r.date(date)
+    )
     def writes(w: BSON.Writer, e: Entry) = BSONDocument(
       id -> e.id,
       number -> e.number,
@@ -122,6 +125,7 @@ private object BSONHandlers {
       ratingDiff -> e.ratingDiff,
       analysed -> w.boolO(e.analysed),
       provisional -> w.boolO(e.provisional),
-      date -> e.date)
+      date -> e.date
+    )
   }
 }

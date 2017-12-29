@@ -1,14 +1,14 @@
-@()(implicit ctx: Context)
-@Html(J.stringify(i18nJsObject(
+@(g: Game)(implicit ctx: Context)
+@import play.api.libs.json.Json
+@safeJson(i18nJsObject(
 trans.flipBoard,
-trans.premoveEnabledClickAnywhereToCancel,
 trans.aiNameLevelAiLevel,
 trans.yourTurn,
 trans.abortGame,
 trans.proposeATakeback,
 trans.offerDraw,
 trans.resign,
-trans.theOtherPlayerHasLeftTheGameYouCanForceResignationOrWaitForHim,
+trans.opponentLeftChoices,
 trans.forceResignation,
 trans.forceDraw,
 trans.threefoldRepetition,
@@ -20,7 +20,6 @@ trans.accept,
 trans.decline,
 trans.takebackPropositionSent,
 trans.yourOpponentProposesATakeback,
-trans.youHaveNbSecondsToMakeYourFirstMove,
 trans.thisPlayerUsesChessComputerAssistance,
 trans.gameAborted,
 trans.checkmate,
@@ -31,16 +30,9 @@ trans.whiteLeftTheGame,
 trans.blackLeftTheGame,
 trans.draw,
 trans.timeOut,
-trans.playingRightNow,
 trans.whiteIsVictorious,
 trans.blackIsVictorious,
-trans.kingInTheCenter,
-trans.threeChecks,
-trans.variantEnding,
-trans.backToTournament,
 trans.withdraw,
-trans.joinTheGame,
-trans.declineInvitation,
 trans.rematch,
 trans.rematchOfferSent,
 trans.rematchOfferAccepted,
@@ -49,14 +41,25 @@ trans.cancelRematchOffer,
 trans.newOpponent,
 trans.moveConfirmation,
 trans.viewRematch,
-trans.viewTournament,
 trans.whitePlays,
 trans.blackPlays,
 trans.giveNbSeconds,
+trans.giveMoreTime,
 trans.gameOver,
 trans.analysis,
-trans.yourOpponentWantsToPlayANewGameWithYou,
+trans.yourOpponentWantsToPlayANewGameWithYou
+) ++ g.isCorrespondence.fold(i18nJsObject(
 trans.oneDay,
 trans.nbDays,
 trans.nbHours
-)))
+), i18nJsObject(
+trans.xSecondsToPlayTheFirstMove
+)) ++ g.variant.exotic.fold(i18nJsObject(
+trans.kingInTheCenter,
+trans.threeChecks,
+trans.variantEnding
+), Json.obj()) ++ g.isTournament.fold(i18nJsObject(
+trans.backToTournament,
+trans.viewTournament,
+trans.standing
+), Json.obj()))

@@ -1,7 +1,6 @@
 package lila.insight
 
 import org.joda.time.DateTime
-import reactivemongo.api.collections.bson.BSONBatchCommands.AggregationFramework._
 import reactivemongo.bson._
 
 import lila.db.dsl._
@@ -10,7 +9,8 @@ case class UserCache(
     _id: String, // user id
     count: Int, // nb insight entries
     ecos: Set[String],
-    date: DateTime) {
+    date: DateTime
+) {
 
   def id = _id
 }

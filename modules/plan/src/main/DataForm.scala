@@ -16,8 +16,8 @@ object DataForm {
     "mc_fee" -> bigDecimal,
     "custom" -> optional(text),
     "payer_email" -> optional(nonEmptyText),
-    "first_name" -> optional(nonEmptyText),
-    "last_name" -> optional(nonEmptyText)
+    "first_name" -> optional(text),
+    "last_name" -> optional(text)
   )(Ipn.apply)(Ipn.unapply))
 
   case class Ipn(
@@ -29,7 +29,8 @@ object DataForm {
       userId: Option[String],
       email: Option[String],
       firstName: Option[String],
-      lastName: Option[String]) {
+      lastName: Option[String]
+  ) {
 
     def name = (firstName |@| lastName) apply { _ + " " + _ }
 

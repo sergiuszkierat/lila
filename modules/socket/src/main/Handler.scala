@@ -1,17 +1,15 @@
 package lila.socket
 
-import akka.pattern.{ ask, pipe }
+import akka.pattern.ask
 import ornicar.scalalib.Zero
-import play.api.libs.iteratee.{ Iteratee, Enumerator }
+import play.api.libs.iteratee.Iteratee
 import play.api.libs.json._
 import scala.concurrent.duration._
 
 import actorApi._
-import lila.common.PimpedJson._
 import lila.hub.actorApi.relation.ReloadOnlineFriends
+import lila.socket.Socket.makeMessage
 import makeTimeout.large
-import tree.Node.defaultNodeJsonWriter
-import tree.Node.openingWriter
 
 object Handler {
 
@@ -20,7 +18,7 @@ object Handler {
 
   val emptyController: Controller = PartialFunction.empty
 
-  private val AnaRateLimiter = new lila.memo.RateLimit(120, 30 seconds,
+  private val AnaRateLimiter = new lila.memo.RateLimit[String](120, 30 seconds,
     name = "socket analysis move",
     key = "socket_analysis_move")
 
@@ -30,57 +28,53 @@ object Handler {
   def apply(
     hub: lila.hub.Env,
     socket: akka.actor.ActorRef,
-    uid: String,
-    join: Any)(connecter: Connecter): Fu[JsSocketHandler] = {
+    uid: Socket.Uid,
+    join: Any
+  )(connecter: Connecter): Fu[JsSocketHandler] = {
 
     def baseController(member: SocketMember): Controller = {
-      case ("p", _) => socket ! Ping(uid)
+      case ("p", o) => socket ! Ping(uid, o)
       case ("following_onlines", _) => member.userId foreach { u =>
         hub.actor.relation ! ReloadOnlineFriends(u)
       }
       case ("startWatching", o) => o str "d" foreach { ids =>
-        hub.actor.moveBroadcast ! StartWatching(uid, member, ids.split(' ').toSet)
+        hub.actor.moveBroadcast ! StartWatching(uid.value, member, ids.split(' ').toSet)
       }
       case ("moveLat", o) => hub.channel.roundMoveTime ! (~(o boolean "d")).fold(
         Channel.Sub(member),
-        Channel.UnSub(member))
-      case ("anaMove", o) => AnaRateLimit(uid, member) {
+        Channel.UnSub(member)
+      )
+      case ("anaMove", o) => AnaRateLimit(uid.value, member) {
         AnaMove parse o foreach { anaMove =>
-          anaMove.branch match {
-            case scalaz.Success(branch) =>
-              member push lila.socket.Socket.makeMessage("node", Json.obj(
-                "node" -> branch,
-                "path" -> anaMove.path
-              ))
-            case scalaz.Failure(err) =>
-              member push lila.socket.Socket.makeMessage("stepFailure", err.toString)
+          member push {
+            anaMove.branch match {
+              case scalaz.Success(node) => makeMessage("node", anaMove json node)
+              case scalaz.Failure(err) => makeMessage("stepFailure", err.toString)
+            }
           }
         }
       }
-      case ("anaDrop", o) => AnaRateLimit(uid, member) {
+      case ("anaDrop", o) => AnaRateLimit(uid.value, member) {
         AnaDrop parse o foreach { anaDrop =>
           anaDrop.branch match {
             case scalaz.Success(branch) =>
-              member push lila.socket.Socket.makeMessage("node", Json.obj(
-                "node" -> branch,
-                "path" -> anaDrop.path
-              ))
+              member push makeMessage("node", anaDrop json branch)
             case scalaz.Failure(err) =>
-              member push lila.socket.Socket.makeMessage("stepFailure", err.toString)
+              member push makeMessage("stepFailure", err.toString)
           }
         }
       }
-      case ("anaDests", o) => AnaRateLimit(uid, member) {
-        AnaDests parse o map (_.compute) match {
-          case Some(req) =>
-            member push lila.socket.Socket.makeMessage("dests", Json.obj(
-              "dests" -> req.dests,
-              "path" -> req.path
-            ) ++ req.opening.?? { o =>
-                Json.obj("opening" -> o)
-              })
-          case None =>
-            member push lila.socket.Socket.makeMessage("destsFailure", "Bad dests request")
+      case ("anaDests", o) => AnaRateLimit(uid.value, member) {
+        member push {
+          AnaDests parse o match {
+            case Some(res) => makeMessage("dests", res.json)
+            case None => makeMessage("destsFailure", "Bad dests request")
+          }
+        }
+      }
+      case ("opening", o) => AnaRateLimit(uid.value, member) {
+        GetOpening(o) foreach { res =>
+          member push makeMessage("opening", res)
         }
       }
       case ("notified", _) => member.userId foreach { userId =>
@@ -96,8 +90,7 @@ object Handler {
           obj str "t" foreach { t =>
             control.lift(t -> obj)
           }
-        }
-      ).map(_ => socket ! Quit(uid))
+        }).map(_ => socket ! Quit(uid.value))
     }
 
     socket ? join map connecter map {

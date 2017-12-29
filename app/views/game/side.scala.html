@@ -1,4 +1,4 @@
-@(pov: Pov, initialFen: Option[String], tour: Option[lila.tournament.MiniStanding], simul: Option[lila.simul.Simul], userTv: Option[User] = None, bookmarked: Boolean)(implicit ctx: Context)
+@(pov: Pov, initialFen: Option[String], tour: Option[lila.tournament.Tournament], simul: Option[lila.simul.Simul], userTv: Option[User] = None, bookmarked: Boolean)(implicit ctx: Context)
 
 @import pov._
 
@@ -17,9 +17,9 @@
           @game.variant.name.toUpperCase
           }
           } else {
-          @game.clock.map(_.show).getOrElse {
+          @game.clock.map(_.config.show).getOrElse {
           @game.daysPerTurn.map { days =>
-          <span data-hint="@trans.correspondence()" class="hint--top">@{(days == 1).fold(trans.oneDay(), trans.nbDays(days))}</span>
+          <span data-hint="@trans.correspondence()" class="hint--top">@{(days == 1).fold(trans.oneDay(), trans.nbDays.pluralSame(days))}</span>
           }.getOrElse {
           <span data-hint="@trans.unlimited()" class="hint--top">∞</span>
           }
@@ -30,11 +30,11 @@
           @game.perfType.map { pt =>
           <span class="hint--top" data-hint="@pt.title">@pt.name.toUpperCase</span>
           }
-          } • @game.rated.fold(trans.rated.str(), trans.casual.str()).toUpperCase
+          } • @game.rated.fold(trans.rated.txt(), trans.casual.txt()).toUpperCase
           }
         </span>
         @game.pgnImport.flatMap(_.date).getOrElse(
-        game.isBeingPlayed.fold(trans.playingRightNow(), momentFormat(game.createdAt))
+        game.isBeingPlayed.fold(trans.playingRightNow(), momentFromNow(game.createdAt))
         )
       </div>
       @game.pgnImport.flatMap(_.date).map { date =>
@@ -48,8 +48,8 @@
     </div>
     <div class="players">
       @List(game.whitePlayer, game.blackPlayer).map { p =>
-      <div class="player color-icon is @{p.color.name}">
-        @playerLink(p, withOnline = false, withDiff = true, withBerserk = true, variant = pov.game.variant)
+      <div class="player color-icon is @{p.color.name} text">
+        @playerLink(p, withOnline = false, withDiff = true, withBerserk = true)
       </div>
       }
     </div>
@@ -76,19 +76,18 @@
   </div>
   }
 
-  @tour match {
-  case Some(m) if !m.tour.isCreated => { @tournament.gameStanding(m) }
-  case Some(m) => {
-  <div class="game_tournament side_box no_padding">
-    <p class="top text" data-icon="g"><a href="@routes.Tournament.show(m.tour.id)">@m.tour.fullName</a></p>
+  @tour.map { t =>
+  <div class="game_tournament side_box no_padding scroll-shadow-soft">
+    <p class="top text" data-icon="g"><a href="@routes.Tournament.show(t.id)">@t.fullName</a></p>
+    <div class="clock" data-time="@t.secondsToFinish">
+      <div class="time">@t.clockStatus</div>
+    </div>
   </div>
-  }
-  case _ => {
+  }.getOrElse {
   @game.tournamentId.map { tourId =>
   <div class="game_tournament side_box no_padding">
     <p class="top text" data-icon="g"><a href="@routes.Tournament.show(tourId)">@tournamentIdToName(tourId)</a></p>
   </div>
-  }
   }
   }
 

@@ -18,34 +18,37 @@ final class JsonView {
       "description" -> D.Opening.description.body,
       "values" -> Dimension.valuesOf(D.Opening).filter { o =>
         ecos contains o.eco
-      }.map(Dimension.valueToJson(D.Opening)))
+      }.map(Dimension.valueToJson(D.Opening))
+    )
+
+    val dimensionCategs = List(
+      Categ("Setup", List(
+        Json toJson D.Date,
+        Json toJson D.Period,
+        Json toJson D.Perf,
+        Json toJson D.Color,
+        Json toJson D.OpponentStrength
+      )),
+      Categ("Game", List(
+        openingJson,
+        Json toJson D.MyCastling,
+        Json toJson D.OpCastling,
+        Json toJson D.QueenTrade
+      )),
+      Categ("Move", List(
+        Json toJson D.PieceRole,
+        Json toJson D.MovetimeRange,
+        Json toJson D.MaterialRange,
+        Json toJson D.Phase
+      )),
+      Categ("Result", List(
+        Json toJson D.Termination,
+        Json toJson D.Result
+      ))
+    )
 
     Json.obj(
-      "dimensionCategs" -> List(
-        Categ("Setup", List(
-          Json toJson D.Perf,
-          Json toJson D.Color,
-          Json toJson D.OpponentStrength
-        )),
-        //game
-        Categ("Game", List(
-          openingJson,
-          Json toJson D.MyCastling,
-          Json toJson D.OpCastling,
-          Json toJson D.QueenTrade
-        )),
-        // move
-        Categ("Move", List(
-          Json toJson D.PieceRole,
-          Json toJson D.MovetimeRange,
-          Json toJson D.MaterialRange,
-          Json toJson D.Phase
-        )),
-        // result
-        Categ("Result", List(
-          Json toJson D.Termination,
-          Json toJson D.Result))
-      ),
+      "dimensionCategs" -> dimensionCategs,
       "metricCategs" -> metricCategs,
       "presets" -> Preset.all
     )
@@ -66,11 +69,11 @@ final class JsonView {
       Json toJson M.Opportunism,
       Json toJson M.Luck
     )),
-    // result
     Categ("Result", List(
       Json toJson M.Termination,
       Json toJson M.Result,
-      Json toJson M.RatingDiff))
+      Json toJson M.RatingDiff
+    ))
   )
 
   private implicit def presetWriter[X]: OWrites[Preset] = OWrites { p =>
@@ -91,7 +94,8 @@ final class JsonView {
       "name" -> d.name,
       "position" -> d.position,
       "description" -> d.description.body,
-      "values" -> Dimension.valuesOf(d).map(Dimension.valueToJson(d)))
+      "values" -> Dimension.valuesOf(d).map(Dimension.valueToJson(d))
+    )
   }
 
   private implicit def metricWriter: OWrites[Metric] = OWrites { m =>
@@ -99,7 +103,8 @@ final class JsonView {
       "key" -> m.key,
       "name" -> m.name,
       "description" -> m.description.body,
-      "position" -> m.position)
+      "position" -> m.position
+    )
   }
 
   private implicit def positionWriter: Writes[Position] = Writes { p =>
@@ -120,6 +125,6 @@ final class JsonView {
     "dimension" -> dimension,
     "filters" -> (filters.split('/').map(_ split ':').collect {
       case Array(key, values) => key -> JsArray(values.split(',').map(JsString.apply))
-    }.toMap: Map[String, JsArray])
+    }(scala.collection.breakOut): Map[String, JsArray])
   )
 }

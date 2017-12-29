@@ -1,74 +1,53 @@
 package lila.security
 
-import lila.user.{ User, UserRepo }
+import play.api.i18n.Lang
 
-import com.roundeights.hasher.{ Hasher, Algo }
-import play.api.libs.ws.{ WS, WSAuthScheme }
-import play.api.Play.current
+import lila.common.EmailAddress
+import lila.user.{ User, UserRepo }
+import lila.i18n.I18nKeys.{ emails => trans }
 
 final class PasswordReset(
-    apiUrl: String,
-    apiKey: String,
-    sender: String,
+    mailgun: Mailgun,
     baseUrl: String,
-    secret: String) {
+    tokenerSecret: String
+) {
 
-  def send(user: User, email: String): Funit = tokener make user flatMap { token =>
-    lila.mon.email.resetPassword()
-    val url = s"$baseUrl/password/reset/confirm/$token"
-    WS.url(s"$apiUrl/messages").withAuth("api", apiKey, WSAuthScheme.BASIC).post(Map(
-      "from" -> Seq(sender),
-      "to" -> Seq(email),
-      "subject" -> Seq("Reset your lichess.org password"),
-      "text" -> Seq(s"""
-We received a request to reset the password for your account, ${user.username}.
+  def send(user: User, email: EmailAddress)(implicit lang: Lang): Funit =
+    tokener make user.id flatMap { token =>
+      lila.mon.email.resetPassword()
+      val url = s"$baseUrl/password/reset/confirm/$token"
+      mailgun send Mailgun.Message(
+        to = email,
+        subject = trans.passwordReset_subject.literalTxtTo(lang, List(user.username)),
+        text = s"""
+${trans.passwordReset_intro.literalTxtTo(lang)}
 
-If you made this request, click the link below. If you didn't make this request, you can ignore this email.
+${trans.passwordReset_clickOrIgnore.literalTxtTo(lang)}
 
 $url
 
+${trans.common_orPaste.literalTxtTo(lang)}
 
-Please do not reply to this message; it was sent from an unmonitored email address. This message is a service email related to your use of lichess.org.
-"""))).void addFailureEffect {
-      case e: java.net.ConnectException => lila.mon.http.mailgun.timeout()
-      case _                            =>
-    }
-  }
-
-  def confirm(token: String): Fu[Option[User]] = tokener read token
-
-  private object tokener {
-
-    private val separator = '|'
-
-    private def makeHash(msg: String) = Algo.hmac(secret).sha1(msg).hex take 14
-    private def getPasswd(userId: User.ID) = UserRepo getPasswordHash userId map { p =>
-      makeHash(~p) take 6
-    }
-    private def makePayload(userId: String, passwd: String) = s"$userId$separator$passwd"
-
-    def make(user: User) = getPasswd(user.id) map { passwd =>
-      val payload = makePayload(user.id, passwd)
-      val hash = makeHash(payload)
-      val token = s"$payload$separator$hash"
-      base64 encode token
+${Mailgun.txt.serviceNote}
+""",
+        htmlBody = s"""
+<div itemscope itemtype="http://schema.org/EmailMessage">
+  <p itemprop="description">${trans.passwordReset_intro.literalHtmlTo(lang)}</p>
+  <p>${trans.passwordReset_clickOrIgnore.literalHtmlTo(lang)}</p>
+  <div itemprop="potentialAction" itemscope itemtype="http://schema.org/ViewAction">
+    <meta itemprop="name" content="Reset password">
+    ${Mailgun.html.url(url)}
+  </div>
+  ${Mailgun.html.serviceNote}
+</div>""".some
+      )
     }
 
-    def read(token: String): Fu[Option[User]] = base64 decode token split separator match {
-      case Array(userId, userPass, hash) if makeHash(makePayload(userId, userPass)) == hash =>
-        getPasswd(userId) flatMap { passwd =>
-          (userPass == passwd) ?? (UserRepo enabledById userId)
-        }
-      case _ => fuccess(none)
-    }
-  }
+  def confirm(token: String): Fu[Option[User]] =
+    tokener read token flatMap { _ ?? UserRepo.byId }
 
-  private object base64 {
-    import java.util.Base64
-    import java.nio.charset.StandardCharsets
-    def encode(txt: String) =
-      Base64.getEncoder.encodeToString(txt getBytes StandardCharsets.UTF_8)
-    def decode(txt: String) =
-      new String(Base64.getDecoder decode txt)
-  }
+  private val tokener = new StringToken[User.ID](
+    secret = tokenerSecret,
+    getCurrentValue = id => UserRepo getPasswordHash id map (~_)
+  )
 }

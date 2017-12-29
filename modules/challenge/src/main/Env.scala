@@ -5,7 +5,7 @@ import akka.pattern.ask
 import com.typesafe.config.Config
 import scala.concurrent.duration._
 
-import lila.common.PimpedConfig._
+import lila.user.User
 import lila.hub.actorApi.map.Ask
 import lila.socket.actorApi.GetVersion
 import makeTimeout.short
@@ -15,11 +15,15 @@ final class Env(
     system: ActorSystem,
     onStart: String => Unit,
     gameCache: lila.game.Cached,
-    lightUser: String => Option[lila.common.LightUser],
+    lightUser: lila.common.LightUser.GetterSync,
     isOnline: lila.user.User.ID => Boolean,
     hub: lila.hub.Env,
     db: lila.db.Env,
-    scheduler: lila.common.Scheduler) {
+    asyncCache: lila.memo.AsyncCache.Builder,
+    getPref: User => Fu[lila.pref.Pref],
+    getRelation: (User, User) => Fu[Option[lila.relation.Relation]],
+    scheduler: lila.common.Scheduler
+) {
 
   private val settings = new {
     val CollectionChallenge = config getString "collection.challenge"
@@ -39,8 +43,10 @@ final class Env(
         history = new lila.socket.History(ttl = HistoryMessageTtl),
         getChallenge = repo.byId,
         uidTimeout = UidTimeout,
-        socketTimeout = SocketTimeout)
-    }), name = SocketName)
+        socketTimeout = SocketTimeout
+      )
+    }), name = SocketName
+  )
 
   def version(challengeId: Challenge.ID): Fu[Int] =
     socketHub ? Ask(challengeId, GetVersion) mapTo manifest[Int]
@@ -48,7 +54,8 @@ final class Env(
   lazy val socketHandler = new SocketHandler(
     hub = hub,
     socketHub = socketHub,
-    pingChallenge = api.ping)
+    pingChallenge = api.ping
+  )
 
   lazy val api = new ChallengeApi(
     repo = repo,
@@ -58,11 +65,19 @@ final class Env(
     maxPlaying = MaxPlaying,
     socketHub = socketHub,
     userRegister = hub.actor.userRegister,
-    lilaBus = system.lilaBus)
+    asyncCache = asyncCache,
+    lilaBus = system.lilaBus
+  )
+
+  lazy val granter = new ChallengeGranter(
+    getPref = getPref,
+    getRelation = getRelation
+  )
 
   private lazy val repo = new ChallengeRepo(
     coll = db(CollectionChallenge),
-    maxPerUser = MaxPerUser)
+    maxPerUser = MaxPerUser
+  )
 
   lazy val jsonView = new JsonView(lightUser, isOnline)
 
@@ -79,8 +94,12 @@ object Env {
     onStart = lila.game.Env.current.onStart,
     hub = lila.hub.Env.current,
     gameCache = lila.game.Env.current.cached,
-    lightUser = lila.user.Env.current.lightUser,
+    lightUser = lila.user.Env.current.lightUserSync,
     isOnline = lila.user.Env.current.isOnline,
     db = lila.db.Env.current,
-    scheduler = lila.common.PlayApp.scheduler)
+    asyncCache = lila.memo.Env.current.asyncCache,
+    getPref = lila.pref.Env.current.api.getPref,
+    getRelation = lila.relation.Env.current.api.fetchRelation,
+    scheduler = lila.common.PlayApp.scheduler
+  )
 }

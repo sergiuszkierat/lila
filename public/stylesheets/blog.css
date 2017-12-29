@@ -42,6 +42,7 @@
   font-size: 1.4em;
   line-height: 1.6;
   margin: 20px 0 80px 0;
+  cursor: initial;
 }
 #lichess_blog .body p {
   margin: 15px 0;
@@ -67,11 +68,11 @@
   font-size: 0.8em;
   text-align: center;
 }
-#lichess_blog ol li {
-  list-style: decimal inside;
+#lichess_blog ol, #lichess_blog ul {
+  margin: 25px;
 }
-#lichess_blog ul li {
-  list-style: disc inside;
+#lichess_blog li {
+  list-style: disc outside;
 }
 #lichess_blog .body h2 {
   font-size: 1.4em;
@@ -86,6 +87,10 @@
 #lichess_blog .body img {
   padding: 5px;
   border: 1px solid #ccc;
+}
+#lichess_blog .body iframe.study {
+  border: none;
+  margin: 1em 0;
 }
 
 #lichess_blog .list h1 {

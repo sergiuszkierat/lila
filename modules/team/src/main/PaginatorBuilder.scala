@@ -3,12 +3,13 @@ package lila.team
 import lila.common.paginator._
 import lila.db.dsl._
 import lila.db.paginator._
-import lila.user.{ User, UserRepo }
+import lila.user.UserRepo
 
 private[team] final class PaginatorBuilder(
     coll: Colls,
     maxPerPage: Int,
-    maxUserPerPage: Int) {
+    maxUserPerPage: Int
+) {
 
   import BSONHandlers._
 
@@ -17,14 +18,17 @@ private[team] final class PaginatorBuilder(
       collection = coll.team,
       selector = TeamRepo.enabledQuery,
       projection = $empty,
-      sort = TeamRepo.sortPopular),
+      sort = TeamRepo.sortPopular
+    ),
     page,
-    maxPerPage)
+    maxPerPage
+  )
 
   def teamMembers(team: Team, page: Int): Fu[Paginator[MemberWithUser]] = Paginator(
     adapter = new TeamAdapter(team),
     page,
-    maxUserPerPage)
+    maxUserPerPage
+  )
 
   private final class TeamAdapter(team: Team) extends AdapterLike[MemberWithUser] {
 
@@ -33,7 +37,7 @@ private[team] final class PaginatorBuilder(
     def slice(offset: Int, length: Int): Fu[Seq[MemberWithUser]] = for {
       members ← coll.member.find(selector)
         .sort(sorting).skip(offset).cursor[Member]().gather[List](length)
-      users ← UserRepo byOrderedIds members.map(_.user)
+      users ← UserRepo usersFromSecondary members.map(_.user)
     } yield members zip users map {
       case (member, user) => MemberWithUser(member, user)
     }

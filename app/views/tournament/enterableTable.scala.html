@@ -9,14 +9,11 @@
     </a>
   </td>
   @tour.schedule.map { s =>
-  <td>@momentFromNowNoCtx(s.at)</td>
+  <td>@momentFromNow(s.at)</td>
   }.getOrElse {
-  <td class="small">
+  <td class="small@if(tour.mode.rated) { rated}">
     <span class="text" data-icon="p">@tour.clock.show</span>
     @if(tour.variant.exotic) { @tour.variant.shortName }
-    @if(tour.mode.rated) {
-    <span class="trans_me">@trans.rated.en()</span>
-    }
   </td>
   }
   <td>@tour.durationString</td>

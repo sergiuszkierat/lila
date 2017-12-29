@@ -4,6 +4,9 @@
 
 @moreCss = {
 @cssTag("analyse.css")
+@if(!pov.game.synthetic && pov.game.playable && ctx.me.flatMap(pov.game.player).isDefined) {
+@cssTag("forecast.css")
+}
 }
 
 @moreJs = {
@@ -11,7 +14,7 @@
 @embedJs {
 lichess = lichess || {};
 lichess.user_analysis = {
-data: @Html(play.api.libs.json.Json.stringify(data)),
+data: @safeJson(data),
 i18n: @userAnalysisI18n(),
 explorer: {
 endpoint: "@explorerEndpoint",
@@ -38,7 +41,7 @@ tablebaseEndpoint: "@tablebaseEndpoint"
 }
 
 @base.layout(
-title = trans.analysis.str(),
+title = trans.analysis.txt(),
 moreCss = moreCss,
 moreJs = moreJs,
 side = side.some,
@@ -46,6 +49,9 @@ chessground = false,
 openGraph = lila.app.ui.OpenGraph(
 title = "Chess analysis board",
 url = s"$netBaseUrl${routes.UserAnalysis.index.url}",
-description = "Analyse chess positions and variations on an interactive chess board").some) {
-<div class="analyse cg-512">@miniBoardContent</div>
+description = "Analyse chess positions and variations on an interactive chess board").some,
+zoomable = true) {
+<div class="analyse cg-512">
+  @board.domPreload(none)
+</div>
 }

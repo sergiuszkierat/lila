@@ -1,14 +1,18 @@
-@(categ: lila.forum.Categ, topic: lila.forum.Topic, posts: Paginator[lila.forum.Post], formWithCaptcha: Option[FormWithCaptcha], unsub: Option[Boolean])(implicit ctx: Context)
+@(categ: lila.forum.Categ, topic: lila.forum.Topic, posts: Paginator[lila.forum.Post], formWithCaptcha: Option[FormWithCaptcha], unsub: Option[Boolean], canModCateg: Boolean)(implicit ctx: Context)
 
+@moreJs = {
+@jsTag("forum-post.js")
+@jsTag("embed-analyse.js")
+}
 
 @modMenu = {
-  @mod.menu("forum")
+@mod.menu("forum")
 }
 
 @forum.layout(
 title = s"${categ.name} / ${topic.name} page ${posts.currentPage}",
 menu = modMenu.some.ifTrue(categ.isStaff),
-moreJs = jsTag("forum-post.js"),
+moreJs = moreJs,
 openGraph = lila.app.ui.OpenGraph(
 title = s"Forum: ${categ.name} / ${topic.name} page ${posts.currentPage}",
 url = s"$netBaseUrl${routes.ForumTopic.show(categ.slug, topic.slug).url}",
@@ -32,20 +36,23 @@ description = shorten(posts.currentPageResults.headOption.??(_.text).replace("\n
     @forum.pagination(routes.ForumTopic.show(categ.slug, topic.slug, 1), posts, showPost = true)
   </div>
 
-  <div class="forum_posts_list">
+  <div class="forum_posts_list embed_analyse">
     @posts.currentPageResults.map { post =>
     <div class="post" id="@post.number">
       <div class="metas clearfix">
-        @authorLink(post, "author".some)
+        @defining(routes.ForumTopic.show(categ.slug, topic.slug, posts.currentPage) + s"#${post.number}") { url =>
+        @authorLink(post=post, cssClass="author".some, modIcon=post.displayModIcon)
 
-        @post.updatedAt.map { updatedAt =>
+        <a href="@url">
+          @post.updatedAt.map { updatedAt =>
           <span class="post-edited">edited</span>
           @momentFromNow(updatedAt)
-        }.getOrElse {
+          }.getOrElse {
           @momentFromNow(post.createdAt)
-        }
+          }
+        </a>
 
-        <a class="anchor" href="@routes.ForumTopic.show(categ.slug, topic.slug, posts.currentPage)#@post.number">#@post.number</a>
+        <a class="anchor" href="@url">#@post.number</a>
 
         @if(isGranted(_.IpBan)) {
         <span class="mod postip">@post.ip</span>
@@ -53,8 +60,9 @@ description = shorten(posts.currentPageResults.headOption.??(_.text).replace("\n
         @if(ctx.userId.fold(false)(post.shouldShowEditForm(_))) {
         <a class="mod thin edit button" data-icon="m"> Edit</a>
         }
-        @if(isGrantedMod(categ.slug)) {
+        @if(canModCateg) {
         <a class="mod thin delete button" href="@routes.ForumPost.delete(categ.slug, post.id)" data-icon="q"> Delete</a>
+        }
         }
       </div>
       <p class="message">@autoLink(post.text)</p>
@@ -83,9 +91,12 @@ description = shorten(posts.currentPageResults.headOption.??(_.text).replace("\n
     <button class="button">@topic.hidden.fold("Feature", "Un-feature")</button>
   </form>
   }
-  @if(isGrantedMod(categ.slug)) {
+  @if(canModCateg) {
   <form class="mod" method="post" action="@routes.ForumTopic.close(categ.slug, topic.slug)">
     <button class="button">@topic.closed.fold("Reopen", "Close")</button>
+  </form>
+  <form class="mod" method="post" action="@routes.ForumTopic.sticky(categ.slug, topic.slug)">
+    <button class="button">@topic.isSticky.fold("Un-sticky", "Sticky")</button>
   </form>
   }
 
@@ -94,10 +105,13 @@ description = shorten(posts.currentPageResults.headOption.??(_.text).replace("\n
     case (form, captcha) => {
     <h2 class="postNewTitle" id="reply">@trans.replyToThisTopic()</h2>
     <form class="wide" action="@routes.ForumPost.create(categ.slug, topic.slug, posts.currentPage)#reply" method="POST" novalidate>
-      @forum.post.formFields(form("text"), form("author"), topic.some)
+      @forum.post.formFields(form("text"), topic.some)
       @base.captcha(form("move"), form("gameId"), captcha)
-      @errMsg(form)
+      @globalError(form)
       <button type="submit" class="submit button" data-icon="E"> @trans.reply()</button>
+      @if(isGranted(_.PublicMod)){
+        <button type="submit" class="button" data-icon="" name="modIcon" value="true" /> Reply as mod</button>
+      }
       <a href="@routes.ForumCateg.show(categ.slug)" style="margin-left:20px">@trans.cancel()</a>
     </form>
     }

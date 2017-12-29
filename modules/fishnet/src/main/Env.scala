@@ -4,73 +4,92 @@ import akka.actor._
 import com.typesafe.config.Config
 import scala.concurrent.duration._
 
-import lila.common.PimpedConfig._
-
 final class Env(
     config: Config,
     uciMemo: lila.game.UciMemo,
     requesterApi: lila.analyse.RequesterApi,
+    evalCacheApi: lila.evalCache.EvalCacheApi,
     hub: lila.hub.Env,
     db: lila.db.Env,
     system: ActorSystem,
     scheduler: lila.common.Scheduler,
     bus: lila.common.Bus,
-    sink: lila.analyse.Analyser) {
+    asyncCache: lila.memo.AsyncCache.Builder,
+    sink: lila.analyse.Analyser
+) {
 
   private val ActorName = config getString "actor.name"
   private val OfflineMode = config getBoolean "offline_mode"
   private val AnalysisNodes = config getInt "analysis.nodes"
   private val MovePlies = config getInt "move.plies"
+  private val ClientMinVersion = config getString "client_min_version"
 
   private val analysisColl = db(config getString "collection.analysis")
   private val clientColl = db(config getString "collection.client")
 
+  private val clientVersion = new ClientVersion(ClientMinVersion)
+
   private val repo = new FishnetRepo(
     analysisColl = analysisColl,
-    clientColl = clientColl)
+    clientColl = clientColl,
+    asyncCache = asyncCache
+  )
 
   private val moveDb = new MoveDB(
     roundMap = hub.actor.roundMap,
-    system = system)
+    system = system
+  )
 
   private val sequencer = new lila.hub.FutureSequencer(
     system = system,
     receiveTimeout = None,
     executionTimeout = Some(1 second),
-    logger = logger)
+    logger = logger
+  )
 
   private val monitor = new Monitor(moveDb, repo, sequencer, scheduler)
+
+  private val evalCache = new FishnetEvalCache(evalCacheApi)
+
+  private val analysisBuilder = new AnalysisBuilder(evalCache)
 
   val api = new FishnetApi(
     repo = repo,
     moveDb = moveDb,
+    analysisBuilder = analysisBuilder,
     analysisColl = analysisColl,
     sequencer = sequencer,
     monitor = monitor,
     sink = sink,
     socketExists = id => {
-    import lila.hub.actorApi.map.Exists
-    import akka.pattern.ask
-    import makeTimeout.short
-    hub.socket.round ? Exists(id) mapTo manifest[Boolean]
-  },
+      import lila.hub.actorApi.map.Exists
+      import akka.pattern.ask
+      import makeTimeout.short
+      hub.socket.round ? Exists(id) mapTo manifest[Boolean]
+    },
+    clientVersion = clientVersion,
     offlineMode = OfflineMode,
-    analysisNodes = AnalysisNodes)(system)
+    analysisNodes = AnalysisNodes
+  )(system)
 
   val player = new Player(
     moveDb = moveDb,
     uciMemo = uciMemo,
-    maxPlies = MovePlies)
+    maxPlies = MovePlies
+  )
 
   private val limiter = new Limiter(
     analysisColl = analysisColl,
-    requesterApi = requesterApi)
+    requesterApi = requesterApi
+  )
 
   val analyser = new Analyser(
     repo = repo,
     uciMemo = uciMemo,
     sequencer = sequencer,
-    limiter = limiter)
+    evalCache = evalCache,
+    limiter = limiter
+  )
 
   val aiPerfApi = new AiPerfApi
 
@@ -79,12 +98,14 @@ final class Env(
     moveDb = moveDb,
     analysisColl = analysisColl,
     monitor = monitor,
-    scheduler = scheduler)
+    scheduler = scheduler
+  )
 
   new MainWatcher(
     repo = repo,
     bus = bus,
-    scheduler = scheduler)
+    scheduler = scheduler
+  )
 
   // api actor
   system.actorOf(Props(new Actor {
@@ -97,15 +118,18 @@ final class Env(
   def cli = new lila.common.Cli {
     def process = {
       case "fishnet" :: "client" :: "create" :: userId :: skill :: Nil =>
-        api.createClient(Client.UserId(userId), skill) map (_.key.value)
+        api.createClient(Client.UserId(userId), skill) map { client =>
+          bus.publish(lila.hub.actorApi.fishnet.NewKey(userId, client.key.value), 'fishnet)
+          s"Created key: ${(client.key.value)} for: $userId"
+        }
       case "fishnet" :: "client" :: "delete" :: key :: Nil =>
-        repo.deleteClient(Client.Key(key)) inject "done!"
+        repo toKey key flatMap repo.deleteClient inject "done!"
       case "fishnet" :: "client" :: "enable" :: key :: Nil =>
-        repo.enableClient(Client.Key(key), true) inject "done!"
+        repo toKey key flatMap { repo.enableClient(_, true) } inject "done!"
       case "fishnet" :: "client" :: "disable" :: key :: Nil =>
-        repo.enableClient(Client.Key(key), false) inject "done!"
+        repo toKey key flatMap { repo.enableClient(_, false) } inject "done!"
       case "fishnet" :: "client" :: "skill" :: key :: skill :: Nil =>
-        api.setClientSkill(Client.Key(key), skill) inject "done!"
+        repo toKey key flatMap { api.setClientSkill(_, skill) } inject "done!"
     }
   }
 }
@@ -116,10 +140,13 @@ object Env {
     system = lila.common.PlayApp.system,
     uciMemo = lila.game.Env.current.uciMemo,
     requesterApi = lila.analyse.Env.current.requesterApi,
+    evalCacheApi = lila.evalCache.Env.current.api,
     hub = lila.hub.Env.current,
     db = lila.db.Env.current,
     config = lila.common.PlayApp loadConfig "fishnet",
     scheduler = lila.common.PlayApp.scheduler,
     bus = lila.common.PlayApp.system.lilaBus,
-    sink = lila.analyse.Env.current.analyser)
+    asyncCache = lila.memo.Env.current.asyncCache,
+    sink = lila.analyse.Env.current.analyser
+  )
 }

@@ -3,7 +3,6 @@ package lila.round
 import org.specs2.mutable.Specification
 
 import chess._
-import Pos._
 
 class StepBuilderPerfTest extends Specification {
 
@@ -11,15 +10,15 @@ class StepBuilderPerfTest extends Specification {
 
   val nb = 200
   val gameMoves = Fixtures.prod500standard.take(nb).map {
-    _.split(' ').toList
+    _.split(' ').toVector
   }
   val iterations = 10
   // val nb = 1
   // val iterations = 1
 
-  def runOne(moves: List[String]) =
+  def runOne(moves: Vector[String]) =
     StepBuilder("abcd1234", moves, chess.variant.Standard, format.Forsyth.initial)
-  def run() { gameMoves foreach runOne }
+  def run(): Unit = { gameMoves foreach runOne }
 
   def runTests() = {
     runOne(gameMoves.head)

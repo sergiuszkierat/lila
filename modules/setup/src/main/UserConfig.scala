@@ -1,15 +1,12 @@
 package lila.setup
 
-import org.joda.time.DateTime
-
-import lila.user.User
-
 private[setup] case class UserConfig(
     id: String,
     ai: AiConfig,
     friend: FriendConfig,
     hook: HookConfig,
-    filter: FilterConfig) {
+    filter: FilterConfig
+) {
 
   def withFilter(c: FilterConfig) = copy(filter = c)
 
@@ -27,7 +24,8 @@ private[setup] object UserConfig {
     ai = AiConfig.default,
     friend = FriendConfig.default,
     hook = HookConfig.default,
-    filter = FilterConfig.default)
+    filter = FilterConfig.default
+  )
 
   import lila.db.BSON
   import lila.db.dsl._
@@ -43,13 +41,15 @@ private[setup] object UserConfig {
       ai = r.getO[AiConfig]("ai") | AiConfig.default,
       friend = r.getO[FriendConfig]("friend") | FriendConfig.default,
       hook = r.getO[HookConfig]("hook") | HookConfig.default,
-      filter = r.getO[FilterConfig]("filter") | FilterConfig.default)
+      filter = r.getO[FilterConfig]("filter") | FilterConfig.default
+    )
 
     def writes(w: BSON.Writer, o: UserConfig) = $doc(
       "_id" -> o.id,
       "ai" -> o.ai,
       "friend" -> o.friend,
       "hook" -> o.hook,
-      "filter" -> o.filter)
+      "filter" -> o.filter
+    )
   }
 }

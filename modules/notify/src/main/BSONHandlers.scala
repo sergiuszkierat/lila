@@ -1,6 +1,5 @@
 package lila.notify
 
-import chess.Color
 import lila.db.BSON.{ Reader, Writer }
 import lila.db.dsl._
 import lila.db.{ dsl, BSON }
@@ -22,7 +21,6 @@ private object BSONHandlers {
   implicit val InvitedToStudyByHandler = stringAnyValHandler[InvitedBy](_.value, InvitedBy.apply)
   implicit val StudyNameHandler = stringAnyValHandler[StudyName](_.value, StudyName.apply)
   implicit val StudyIdHandler = stringAnyValHandler[StudyId](_.value, StudyId.apply)
-  import Notification.{ Notifies, NotificationRead }
   implicit val ReadHandler = booleanAnyValHandler[NotificationRead](_.value, NotificationRead.apply)
 
   import PrivateMessage._
@@ -41,20 +39,19 @@ private object BSONHandlers {
   implicit val TeamNameHandler = stringAnyValHandler[TeamJoined.Name](_.value, TeamJoined.Name.apply)
   implicit val TeamJoinedHandler = Macros.handler[TeamJoined]
 
-  implicit val BlogIdHandler = stringAnyValHandler[NewBlogPost.Id](_.value, NewBlogPost.Id.apply)
-  implicit val BlogSlugHandler = stringAnyValHandler[NewBlogPost.Slug](_.value, NewBlogPost.Slug.apply)
-  implicit val BlogTitleHandler = stringAnyValHandler[NewBlogPost.Title](_.value, NewBlogPost.Title.apply)
-  implicit val NewBlogPostHandler = Macros.handler[NewBlogPost]
-
   implicit val GameEndGameIdHandler = stringAnyValHandler[GameEnd.GameId](_.value, GameEnd.GameId.apply)
   implicit val GameEndOpponentHandler = stringAnyValHandler[GameEnd.OpponentId](_.value, GameEnd.OpponentId.apply)
   implicit val GameEndWinHandler = booleanAnyValHandler[GameEnd.Win](_.value, GameEnd.Win.apply)
   implicit val GameEndHandler = Macros.handler[GameEnd]
 
+  implicit val TitledTournamentInvitationHandler = Macros.handler[TitledTournamentInvitation]
+
   implicit val PlanStartHandler = Macros.handler[PlanStart]
   implicit val PlanExpireHandler = Macros.handler[PlanExpire]
 
   implicit val RatingRefundHandler = Macros.handler[RatingRefund]
+  implicit val CorresAlarmHandler = Macros.handler[CorresAlarm]
+  implicit val IrwinDoneHandler = Macros.handler[IrwinDone]
 
   implicit val ColorBSONHandler = new BSONHandler[BSONBoolean, chess.Color] {
     def read(b: BSONBoolean) = chess.Color(b.value)
@@ -69,17 +66,19 @@ private object BSONHandlers {
           $doc("mentionedBy" -> mentionedBy, "topic" -> topic, "topicId" -> topicId, "category" -> category, "postId" -> postId)
         case InvitedToStudy(invitedBy, studyName, studyId) =>
           $doc("invitedBy" -> invitedBy, "studyName" -> studyName, "studyId" -> studyId)
-        case p: PrivateMessage           => PrivateMessageHandler.write(p)
-        case q: QaAnswer                 => QaAnswerHandler.write(q)
-        case t: TeamJoined               => TeamJoinedHandler.write(t)
-        case b: NewBlogPost              => NewBlogPostHandler.write(b)
+        case p: PrivateMessage => PrivateMessageHandler.write(p)
+        case q: QaAnswer => QaAnswerHandler.write(q)
+        case t: TeamJoined => TeamJoinedHandler.write(t)
         case LimitedTournamentInvitation => $empty
-        case x: GameEnd                  => GameEndHandler.write(x)
-        case x: PlanStart                => PlanStartHandler.write(x)
-        case x: PlanExpire               => PlanExpireHandler.write(x)
-        case x: RatingRefund             => RatingRefundHandler.write(x)
-        case ReportedBanned              => $empty
-        case CoachReview                 => $empty
+        case x: TitledTournamentInvitation => TitledTournamentInvitationHandler.write(x)
+        case x: GameEnd => GameEndHandler.write(x)
+        case x: PlanStart => PlanStartHandler.write(x)
+        case x: PlanExpire => PlanExpireHandler.write(x)
+        case x: RatingRefund => RatingRefundHandler.write(x)
+        case ReportedBanned => $empty
+        case CoachReview => $empty
+        case x: CorresAlarm => CorresAlarmHandler.write(x)
+        case x: IrwinDone => IrwinDoneHandler.write(x)
       }
     } ++ $doc("type" -> notificationContent.key)
 
@@ -102,19 +101,21 @@ private object BSONHandlers {
     }
 
     def reads(reader: Reader): NotificationContent = reader.str("type") match {
-      case "mention"        => readMentionedNotification(reader)
-      case "invitedStudy"   => readInvitedStudyNotification(reader)
+      case "mention" => readMentionedNotification(reader)
+      case "invitedStudy" => readInvitedStudyNotification(reader)
       case "privateMessage" => PrivateMessageHandler read reader.doc
-      case "qaAnswer"       => QaAnswerHandler read reader.doc
-      case "teamJoined"     => TeamJoinedHandler read reader.doc
-      case "newBlogPost"    => NewBlogPostHandler read reader.doc
-      case "u"              => LimitedTournamentInvitation
-      case "gameEnd"        => GameEndHandler read reader.doc
-      case "planStart"      => PlanStartHandler read reader.doc
-      case "planExpire"     => PlanExpireHandler read reader.doc
-      case "ratingRefund"   => RatingRefundHandler read reader.doc
+      case "qaAnswer" => QaAnswerHandler read reader.doc
+      case "teamJoined" => TeamJoinedHandler read reader.doc
+      case "u" => LimitedTournamentInvitation
+      case "titledTourney" => TitledTournamentInvitationHandler read reader.doc
+      case "gameEnd" => GameEndHandler read reader.doc
+      case "planStart" => PlanStartHandler read reader.doc
+      case "planExpire" => PlanExpireHandler read reader.doc
+      case "ratingRefund" => RatingRefundHandler read reader.doc
       case "reportedBanned" => ReportedBanned
-      case "coachReview"    => CoachReview
+      case "coachReview" => CoachReview
+      case "corresAlarm" => CorresAlarmHandler read reader.doc
+      case "irwinDone" => IrwinDoneHandler read reader.doc
     }
 
     def writes(writer: Writer, n: NotificationContent): dsl.Bdoc = writeNotificationContent(n)

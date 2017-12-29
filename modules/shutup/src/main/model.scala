@@ -2,11 +2,13 @@ package lila.shutup
 
 case class UserRecord(
     _id: String,
+    /* pub: Option[List[PublicLine]], intentionally not mapped to DB */
     puf: Option[List[Double]],
     tef: Option[List[Double]],
     prm: Option[List[Double]],
     prc: Option[List[Double]],
-    puc: Option[List[Double]]) {
+    puc: Option[List[Double]]
+) {
 
   def userId = _id
 
@@ -15,24 +17,29 @@ case class UserRecord(
     TextReport(TextType.TeamForumMessage, ~tef),
     TextReport(TextType.PrivateMessage, ~prm),
     TextReport(TextType.PrivateChat, ~prc),
-    TextReport(TextType.PublicChat, ~puc))
+    TextReport(TextType.PublicChat, ~puc)
+  )
 }
 
 case class TextAnalysis(
     text: String,
-    badWords: List[String]) {
+    badWords: List[String]
+) {
 
   lazy val nbWords = text.split("""\W+""").size
 
   def nbBadWords = badWords.size
 
   def ratio: Double = if (nbWords == 0) 0 else nbBadWords.toDouble / nbWords
+
+  def dirty = ratio > 0
 }
 
 sealed abstract class TextType(
-  val key: String,
-  val rotation: Int,
-  val name: String)
+    val key: String,
+    val rotation: Int,
+    val name: String
+)
 
 object TextType {
 
@@ -47,7 +54,7 @@ case class TextReport(textType: TextType, ratios: List[Double]) {
 
   def minRatios = textType.rotation / 15
   def nbBad = ratios.count(_ > TextReport.unacceptableRatio)
-  def tolerableNb = (ratios.size / 10) max 3
+  def tolerableNb = (ratios.size / 10) atLeast 4
 
   def unacceptable = (ratios.size >= minRatios) && (nbBad > tolerableNb)
 }

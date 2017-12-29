@@ -13,13 +13,18 @@ case class Thread(
     posts: List[Post],
     creatorId: String,
     invitedId: String,
-    visibleByUserIds: List[String]) {
+    visibleByUserIds: List[String],
+    mod: Option[Boolean]
+) {
 
   def +(post: Post) = copy(
     posts = posts :+ post,
-    updatedAt = post.createdAt)
+    updatedAt = post.createdAt
+  )
 
   def id = _id
+
+  def asMod = ~mod
 
   def isCreator(user: User) = creatorId == user.id
 
@@ -33,6 +38,10 @@ case class Thread(
   def nbUnreadBy(user: User): Int = posts count isPostUnreadBy(user)
 
   def nbPosts = posts.size
+
+  def isTooBig = nbPosts > 200
+
+  def firstPost: Option[Post] = posts.headOption
 
   def firstPostUnreadBy(user: User): Option[Post] = posts find isPostUnreadBy(user)
 
@@ -50,9 +59,20 @@ case class Thread(
 
   def otherUserId(user: User) = isCreator(user).fold(invitedId, creatorId)
 
+  def visibleOtherUserId(user: User) =
+    isCreator(user).fold(invitedId, asMod.fold(Thread.lichess, creatorId))
+
   def senderOf(post: Post) = post.isByCreator.fold(creatorId, invitedId)
 
+  def visibleSenderOf(post: Post) =
+    if (post.isByCreator && asMod) Thread.lichess
+    else senderOf(post)
+
   def receiverOf(post: Post) = post.isByCreator.fold(invitedId, creatorId)
+
+  def visibleReceiverOf(post: Post) =
+    if (!post.isByCreator && asMod) Thread.lichess
+    else receiverOf(post)
 
   def isWrittenBy(post: Post, user: User) = post.isByCreator == isCreator(user)
 
@@ -64,7 +84,9 @@ case class Thread(
 
   def isVisibleBy(userId: User.ID) = visibleByUserIds contains userId
 
-  def hasPostsWrittenBy(userId: String) = posts exists (_.isByCreator == (creatorId == userId))
+  def isVisibleByOther(user: User) = isVisibleBy(otherUserId(user))
+
+  def hasPostsWrittenBy(userId: User.ID) = posts exists (_.isByCreator == (creatorId == userId))
 
   def endsWith(post: Post) = posts.lastOption ?? post.similar
 }
@@ -73,12 +95,16 @@ object Thread {
 
   val idSize = 8
 
+  private val lichess = "lichess"
+
   def make(
     name: String,
     text: String,
     creatorId: String,
-    invitedId: String): Thread = Thread(
-    _id = Random nextStringUppercase idSize,
+    invitedId: String,
+    asMod: Boolean
+  ): Thread = Thread(
+    _id = Random nextString idSize,
     name = name,
     createdAt = DateTime.now,
     updatedAt = DateTime.now,
@@ -88,7 +114,9 @@ object Thread {
     )),
     creatorId = creatorId,
     invitedId = invitedId,
-    visibleByUserIds = List(creatorId, invitedId))
+    visibleByUserIds = List(creatorId, invitedId),
+    mod = asMod option true
+  )
 
   import lila.db.dsl.BSONJodaDateTimeHandler
   import Post.PostBSONHandler

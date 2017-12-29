@@ -1,7 +1,7 @@
 package lila.challenge
 
-import chess.variant.{Variant, FromPosition}
-import chess.{ Mode, Clock, Speed }
+import chess.variant.{ Variant, FromPosition }
+import chess.{ Mode, Speed }
 import org.joda.time.DateTime
 
 import lila.game.PerfPicker
@@ -22,7 +22,8 @@ case class Challenge(
     rematchOf: Option[String],
     createdAt: DateTime,
     seenAt: DateTime,
-    expiresAt: DateTime) {
+    expiresAt: DateTime
+) {
 
   import Challenge._
 
@@ -37,13 +38,13 @@ case class Challenge(
 
   def daysPerTurn = timeControl match {
     case TimeControl.Correspondence(d) => d.some
-    case _                             => none
+    case _ => none
   }
   def unlimited = timeControl == TimeControl.Unlimited
 
   def clock = timeControl match {
     case c: TimeControl.Clock => c.some
-    case _                    => none
+    case _ => none
   }
 
   def hasClock = clock.isDefined
@@ -52,6 +53,10 @@ case class Challenge(
   def active = status == Status.Created || status == Status.Offline
   def declined = status == Status.Declined
   def accepted = status == Status.Accepted
+
+  def setDestUser(u: User) = copy(
+    destUser = toRegistered(variant, timeControl)(u).some
+  )
 
   lazy val perfType = perfTypeOf(variant, timeControl)
 }
@@ -87,10 +92,11 @@ object Challenge {
   object TimeControl {
     case object Unlimited extends TimeControl
     case class Correspondence(days: Int) extends TimeControl
-    case class Clock(limit: Int, increment: Int) extends TimeControl {
+    case class Clock(config: chess.Clock.Config) extends TimeControl {
       // All durations are expressed in seconds
-      def show = chessClock.show
-      lazy val chessClock = chess.Clock(limit, increment)
+      def limit = config.limit
+      def increment = config.increment
+      def show = config.show
     }
   }
 
@@ -102,21 +108,21 @@ object Challenge {
   }
 
   private def speedOf(timeControl: TimeControl) = timeControl match {
-    case c: TimeControl.Clock => Speed(c.chessClock)
-    case _                    => Speed.Correspondence
+    case TimeControl.Clock(config) => Speed(config)
+    case _ => Speed.Correspondence
   }
 
   private def perfTypeOf(variant: Variant, timeControl: TimeControl): PerfType =
     PerfPicker.perfType(speedOf(timeControl), variant, timeControl match {
       case TimeControl.Correspondence(d) => d.some
-      case _                             => none
+      case _ => none
     }).orElse {
       (variant == FromPosition) option perfTypeOf(chess.variant.Standard, timeControl)
     }.|(PerfType.Correspondence)
 
   private val idSize = 8
 
-  private def randomId = ornicar.scalalib.Random nextStringUppercase idSize
+  private def randomId = ornicar.scalalib.Random nextString idSize
 
   private def toRegistered(variant: Variant, timeControl: TimeControl)(u: User) =
     Registered(u.id, Rating(u.perfs(perfTypeOf(variant, timeControl))))
@@ -129,11 +135,16 @@ object Challenge {
     color: String,
     challenger: Either[String, User],
     destUser: Option[User],
-    rematchOf: Option[String]): Challenge = {
+    rematchOf: Option[String]
+  ): Challenge = {
     val (colorChoice, finalColor) = color match {
       case "white" => ColorChoice.White -> chess.White
       case "black" => ColorChoice.Black -> chess.Black
-      case _       => ColorChoice.Random -> chess.Color(scala.util.Random.nextBoolean)
+      case _ => ColorChoice.Random -> chess.Color(scala.util.Random.nextBoolean)
+    }
+    val finalMode = timeControl match {
+      case TimeControl.Clock(clock) if !lila.game.Game.allowRated(variant, clock) => Mode.Casual
+      case _ => mode
     }
     new Challenge(
       _id = randomId,
@@ -144,7 +155,7 @@ object Challenge {
         Some(variant.initialFen).ifFalse(variant.standardInitialPosition)
       ),
       timeControl = timeControl,
-      mode = mode,
+      mode = finalMode,
       colorChoice = colorChoice,
       finalColor = finalColor,
       challenger = challenger.fold[EitherChallenger](
@@ -155,6 +166,7 @@ object Challenge {
       rematchOf = rematchOf,
       createdAt = DateTime.now,
       seenAt = DateTime.now,
-      expiresAt = inTwoWeeks)
+      expiresAt = inTwoWeeks
+    )
   }
 }

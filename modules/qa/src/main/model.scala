@@ -17,7 +17,8 @@ case class Question(
     createdAt: DateTime,
     updatedAt: DateTime,
     acceptedAt: Option[DateTime],
-    editedAt: Option[DateTime]) {
+    editedAt: Option[DateTime]
+) {
 
   def id = _id
 
@@ -45,7 +46,9 @@ case class Answer(
     comments: List[Comment],
     acceptedAt: Option[DateTime],
     createdAt: DateTime,
-    editedAt: Option[DateTime]) {
+    editedAt: Option[DateTime],
+    modIcon: Option[Boolean]
+) {
 
   def id = _id
 
@@ -56,6 +59,10 @@ case class Answer(
   def ownBy(user: User) = userId == user.id
 
   def editNow = copy(editedAt = Some(DateTime.now))
+
+  def userIds = userId :: comments.map(_.userId)
+
+  def displayModIcon = ~modIcon
 }
 
 case class AnswerWithQuestion(answer: Answer, question: Question)
@@ -75,12 +82,16 @@ case class Vote(up: Set[String], down: Set[String], score: Int) {
 }
 
 case class Comment(
-  id: CommentId, // random string
-  userId: String,
-  body: String,
-  createdAt: DateTime)
+    id: CommentId, // random string
+    userId: String,
+    body: String,
+    createdAt: DateTime
+) extends Ordered[Comment] {
+
+  def compare(other: Comment) = createdAt.getSeconds compare other.createdAt.getSeconds
+}
 
 object Comment {
 
-  def makeId = ornicar.scalalib.Random nextStringUppercase 8
+  def makeId = ornicar.scalalib.Random nextString 8
 }

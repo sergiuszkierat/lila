@@ -1,13 +1,12 @@
 package lila.tournament
 package crud
 
-import org.joda.time.format.DateTimeFormat
-import org.joda.time.{ DateTime, DateTimeZone }
+import org.joda.time.DateTime
 import play.api.data._
 import play.api.data.Forms._
 import play.api.data.validation.Constraints._
-import scala.util.Try
 
+import chess.StartingPosition
 import lila.common.Form._
 
 object CrudForm {
@@ -22,6 +21,7 @@ object CrudForm {
     "clockIncrement" -> numberIn(clockIncrementPrivateChoices),
     "minutes" -> number(min = 20, max = 1440),
     "variant" -> number.verifying(validVariantIds contains _),
+    "position" -> nonEmptyText.verifying(DataForm.positions contains _),
     "date" -> utcDate,
     "image" -> stringIn(imageChoices),
     "headline" -> nonEmptyText(minLength = 5, maxLength = 30),
@@ -29,19 +29,20 @@ object CrudForm {
     "conditions" -> Condition.DataForm.all
   )(CrudForm.Data.apply)(CrudForm.Data.unapply)
     .verifying("Invalid clock", _.validClock)
-    .verifying("Increase tournament duration, or decrease game clock", _.validTiming)
-  ) fill CrudForm.Data(
+    .verifying("Increase tournament duration, or decrease game clock", _.validTiming)) fill CrudForm.Data(
     name = "",
     homepageHours = 0,
     clockTime = clockTimeDefault,
     clockIncrement = clockIncrementDefault,
     minutes = minuteDefault,
     variant = chess.variant.Standard.id,
+    position = StartingPosition.initial.eco,
     date = DateTime.now plusDays 7,
     image = "",
     headline = "",
     description = "",
-    conditions = Condition.DataForm.AllSetup.default)
+    conditions = Condition.DataForm.AllSetup.default
+  )
 
   case class Data(
       name: String,
@@ -50,11 +51,13 @@ object CrudForm {
       clockIncrement: Int,
       minutes: Int,
       variant: Int,
+      position: String,
       date: DateTime,
       image: String,
       headline: String,
       description: String,
-      conditions: Condition.DataForm.AllSetup) {
+      conditions: Condition.DataForm.AllSetup
+  ) {
 
     def validClock = (clockTime + clockIncrement) > 0
 
@@ -67,6 +70,7 @@ object CrudForm {
     "" -> "Lichess",
     "chesswhiz.logo.png" -> "ChessWhiz",
     "chessat3.logo.png" -> "Chessat3",
-    "bitchess.logo.png" -> "Bitchess")
+    "bitchess.logo.png" -> "Bitchess"
+  )
   val imageDefault = ""
 }

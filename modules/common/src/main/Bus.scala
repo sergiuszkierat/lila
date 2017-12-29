@@ -3,13 +3,14 @@ package lila.common
 import akka.actor._
 import akka.event._
 
-final class Bus(system: ActorSystem) extends Extension with EventBus {
+// can only ever be instanciated once per actor system
+final class Bus private (system: ActorSystem) extends Extension with EventBus {
 
   type Event = Bus.Event
   type Classifier = Symbol
   type Subscriber = ActorRef
 
-  def publish(payload: Any, channel: Classifier) {
+  def publish(payload: Any, channel: Classifier): Unit = {
     publish(Bus.Event(payload, channel))
   }
 
@@ -39,7 +40,7 @@ final class Bus(system: ActorSystem) extends Extension with EventBus {
   /**
    * Attempts to deregister the subscriber from all Classifiers it may be subscribed to
    */
-  def unsubscribe(subscriber: Subscriber) {
+  def unsubscribe(subscriber: Subscriber): Unit = {
     // log(s"[UN]subscribe ALL $subscriber")
     bus unsubscribe subscriber
   }
@@ -47,13 +48,9 @@ final class Bus(system: ActorSystem) extends Extension with EventBus {
   /**
    * Publishes the specified Event to this bus
    */
-  def publish(event: Event) {
+  def publish(event: Event): Unit = {
     // log(event.toString)
     bus publish event
-  }
-
-  private def log(msg: => String) {
-    // loginfo(msg)
   }
 
   private val bus = new ActorEventBus with LookupClassification {
@@ -78,4 +75,3 @@ object Bus extends ExtensionId[Bus] with ExtensionIdProvider {
 
   override def createExtension(system: ExtendedActorSystem) = new Bus(system)
 }
-

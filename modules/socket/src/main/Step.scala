@@ -4,9 +4,7 @@ import chess.format.Uci
 import chess.Pos
 import chess.variant.Crazyhouse
 
-import play.api.libs.functional.syntax._
 import play.api.libs.json._
-import play.api.libs.json.Reads._
 
 case class Step(
     ply: Int,
@@ -16,7 +14,8 @@ case class Step(
     // None when not computed yet
     dests: Option[Map[Pos, List[Pos]]],
     drops: Option[List[Pos]],
-    crazyData: Option[Crazyhouse.Data]) {
+    crazyData: Option[Crazyhouse.Data]
+) {
 
   // who's color plays next
   def color = chess.Color(ply % 2 == 0)
@@ -42,7 +41,8 @@ object Step {
         Some(v.roles.count(role ==)).filter(0 <).map { count =>
           role.name -> JsNumber(count)
         }
-      })
+      }
+    )
   }
   private implicit val crazyhouseDataWriter: OWrites[chess.variant.Crazyhouse.Data] = OWrites { v =>
     Json.obj("pockets" -> List(v.pockets.white, v.pockets.black))
@@ -65,7 +65,8 @@ object Step {
         "ply" -> ply,
         "uci" -> move.map(_.uciString),
         "san" -> move.map(_.san),
-        "fen" -> fen))
+        "fen" -> fen
+      ))
   }
 
   private def add[A](k: String, v: A, cond: Boolean)(o: JsObject)(implicit writes: Writes[A]): JsObject =

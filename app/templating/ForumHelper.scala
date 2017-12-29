@@ -10,7 +10,7 @@ trait ForumHelper { self: UserHelper with StringHelper =>
 
   private object Granter extends lila.forum.Granter {
 
-    protected def userBelongsToTeam(teamId: String, userId: String): Boolean =
+    protected def userBelongsToTeam(teamId: String, userId: String): Fu[Boolean] =
       Env.team.api.belongsTo(teamId, userId)
 
     protected def userOwnsTeam(teamId: String, userId: String): Fu[Boolean] =
@@ -23,18 +23,17 @@ trait ForumHelper { self: UserHelper with StringHelper =>
   def isGrantedWrite(categSlug: String)(implicit ctx: Context) =
     Granter isGrantedWrite categSlug
 
-  def isGrantedMod(categSlug: String)(implicit ctx: Context) =
-    Granter.isGrantedMod(categSlug).await
-
   def authorName(post: Post) = post.userId match {
     case Some(userId) => userIdSpanMini(userId, withOnline = true)
-    case None         => Html(lila.user.User.anonymous)
+    case None => Html(lila.user.User.anonymous)
   }
 
   def authorLink(
     post: Post,
     cssClass: Option[String] = None,
-    withOnline: Boolean = true) = post.userId.fold(Html(lila.user.User.anonymous)) { userId =>
-    userIdLink(userId.some, cssClass = cssClass, withOnline = withOnline)
+    withOnline: Boolean = true,
+    modIcon: Boolean = false
+  ) = post.userId.fold(Html(lila.user.User.anonymous)) { userId =>
+    userIdLink(userId.some, cssClass = cssClass, withOnline = withOnline, modIcon = modIcon)
   }
 }

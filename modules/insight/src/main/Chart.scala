@@ -1,35 +1,39 @@
 package lila.insight
 
 import lila.common.LightUser
-import lila.common.PimpedJson._
 import play.api.libs.json._
 
 case class Chart(
-  question: JsonQuestion,
-  xAxis: Chart.Xaxis,
-  valueYaxis: Chart.Yaxis,
-  sizeYaxis: Chart.Yaxis,
-  series: List[Chart.Serie],
-  sizeSerie: Chart.Serie,
-  games: List[JsObject])
+    question: JsonQuestion,
+    xAxis: Chart.Xaxis,
+    valueYaxis: Chart.Yaxis,
+    sizeYaxis: Chart.Yaxis,
+    series: List[Chart.Serie],
+    sizeSerie: Chart.Serie,
+    games: List[JsObject]
+)
 
 object Chart {
 
   case class Xaxis(
-    name: String,
-    categories: List[String])
+      name: String,
+      categories: List[JsValue],
+      dataType: String
+  )
 
   case class Yaxis(
-    name: String,
-    dataType: String)
+      name: String,
+      dataType: String
+  )
 
   case class Serie(
-    name: String,
-    dataType: String,
-    stack: Option[String],
-    data: List[Double])
+      name: String,
+      dataType: String,
+      stack: Option[String],
+      data: List[Double]
+  )
 
-  def fromAnswer[X](getLightUser: String => Option[LightUser])(answer: Answer[X]): Chart = {
+  def fromAnswer[X](getLightUser: LightUser.GetterSync)(answer: Answer[X]): Chart = {
 
     import answer._, question._
 
@@ -49,18 +53,22 @@ object Chart {
         "color" -> pov.player.color.name,
         "lastMove" -> ~pov.game.castleLastMoveTime.lastMoveString,
         "user1" -> gameUserJson(pov.player),
-        "user2" -> gameUserJson(pov.opponent))
+        "user2" -> gameUserJson(pov.opponent)
+      )
     }
 
     def xAxis = Xaxis(
       name = dimension.name,
-      categories = clusters.map(_.x).map(dimension.valueName))
+      categories = clusters.map(_.x).map(Dimension.valueJson(dimension) _),
+      dataType = Dimension dataTypeOf dimension
+    )
 
     def sizeSerie = Serie(
       name = metric.per.tellNumber,
       dataType = Metric.DataType.Count.name,
       stack = none,
-      data = clusters.map(_.size.toDouble))
+      data = clusters.map(_.size.toDouble)
+    )
 
     def series = clusters.foldLeft(Map.empty[String, Serie]) {
       case (acc, cluster) =>
@@ -72,7 +80,8 @@ object Chart {
                 name = metric.name,
                 dataType = metric.dataType.name,
                 stack = none,
-                data = List(point.y))
+                data = List(point.y)
+              )
               case Some(s) => s.copy(data = point.y :: s.data)
             })
           case Insight.Stacked(points) => points.foldLeft(acc) {
@@ -83,7 +92,8 @@ object Chart {
                   name = metricValueName.name,
                   dataType = metric.dataType.name,
                   stack = metric.name.some,
-                  data = List(point.y))
+                  data = List(point.y)
+                )
                 case Some(s) => s.copy(data = point.y :: s.data)
               })
           }
@@ -94,7 +104,7 @@ object Chart {
 
     def sortedSeries = answer.clusters.headOption.fold(series) {
       _.insight match {
-        case Insight.Single(_)       => series
+        case Insight.Single(_) => series
         case Insight.Stacked(points) => series.sortLike(points.map(_._1.name), _.name)
       }
     }
@@ -106,6 +116,7 @@ object Chart {
       sizeYaxis = Yaxis(metric.per.tellNumber, Metric.DataType.Count.name),
       series = sortedSeries,
       sizeSerie = sizeSerie,
-      games = games)
+      games = games
+    )
   }
 }

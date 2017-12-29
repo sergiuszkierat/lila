@@ -4,13 +4,14 @@ import org.joda.time.DateTime
 import play.api.libs.json._
 
 import chess.format.Uci
-import chess.{ Pos, Move }
+import chess.Move
 import lila.game.Game
 
 case class Forecast(
     _id: String, // player full id
     steps: Forecast.Steps,
-    date: DateTime) {
+    date: DateTime
+) {
 
   def apply(g: Game, lastMove: Move): Option[(Forecast, Uci.Move)] =
     nextMove(g, lastMove) map { move =>
@@ -42,7 +43,8 @@ object Forecast {
       uci: String,
       san: String,
       fen: String,
-      check: Option[Boolean]) {
+      check: Option[Boolean]
+  ) {
 
     def is(move: Move) = move.toUci.uci == uci
     def is(move: Uci.Move) = move.uci == uci
@@ -54,7 +56,7 @@ object Forecast {
 
   implicit val forecastJsonWriter = Json.writes[Forecast]
 
-  case object OutOfSync extends lila.common.LilaException {
+  case object OutOfSync extends lila.base.LilaException {
     val message = "Forecast out of sync"
   }
 }

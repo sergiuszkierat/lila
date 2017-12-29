@@ -1,20 +1,46 @@
+#communication h1 {
+  font-size: 1.5em;
+  display: flex;
+  justify-content: space-between;
+}
+#communication .user_link {
+  margin-left: -.5em;
+}
+#communication .actions {
+  display: flex;
+  align-items: center;
+}
+#communication .actions .priv {
+  margin-right: 5px;
+  font-weight: normal;
+}
 #communication h2 {
-  font-size: 2em;
-  margin: 1em;
-  text-align: center;
+  font-size: 1.6em;
+  margin-top: 1.6em;
+  border-bottom: 1px solid #ccc;
   text-transform: capitalize;
   letter-spacing: 2px;
 }
 #communication .user_link {
   font-weight: bold;
 }
-#communication .public_chats li {
-  list-style: inside disc;
+#communication .public_chats,
+#communication .notes,
+#communication .history {
+  margin-top: 0.5em;
+  max-height: 150px;
+  overflow-y: auto;
+  padding-bottom: 0.5em;
+  border-bottom: 1px solid #ccc;
 }
 #communication .player_chats {
   overflow: hidden;
-  border: 1px solid #ccc;
-  margin-top: 2em;
+}
+#communication .public_chats li {
+  list-style: inside disc;
+}
+#communication .public_chats a {
+  color: #3893E8;
 }
 #communication .player_chats .game {
   display: block;
@@ -27,16 +53,19 @@
 #communication .player_chats .game .title,
 #communication .player_chats .game .chat {
   display: block;
-  padding: 10px;
+  padding: 6px;
+}
+#communication .player_chats .game .friend_title {
+  color: green;
+  font-style: italic;
 }
 #communication .player_chats .game .title {
   text-align: center;
-  font-weight: bold;
   border-bottom: 1px solid #ccc;
 }
 #communication .player_chats .game .chat {
   padding-top: 0;
-  height: 200px;
+  height: 120px;
   overflow: hidden;
 }
 #communication .player_chats .game:hover .chat {
@@ -73,19 +102,23 @@ body.dark #communication .player_chats .game:nth-child(odd),
 body.dark #communication .thread:nth-child(even) {
   background: #202020;
 }
+body.dark #communication h2,
+body.dark #communication .public_chats,
+body.dark #communication .notes,
+body.dark #communication .history,
 body.dark #communication .player_chats,
 body.dark #communication .player_chats .game .title {
   border-color: #3d3d3d;
 }
 
-#powaaa form {
+#permissions form {
   text-align: center;
 }
-#powaaa select {
+#permissions select {
   height: 400px;
   margin: 30px;
 }
-#powaaa select option {
+#permissions select option {
   padding: 5px 10px;
 }
 

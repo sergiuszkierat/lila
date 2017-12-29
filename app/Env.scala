@@ -7,57 +7,106 @@ import scala.concurrent.duration._
 final class Env(
     config: Config,
     val scheduler: lila.common.Scheduler,
-    system: ActorSystem,
-    appPath: String) {
+    val system: ActorSystem,
+    appPath: String
+) {
 
   val CliUsername = config getString "cli.username"
 
   private val RendererName = config getString "app.renderer.name"
 
-  lazy val bus = lila.common.Bus(system)
-
   lazy val preloader = new mashup.Preload(
     tv = Env.tv.tv,
     leaderboard = Env.user.cached.topWeek,
-    tourneyWinners = Env.tournament.winners.scheduled,
-    timelineEntries = Env.timeline.entryRepo.userEntries _,
+    tourneyWinners = Env.tournament.winners.all.map(_.top),
+    timelineEntries = Env.timeline.entryApi.userEntries _,
     dailyPuzzle = tryDailyPuzzle,
     streamsOnAir = () => Env.tv.streamsOnAir.all,
     countRounds = Env.round.count,
     lobbyApi = Env.api.lobbyApi,
     getPlayban = Env.playban.api.currentBan _,
-    lightUser = Env.user.lightUser)
+    lightUserApi = Env.user.lightUserApi
+  )
+
+  lazy val socialInfo = mashup.UserInfo.Social(
+    relationApi = Env.relation.api,
+    noteApi = Env.user.noteApi,
+    prefApi = Env.pref.api
+  ) _
+
+  lazy val userNbGames = mashup.UserInfo.NbGames(
+    crosstableApi = Env.game.crosstableApi,
+    bookmarkApi = Env.bookmark.api,
+    gameCached = Env.game.cached
+  ) _
 
   lazy val userInfo = mashup.UserInfo(
-    bookmarkApi = Env.bookmark.api,
     relationApi = Env.relation.api,
     trophyApi = Env.user.trophyApi,
-    gameCached = Env.game.cached,
-    crosstableApi = Env.game.crosstableApi,
+    shieldApi = Env.tournament.shieldApi,
     postApi = Env.forum.postApi,
     studyRepo = Env.study.studyRepo,
     getRatingChart = Env.history.ratingChartApi.apply,
     getRanks = Env.user.cached.ranking.getAll,
     isHostingSimul = Env.simul.isHosting,
-    isStreamer = Env.tv.isStreamer.apply,
+    fetchIsStreamer = Env.tv.isStreamer.apply,
+    fetchTeamIds = Env.team.cached.teamIdsList,
     fetchIsCoach = Env.coach.api.isListedCoach,
     insightShare = Env.insight.share,
     getPlayTime = Env.game.playTime.apply,
-    completionRate = Env.playban.api.completionRate) _
+    completionRate = Env.playban.api.completionRate
+  ) _
+
+  lazy val teamInfo = new mashup.TeamInfoApi(
+    api = Env.team.api,
+    getForumNbPosts = Env.forum.categApi.teamNbPosts _,
+    getForumPosts = Env.forum.recent.team _,
+    asyncCache = Env.memo.asyncCache
+  )
 
   private def tryDailyPuzzle(): Fu[Option[lila.puzzle.DailyPuzzle]] =
     scala.concurrent.Future {
-      Env.puzzle.daily()
-    }.flatMap(identity).withTimeoutDefault(100 millis, none)(system) recover {
+      Env.puzzle.daily.get
+    }.flatMap(identity).withTimeoutDefault(50 millis, none)(system) recover {
       case e: Exception =>
         lila.log("preloader").warn("daily puzzle", e)
         none
     }
 
+  def closeAccount(userId: lila.user.User.ID): Funit = for {
+    user <- lila.user.UserRepo byId userId flatten s"No such user $userId"
+    goodUser <- !user.lameOrTroll ?? { !Env.playban.api.hasCurrentBan(user.id) }
+    _ <- lila.user.UserRepo.disable(user, keepEmail = !goodUser)
+    _ = Env.user.onlineUserIdMemo.remove(user.id)
+    following <- Env.relation.api fetchFollowing user.id
+    _ <- Env.activity.write.unfollowAll(user, following)
+    _ <- Env.relation.api.unfollowAll(user.id)
+    _ <- Env.user.rankingApi.remove(user.id)
+    _ <- Env.team.api.quitAll(user.id)
+    _ = Env.challenge.api.removeByUserId(user.id)
+    _ = Env.tournament.api.withdrawAll(user)
+    _ <- Env.plan.api.cancel(user).nevermind
+    _ <- Env.lobby.seekApi.removeByUser(user)
+    _ <- Env.security.store.disconnect(user.id)
+  } yield {
+    system.lilaBus.publish(lila.hub.actorApi.security.CloseAccount(user.id), 'accountClose)
+  }
+
+  system.lilaBus.subscribe(system.actorOf(Props(new Actor {
+    def receive = {
+      case lila.hub.actorApi.security.GarbageCollect(userId, _) =>
+        system.scheduler.scheduleOnce(1 second) {
+          closeAccount(userId)
+        }
+    }
+  })), 'garbageCollect)
+
   system.actorOf(Props(new actor.Renderer), name = RendererName)
 
+  lila.log.boot.info(s"Java version ${System.getProperty("java.version")}")
   lila.log.boot.info("Preloading modules")
-  lila.common.Chronometer.syncEffect(List(Env.socket,
+  lila.common.Chronometer.syncEffect(List(
+    Env.socket,
     Env.site,
     Env.tournament,
     Env.lobby,
@@ -82,7 +131,6 @@ final class Env(
     Env.playban, // required to load the actor
     Env.shutup, // required to load the actor
     Env.insight, // required to load the actor
-    Env.worldMap, // required to load the actor
     Env.push, // required to load the actor
     Env.perfStat, // required to load the actor
     Env.slack, // required to load the actor
@@ -92,9 +140,11 @@ final class Env(
     Env.notifyModule, // required to load the actor
     Env.plan, // required to load the actor
     Env.studySearch, // required to load the actor
-    Env.event // required to load the actor
+    Env.event, // required to load the actor
+    Env.activity, // required to load the actor
+    Env.relay // you know the drill by now
   )) { lap =>
-    lila.log("boot").info(s"${lap.millis}ms Preloading complete")
+    lila.log.boot.info(s"${lap.millis}ms Preloading complete")
   }
 
   scheduler.once(5 seconds) {
@@ -108,7 +158,8 @@ object Env {
     config = lila.common.PlayApp.loadConfig,
     scheduler = lila.common.PlayApp.scheduler,
     system = lila.common.PlayApp.system,
-    appPath = lila.common.PlayApp withApp (_.path.getCanonicalPath))
+    appPath = lila.common.PlayApp withApp (_.path.getCanonicalPath)
+  )
 
   def api = lila.api.Env.current
   def db = lila.db.Env.current
@@ -116,6 +167,7 @@ object Env {
   def security = lila.security.Env.current
   def hub = lila.hub.Env.current
   def socket = lila.socket.Env.current
+  def memo = lila.memo.Env.current
   def message = lila.message.Env.current
   def i18n = lila.i18n.Env.current
   def game = lila.game.Env.current
@@ -147,8 +199,6 @@ object Env {
   def blog = lila.blog.Env.current
   def qa = lila.qa.Env.current
   def history = lila.history.Env.current
-  def worldMap = lila.worldMap.Env.current
-  def opening = lila.opening.Env.current
   def video = lila.video.Env.current
   def playban = lila.playban.Env.current
   def shutup = lila.shutup.Env.current
@@ -165,4 +215,9 @@ object Env {
   def plan = lila.plan.Env.current
   def event = lila.event.Env.current
   def coach = lila.coach.Env.current
+  def pool = lila.pool.Env.current
+  def practice = lila.practice.Env.current
+  def irwin = lila.irwin.Env.current
+  def activity = lila.activity.Env.current
+  def relay = lila.relay.Env.current
 }

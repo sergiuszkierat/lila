@@ -11,16 +11,17 @@
         @tour.perfType.map(_.name)
         }
         @if(!tour.position.initial) {
-        • thematic
+        • @trans.thematic()
         } • @tour.durationString
       </span>
+      @tour.mode.fold(trans.casualTournament, trans.ratedTournament)() •
       @systemName(tour.system).capitalize
-      (<a href="@routes.Tournament.help(tour.system.toString.toLowerCase.some)">?</a>)
+      <a href="@routes.Tournament.help(tour.system.toString.toLowerCase.some)" data-icon=""></a>
     </div>
   </div>
   @tour.spotlight.map { s =>
   <div class="game_infos spotlight">
-    @markdownLinks(s.description)
+    @lila.common.String.html.markdownLinks(s.description)
   </div>
   }
   @if(verdicts.relevant) {
@@ -31,29 +32,16 @@
     <p>Condition of entry:</p>
     }
     @verdicts.list.map { v =>
-    <p class="condition text @if(v.verdict.accepted){accepted}else{refused}">@v.condition</p>
+    <p class="condition text @if(v.verdict.accepted){accepted}else{refused}">@v.condition.name(ctx.lang)</p>
     }
   </div>
   }
   @if(tour.createdBy == "lichess") {
-  @tour.id match {
-  case "summer15" => {
-  <a href="//lichess.org/blog/VbTcnx4AAIcBvGp7/lichess-summer-marathon-tournament">About</a>
-  }
-  case "autumn15" => {
-  <a href="//lichess.org/blog/VgGZWB0AAOsAO6ow/autumn-marathon-tournament">About</a>
-  }
-  case "winter15" => {
-  <a href="//lichess.org/blog/VmsiuSQAALImmWG5/winter-marathon-tournament">About</a>
-  }
-  case _ => {
   @trans.tournamentOfficial()
-  }
-  }
   } else {
   @trans.by(usernameOrId(tour.createdBy))
   }
-  • @momentFormat(tour.startsAt)
+  • @absClientDateTime(tour.startsAt)
   @if(!tour.position.initial) {
   <br /><br />
   <a target="_blank" href="@tour.position.url">
@@ -64,11 +52,11 @@
   <br /><br />
   @trans.winner(): @userIdLink(userId.some)
   }
-  @if(isGranted(_.TerminateTournament) && tour.isStarted) {
+  @if(isGranted(_.TerminateTournament)) {
   <form class="terminate" method="post" action="@routes.Tournament.terminate(tour.id)"
     style="margin-top: 7px; text-align: right;">
     <button data-icon="j" class="submit text button thin confirm" type="submit"
-      title="Terminates the tournament immediately! Use only if the tournament is killing lichess!">Terminate now</button>
+      title="Terminates the tournament immediately">Terminate now</button>
   </form>
   }
 </div>

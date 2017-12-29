@@ -2,9 +2,9 @@
 
 @site.message(
 title = s"Clone ${s.name}",
-icon = Some(Html("")),
+icon = Some(Html("4")),
 back = false) {
-<form action="@routes.Study.cloneApply(s.id)" method="POST">
+<form action="@routes.Study.cloneApply(s.id.value)" method="POST">
   <p>
     This will create a new private study with the same chapters.
   </p>
@@ -18,11 +18,11 @@ back = false) {
     Deleting one study will <strong>not</strong> delete the other study.
   </p>
   <p>
-    <button type="submit" class="submit button large" data-icon="@openingBrace"
+    <button type="submit" class="submit button large text" data-icon="4"
       style="margin: 30px auto; display: block; font-size: 2em;">Clone the study</button>
   </p>
   <p>
-    <a href="@routes.Study.show(s.id)" class="text" data-icon="I">@trans.cancel()</a>
+    <a href="@routes.Study.show(s.id.value)" class="text" data-icon="I">@trans.cancel()</a>
   </p>
 </form>
 }

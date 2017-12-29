@@ -1,7 +1,6 @@
 package lila.shutup
 
 import org.specs2.mutable._
-import org.specs2.specification._
 
 class DetectTest extends Specification {
 
@@ -14,7 +13,7 @@ class DetectTest extends Specification {
       find("well fuck me") must_== List("fuck")
     }
     "find many bad words" in {
-      find("fuck that shit") must_== List("fuck", "shit")
+      find("fucked that shit") must_== List("fucked", "shit")
       find("Beat them cunting nigger faggots with a communist dick") must_==
         List("cunting", "nigger", "faggots", "dick")
     }
@@ -34,14 +33,14 @@ class DetectTest extends Specification {
       find("ass as ashole") must_== List("ass", "ashole")
     }
     "find plurals" in {
-      find("cunts kunts cuntings kawas kuntings") must_== List("cunts", "kunts", "cuntings", "kuntings")
+      find("asses cunts kunts cuntings kawas kuntings") must_== List("asses", "cunts", "kunts", "cuntings", "kuntings")
     }
-    "fucks" in {
+    "50 shades of fuck" in {
       find("fuck fffuuk fektard feak fak phuk") must_== List("fuck", "fffuuk", "fektard", "fak", "phuk")
     }
     "compute ratio" in {
-      ratio("fuck that shit") must_== 2d/3
-      ratio("Beat them cunting nigger faggots with a communist dick") must_== 4d/9
+      ratio("fuck that shit") must_== 2d / 3
+      ratio("Beat them cunting nigger faggots with a communist dick") must_== 4d / 9
       ratio("hello there") must_== 0
       ratio("") must_== 0
     }
@@ -53,6 +52,9 @@ class DetectTest extends Specification {
       find("foo chess_bot_com bar") must_== List("chess_bot_com")
       find("foo chessbotcom bar") must_== List("chessbotcom")
       find("foo http://chess-bot.com bar") must_== List("chess-bot.com")
+    }
+    "russian" in {
+      find("сука пизда") must_== List("сука", "пизда")
     }
   }
 }

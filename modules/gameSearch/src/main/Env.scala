@@ -8,7 +8,8 @@ import lila.search._
 final class Env(
     config: Config,
     system: ActorSystem,
-    makeClient: Index => ESClient) {
+    makeClient: Index => ESClient
+) {
 
   private val IndexName = config getString "index"
   private val PaginatorMaxPerPage = config getInt "paginator.max_per_page"
@@ -16,34 +17,27 @@ final class Env(
 
   private lazy val client = makeClient(Index(IndexName))
 
-  lazy val api = new GameSearchApi(client)
+  lazy val api = new GameSearchApi(client, system)
 
   lazy val paginator = new PaginatorBuilder[lila.game.Game, Query](
     searchApi = api,
-    maxPerPage = PaginatorMaxPerPage)
+    maxPerPage = PaginatorMaxPerPage
+  )
 
   lazy val forms = new DataForm
 
   lazy val userGameSearch = new UserGameSearch(
     forms = forms,
-    paginator = paginator)
+    paginator = paginator
+  )
 
   system.lilaBus.subscribe(system.actorOf(Props(new Actor {
     import lila.game.actorApi.{ InsertGame, FinishGame }
     def receive = {
       case FinishGame(game, _, _) if !game.aborted => self ! InsertGame(game)
-      case InsertGame(game)                        => api store game
+      case InsertGame(game) => api store game
     }
   }), name = ActorName), 'finishGame)
-
-  def cli = new lila.common.Cli {
-    import akka.pattern.ask
-    private implicit def timeout = makeTimeout minutes 60
-    def process = {
-      case "game" :: "search" :: "index" :: "all" :: Nil => api.indexAll inject "done"
-      case "game" :: "search" :: "index" :: since :: Nil => api.indexSince(since) inject "done"
-    }
-  }
 }
 
 object Env {
@@ -51,5 +45,6 @@ object Env {
   lazy val current = "gameSearch" boot new Env(
     config = lila.common.PlayApp loadConfig "gameSearch",
     system = lila.common.PlayApp.system,
-    makeClient = lila.search.Env.current.makeClient)
+    makeClient = lila.search.Env.current.makeClient
+  )
 }

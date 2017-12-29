@@ -1,13 +1,13 @@
 package lila.db
 
-import scala.util.{ Try, Success, Failure }
+import scala.util.Try
 
 import reactivemongo.bson._
 import reactivemongo.bson.utils.Converters
 
-case class ByteArray(value: Array[Byte]) {
+case class ByteArray(value: Array[Byte]) extends AnyVal {
 
-  def isEmpty = value.isEmpty
+  def isEmpty = value.size == 0
 
   def toHexStr = Converters hex2Str value
 
@@ -30,6 +30,8 @@ object ByteArray {
     def write(ba: ByteArray) = BSONBinary(ba.value, subtype)
   }
 
+  implicit def fromBytes(value: Array[Byte]) = new ByteArray(value)
+
   def parseBytes(s: List[String]) = ByteArray(s map parseByte toArray)
 
   private def parseByte(s: String): Byte = {
@@ -40,7 +42,7 @@ object ByteArray {
       s.charAt(i) match {
         case '1' => sum += mult
         case '0' =>
-        case x   => sys error s"invalid binary literal: $x in $s"
+        case x => sys error s"invalid binary literal: $x in $s"
       }
       mult *= 2
       i -= 1
@@ -49,6 +51,4 @@ object ByteArray {
   }
 
   def subtype = Subtype.GenericBinarySubtype
-
-  private val binarySubType = Converters hex2Str Array(subtype.value)
 }

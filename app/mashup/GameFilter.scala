@@ -7,7 +7,7 @@ import lila.game.{ Game, Query, GameRepo }
 import lila.user.User
 
 import play.api.mvc.Request
-import scalaz.NonEmptyList
+import scalaz.{ NonEmptyList, IList }
 
 sealed abstract class GameFilter(val name: String)
 
@@ -26,40 +26,32 @@ object GameFilter {
 
 case class GameFilterMenu(
     all: NonEmptyList[GameFilter],
-    current: GameFilter) {
+    current: GameFilter
+) {
 
-  def list = all.list
+  def list = all.toList
 }
 
 object GameFilterMenu {
 
   import GameFilter._
 
-  val all = NonEmptyList.nel(All, List(Me, Rated, Win, Loss, Draw, Playing, Bookmark, Imported, Search))
+  val all: NonEmptyList[GameFilter] =
+    NonEmptyList.nel(All, IList(Me, Rated, Win, Loss, Draw, Playing, Bookmark, Imported, Search))
 
-  def apply(
-    info: UserInfo,
-    me: Option[User],
-    currentNameOption: Option[String]): GameFilterMenu = {
+  def apply(user: User, nbs: UserInfo.NbGames, currentName: String): GameFilterMenu = {
 
-    val user = info.user
-
-    val filters = NonEmptyList.nel(All, List(
-      (info.nbWithMe > 0) option Me,
-      (info.nbRated > 0) option Rated,
-      (info.user.count.win > 0) option Win,
-      (info.user.count.loss > 0) option Loss,
-      (info.user.count.draw > 0) option Draw,
-      (info.nbPlaying > 0) option Playing,
-      (info.nbBookmark > 0) option Bookmark,
-      (info.nbImported > 0) option Imported,
-      (info.user.count.game > 0) option Search
+    val filters: NonEmptyList[GameFilter] = NonEmptyList.nel(All, IList fromList List(
+      (~nbs.withMe > 0) option Me,
+      (user.count.rated > 0) option Rated,
+      (user.count.win > 0) option Win,
+      (user.count.loss > 0) option Loss,
+      (user.count.draw > 0) option Draw,
+      (nbs.playing > 0) option Playing,
+      (nbs.bookmark > 0) option Bookmark,
+      (nbs.imported > 0) option Imported,
+      (user.count.game > 0) option Search
     ).flatten)
-
-    val currentName = currentNameOption | info.hasSimul.fold(
-      Playing,
-      if (!info.user.hasGames && info.nbImported > 0) Imported else All
-    ).name
 
     val current = currentOf(filters, currentName)
 
@@ -71,18 +63,20 @@ object GameFilterMenu {
 
   private def cachedNbOf(
     user: User,
-    info: Option[UserInfo],
-    filter: GameFilter): Option[Int] = filter match {
-    case Bookmark => info.map(_.nbBookmark)
-    case Imported => info.map(_.nbImported)
-    case All      => user.count.game.some
-    case Me       => info.map(_.nbWithMe)
-    case Rated    => user.count.rated.some
-    case Win      => user.count.win.some
-    case Loss     => user.count.loss.some
-    case Draw     => user.count.draw.some
-    case Search   => user.count.game.some
-    case _        => None
+    nbs: Option[UserInfo.NbGames],
+    filter: GameFilter
+  ): Option[Int] = filter match {
+    case Bookmark => nbs.map(_.bookmark)
+    case Imported => nbs.map(_.imported)
+    case All => user.count.game.some
+    case Me => nbs.flatMap(_.withMe)
+    case Rated => user.count.rated.some
+    case Win => user.count.win.some
+    case Loss => user.count.loss.some
+    case Draw => user.count.draw.some
+    case Search => user.count.game.some
+    case Playing => nbs.map(_.playing)
+    case _ => None
   }
 
   private def pag = Env.game.paginator
@@ -90,38 +84,42 @@ object GameFilterMenu {
   def paginatorOf(
     userGameSearch: lila.gameSearch.UserGameSearch,
     user: User,
-    info: Option[UserInfo],
+    nbs: Option[UserInfo.NbGames],
     filter: GameFilter,
     me: Option[User],
-    page: Int)(implicit req: Request[_]): Fu[Paginator[Game]] = {
-    val nb = cachedNbOf(user, info, filter)
+    page: Int
+  )(implicit req: Request[_]): Fu[Paginator[Game]] = {
+    val nb = cachedNbOf(user, nbs, filter)
     def std(query: Bdoc) = pag.recentlyCreated(query, nb)(page)
     filter match {
       case Bookmark => Env.bookmark.api.gamePaginatorByUser(user, page)
       case Imported => pag.apply(
         selector = Query imported user.id,
         sort = $sort desc "pgni.ca",
-        nb = nb)(page)
-      case All   => std(Query started user.id)
-      case Me    => std(Query.opponents(user, me | user))
+        nb = nb
+      )(page)
+      case All => std(Query started user.id)
+      case Me => std(Query.opponents(user, me | user))
       case Rated => std(Query rated user.id)
-      case Win   => std(Query win user.id)
-      case Loss  => std(Query loss user.id)
-      case Draw  => std(Query draw user.id)
+      case Win => std(Query win user.id)
+      case Loss => std(Query loss user.id)
+      case Draw => std(Query draw user.id)
       case Playing => pag(
         selector = Query nowPlaying user.id,
         sort = $empty,
-        nb = nb)(page) addEffect { p =>
-          p.currentPageResults.filter(_.finishedOrAborted) foreach GameRepo.unsetPlayingUids
-        }
+        nb = nb
+      )(page) addEffect { p =>
+        p.currentPageResults.filter(_.finishedOrAborted) foreach GameRepo.unsetPlayingUids
+      }
       case Search => userGameSearch(user, page)
     }
   }
 
   def searchForm(
     userGameSearch: lila.gameSearch.UserGameSearch,
-    filter: GameFilter)(implicit req: Request[_]): play.api.data.Form[_] = filter match {
+    filter: GameFilter
+  )(implicit req: Request[_]): play.api.data.Form[_] = filter match {
     case Search => userGameSearch.requestForm
-    case _      => userGameSearch.defaultForm
+    case _ => userGameSearch.defaultForm
   }
 }

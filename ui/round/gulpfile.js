@@ -1,54 +1,57 @@
-var source = require('vinyl-source-stream');
-var gulp = require('gulp');
-var gutil = require('gulp-util');
-var watchify = require('watchify');
-var browserify = require('browserify');
-var uglify = require('gulp-uglify');
-var streamify = require('gulp-streamify');
+const gulp = require('gulp');
+const gutil = require('gulp-util');
+const watchify = require('watchify');
+const browserify = require('browserify');
+const uglify = require('gulp-uglify');
+const source = require('vinyl-source-stream');
+const buffer = require('vinyl-buffer');
+const tsify = require('tsify');
 
-var sources = ['./src/main.js'];
-var destination = '../../public/compiled/';
-var onError = function(error) {
+const destination = '../../public/compiled/';
+
+function onError(error) {
   gutil.log(gutil.colors.red(error.message));
-};
-var standalone = 'LichessRound';
+}
 
-gulp.task('prod', function() {
-  return browserify('./src/main.js', {
-    standalone: standalone
-  }).bundle()
-    .on('error', onError)
-    .pipe(source('lichess.round.min.js'))
-    .pipe(streamify(uglify()))
-    .pipe(gulp.dest(destination));
-});
+function build(debug) {
+  return browserify('src/main.ts', {
+    standalone: 'LichessRound',
+    debug: debug
+  })
+    .plugin(tsify);
+}
 
-gulp.task('dev', function() {
-  return browserify('./src/main.js', {
-    standalone: standalone
-  }).bundle()
+const watchedBrowserify = watchify(build(true, false));
+
+function bundle() {
+  return watchedBrowserify
+    .bundle()
     .on('error', onError)
     .pipe(source('lichess.round.js'))
+    .pipe(buffer())
     .pipe(gulp.dest(destination));
-});
+}
 
-gulp.task('watch', function() {
-  var opts = watchify.args;
-  opts.debug = true;
-  opts.standalone = standalone;
+watchedBrowserify.on('update', bundle);
+watchedBrowserify.on('log', gutil.log);
 
-  var bundleStream = watchify(browserify(sources, opts))
-    .on('update', rebundle)
-    .on('log', gutil.log);
+function dev() {
+  return () => build(true)
+    .bundle()
+    .pipe(source('lichess.round.js'))
+    .pipe(gulp.dest(destination));
+};
+gulp.task('dev', dev(false));
 
-  function rebundle() {
-    return bundleStream.bundle()
-      .on('error', onError)
-      .pipe(source('lichess.round.js'))
-      .pipe(gulp.dest(destination));
-  }
+function prod() {
+  return () => build(false)
+    .bundle()
+    .pipe(source('lichess.round.min.js'))
+    .pipe(buffer())
+    .pipe(uglify())
+    .pipe(gulp.dest(destination));
+}
 
-  return rebundle();
-});
+gulp.task('prod', prod(false));
 
-gulp.task('default', ['watch']);
+gulp.task('default', bundle);

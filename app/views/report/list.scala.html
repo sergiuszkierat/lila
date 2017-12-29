@@ -1,59 +1,74 @@
-@(reports: List[lila.report.Report.WithUser])(implicit ctx: Context)
+@(reports: List[lila.report.Report.WithSuspect], filter: String, counts: lila.report.Room.Counts)(implicit ctx: Context)
 
-@title = @{ "User reports" }
+@import lila.report.Report.WithSuspect
 
-@moreJs = {
-<script>
-  $('#report form').submit(function() {
-    $.post($(this).attr('action'));
-    $(this).parents('tr').removeClass('new').end().remove();
-    return false;
-  });
-</script>
+@title = @{ "Reports" }
+
+@tab(reports: List[WithSuspect], room: lila.report.Room) = {
+<a href="@routes.Report.listWithFilter(room.key)"
+  class="@when(counts.value.contains(room), "new") @filter.active(room.key)">
+  <count>@counts.get(room)</count>@room.name</a>
 }
 
 @mod.layout(
 title = title,
 active = "report",
-moreCss = cssTag("report.css"),
-moreJs = moreJs) {
+moreCss = cssTag("report.css")) {
 
-<div id="report" class="content_box no_padding">
-  @defining(reports.count(_.report.unprocessed)) { nb =>
-  <h1 data-icon="@icon.mod" class="text">
-    @title
-    (@nb@if(nb>=50){+} new,
-    @reports.count(_.report.unprocessedCheat) cheats,
-    @reports.count(_.report.unprocessedTrollOrInsult) trolls,
-    @reports.count(_.report.unprocessedOther) others)
-  </h1>
-  }
+<div id="report_list" class="content_box no_padding">
+  <div class="header">
+    <i class="icon"></i>
+    <span class="tabs">
+      <a href="@routes.Report.listWithFilter("all")"
+        class="@when(counts.sum > 0, "new") @filter.active("all")">
+        <count>@if(counts.sum > 0) {@counts.sum}</count>All</a>
+      @lila.report.Room.all.map { r =>
+      @tab(reports, r)
+      }
+    </span>
+  </div>
   <table class="slist see">
     <thead>
       <tr>
-        <th>Author</th>
-        <th>Reported</th>
-        <th>For</th>
+        <th>Report</th>
+        <th>By</th>
         <th></th>
       </tr>
     </thead>
     <tbody>
       @reports.map {
-      case lila.report.Report.WithUser(r, u) if (!r.isTrollOrInsult || isGranted(_.MarkTroll)) => {
-      <tr class="@r.unprocessed.fold("new", "")">
-        <td>@userIdLink(r.createdBy.some)<br />@momentFormat(r.createdAt)</td>
-        <td>@userLink(u, params = "?mod")<br />@showBestPerf(u)</td>
+      case WithSuspect(r, sus, _) if (!r.isTrollOrInsult || isGranted(_.MarkTroll)) => {
+      <tr class="@r.open.fold("new", "")">
         <td>
-          <strong>@r.reason.capitalize</strong>
-          - @autoLink(r.text)
-          @if(r.unprocessed && r.isCommunication) {
-          <a data-icon="v" style="display:inline-block" class="button" href="@routes.Mod.communication(r.user)">&nbsp;View the communication report</a>
+          @reportScore(r.score)
+          <strong>@r.reason.name.capitalize</strong><br />
+          @userLink(sus.user, params = "?mod")<br />
+          <p class="perfs">@showBestPerfs(sus.user, 2)</p>
+          @user.userMarks(sus.user, none)
+        </td>
+        <td class="atoms">
+          @r.bestAtoms(3).map { atom =>
+          <div class="atom">
+            <span class="head">@reportScore(atom.score) @userIdLink(atom.by.value.some), @momentFromNow(r.recentAtom.at)</span>
+            <p class="text@if(atom.text.size > 100 || atom.text.lines.size > 3){ large}">
+              @shorten(atom.text, 200)
+            </p>
+          </div>
+          }
+          @if(r.atoms.size > 3) {
+          <i class="more">And @{r.atoms.size - 3} more</i>
           }
         </td>
         <td>@r.processedBy.map { u =>
+          <form action="@routes.Report.inquiry(r.id)" method="post" class="reopen">
+            <button type="submit" data-icon="G" class="text button">Re-open</button>
+          </form>
           }.getOrElse {
-          <form action="@routes.Report.process(r.id)" method="post" data-hint="Dismiss this report as processed." class="hint--bottom-left">
-            <button type="submit" data-icon="E" class="button"></button>
+          <form action="@routes.Report.inquiry(r.id)" method="post" class="inquiry">
+            <button type="submit" data-icon="G" class="button"></button>
+          </form>
+          <form action="@routes.Report.process(r.id)" method="post" class="cancel">
+            <button type="submit" class="thin button">Dismiss</button>
           </form>
           }
         </td>

@@ -1,15 +1,17 @@
 package controllers
 
-import play.api.libs.json._
-import play.api.mvc._, Results._
+import play.api.mvc._
 
 import lila.api.Context
 import lila.app._
 import lila.plan.{ StripeCustomer, MonthlyCustomerInfo, OneTimeCustomerInfo }
+import lila.common.EmailAddress
 import lila.user.{ User => UserModel, UserRepo }
 import views._
 
 object Plan extends LilaController {
+
+  private val logger = lila.log("plan")
 
   def index = Open { implicit ctx =>
     ctx.me.fold(indexAnon) { me =>
@@ -20,7 +22,7 @@ object Plan extends LilaController {
           renderIndex(email, patron.some)
         }
         case Synced(Some(patron), Some(customer)) => indexPatron(me, patron, customer)
-        case Synced(_, _)                         => indexFreeUser(me)
+        case Synced(_, _) => indexFreeUser(me)
       }
     }
   }
@@ -29,9 +31,9 @@ object Plan extends LilaController {
     ctx.me.fold(Redirect(routes.Plan.index).fuccess) { me =>
       import lila.plan.PlanApi.SyncResult._
       Env.plan.api.sync(me) flatMap {
-        case ReloadUser         => Redirect(routes.Plan.list).fuccess
+        case ReloadUser => Redirect(routes.Plan.list).fuccess
         case Synced(Some(_), _) => indexFreeUser(me)
-        case _                  => Redirect(routes.Plan.index).fuccess
+        case _ => Redirect(routes.Plan.index).fuccess
       }
     }
   }
@@ -43,38 +45,22 @@ object Plan extends LilaController {
       renderIndex(email, patron = none)
     }
 
-  private def renderIndex(email: Option[String], patron: Option[lila.plan.Patron])(implicit ctx: Context): Fu[Result] =
-    Env.plan.api.recentChargeUserIds(50) zip
-      Env.plan.api.topPatronUserIds(120) zip
-      ctx.me.??(me => makeTrackingUserData(me) map some) map {
-        case ((recentIds, bestIds), trackingData) =>
-          Ok(html.plan.index(
-            stripePublicKey = Env.plan.stripePublicKey,
-            email = email,
-            patron = patron,
-            recentIds = recentIds,
-            bestIds = bestIds,
-            trackingData = trackingData))
-      }
-
-  private def makeTrackingUserData(me: UserModel) = for {
-    tournaments <- Env.tournament.leaderboardApi.chart(me)
-    nbFollowers <- Env.relation.api.countFollowers(me.id)
-    nbFollowing <- Env.relation.api.countFollowing(me.id)
-    nbForumPosts <- Env.forum.postApi.nbByUser(me.id)
-  } yield lila.plan.PlanTrackingUserData(
-    user = me,
-    nbTournaments = tournaments.allPerfResults.nb,
-    medianTournamentRank = tournaments.allPerfResults.rankPercentMedian,
-    isStreamer = Env.tv.isStreamer(me.id),
-    nbFollowers = nbFollowers,
-    nbFollowing = nbFollowing,
-    nbForumPosts = nbForumPosts)
+  private def renderIndex(email: Option[EmailAddress], patron: Option[lila.plan.Patron])(implicit ctx: Context): Fu[Result] = for {
+    recentIds <- Env.plan.api.recentChargeUserIds
+    bestIds <- Env.plan.api.topPatronUserIds
+    _ <- Env.user.lightUserApi preloadMany { recentIds ::: bestIds }
+  } yield Ok(html.plan.index(
+    stripePublicKey = Env.plan.stripePublicKey,
+    email = email,
+    patron = patron,
+    recentIds = recentIds,
+    bestIds = bestIds
+  ))
 
   private def indexPatron(me: UserModel, patron: lila.plan.Patron, customer: StripeCustomer)(implicit ctx: Context) =
     Env.plan.api.customerInfo(me, customer) flatMap {
       case Some(info: MonthlyCustomerInfo) => Ok(html.plan.indexStripe(me, patron, info)).fuccess
-      case Some(info: OneTimeCustomerInfo) => renderIndex(info.customer.email, patron.some)
+      case Some(info: OneTimeCustomerInfo) => renderIndex(info.customer.email map EmailAddress.apply, patron.some)
       case None => UserRepo email me.id flatMap { email =>
         renderIndex(email, patron.some)
       }
@@ -86,18 +72,16 @@ object Plan extends LilaController {
     }
   }
 
-  def switch = AuthBody { implicit ctx =>
-    me =>
-      implicit val req = ctx.body
-      lila.plan.Switch.form.bindFromRequest.fold(
-        err => funit,
-        data => Env.plan.api.switch(me, data.cents)
-      ) inject Redirect(routes.Plan.index)
+  def switch = AuthBody { implicit ctx => me =>
+    implicit val req = ctx.body
+    lila.plan.Switch.form.bindFromRequest.fold(
+      err => funit,
+      data => Env.plan.api.switch(me, data.cents)
+    ) inject Redirect(routes.Plan.index)
   }
 
-  def cancel = AuthBody { implicit ctx =>
-    me =>
-      Env.plan.api.cancel(me) inject Redirect(routes.Plan.index())
+  def cancel = AuthBody { implicit ctx => me =>
+    Env.plan.api.cancel(me) inject Redirect(routes.Plan.index())
   }
 
   def charge = OpenBody { implicit ctx =>
@@ -109,11 +93,10 @@ object Plan extends LilaController {
         if (ctx.isAuth) {
           if (data.freq.renew) routes.Plan.index()
           else routes.Plan.thanks()
-        }
-        else routes.Plan.thanks()
+        } else routes.Plan.thanks()
       } recover {
         case e: StripeException =>
-          lila.log("plan").error("Plan.charge", e)
+          logger.error("Plan.charge", e)
           BadRequest(html.plan.badCheckout(e.toString))
       }
     )
@@ -135,8 +118,13 @@ object Plan extends LilaController {
     import lila.plan.Patron.PayPal
     lila.plan.DataForm.ipn.bindFromRequest.fold(
       err => {
-        // Cancel or other irrelevant event
-        fuccess(Ok)
+        if (err.errors("txn_type").nonEmpty) {
+          logger.debug(s"Plan.payPalIpn ignore txn_type = ${err.data get "txn_type"}")
+          fuccess(Ok)
+        } else {
+          logger.error(s"Plan.payPalIpn invalid data ${err.toString}")
+          fuccess(BadRequest)
+        }
       },
       ipn => Env.plan.api.onPaypalCharge(
         userId = ipn.userId,
@@ -145,7 +133,7 @@ object Plan extends LilaController {
         cents = lila.plan.Cents(ipn.grossCents),
         name = ipn.name,
         txnId = ipn.txnId,
-        ip = lila.common.HTTPRequest.lastRemoteAddress(req),
+        ip = lila.common.HTTPRequest.lastRemoteAddress(req).value,
         key = lila.plan.PayPalIpnKey(get("key", req) | "N/A")
       ) inject Ok
     )

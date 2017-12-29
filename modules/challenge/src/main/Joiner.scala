@@ -1,12 +1,9 @@
 package lila.challenge
 
-import akka.actor.ActorSelection
-import akka.pattern.ask
-
 import chess.format.Forsyth
 import chess.format.Forsyth.SituationPlus
 import chess.{ Situation, Mode }
-import lila.game.{ GameRepo, Game, Pov, Source, Player, PerfPicker }
+import lila.game.{ GameRepo, Game, Pov, Source, Player }
 import lila.user.{ User, UserRepo }
 
 private[challenge] final class Joiner(onStart: String => Unit) {
@@ -18,17 +15,17 @@ private[challenge] final class Joiner(onStart: String => Unit) {
         c.challengerUserId.??(UserRepo.byId) flatMap { challengerUser =>
 
           def makeChess(variant: chess.variant.Variant): chess.Game =
-            chess.Game(board = chess.Board init variant, clock = c.clock.map(_.chessClock))
+            chess.Game(situation = Situation(variant), clock = c.clock.map(_.config.toClock))
 
           val baseState = c.initialFen.ifTrue(c.variant == chess.variant.FromPosition) flatMap Forsyth.<<<
           val (chessGame, state) = baseState.fold(makeChess(c.variant) -> none[SituationPlus]) {
-            case sit@SituationPlus(Situation(board, color), _) =>
+            case sit @ SituationPlus(s, _) =>
               val game = chess.Game(
-                board = board,
-                player = color,
+                situation = s,
                 turns = sit.turns,
                 startedAtTurn = sit.turns,
-                clock = c.clock.map(_.chessClock))
+                clock = c.clock.map(_.config.toClock)
+              )
               if (Forsyth.>>(game) == Forsyth.initial) makeChess(chess.variant.Standard) -> none
               else game -> baseState
           }
@@ -46,15 +43,17 @@ private[challenge] final class Joiner(onStart: String => Unit) {
             variant = realVariant,
             source = (realVariant == chess.variant.FromPosition).fold(Source.Position, Source.Friend),
             daysPerTurn = c.daysPerTurn,
-            pgnImport = None).copy(id = c.id).|> { g =>
+            pgnImport = None
+          ).copy(id = c.id).|> { g =>
               state.fold(g) {
-                case sit@SituationPlus(Situation(board, _), _) => g.copy(
+                case sit @ SituationPlus(Situation(board, _), _) => g.copy(
                   variant = chess.variant.FromPosition,
                   castleLastMoveTime = g.castleLastMoveTime.copy(
                     lastMove = board.history.lastMove.map(_.origDest),
                     castles = board.history.castles
                   ),
-                  turns = sit.turns)
+                  turns = sit.turns
+                )
               }
             }.start
           (GameRepo insertDenormalized game) >>- onStart(game.id) inject Pov(game, !c.finalColor).some

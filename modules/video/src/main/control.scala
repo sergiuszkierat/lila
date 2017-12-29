@@ -1,7 +1,5 @@
 package lila.video
 
-import org.joda.time.DateTime
-
 case class TagNb(_id: Tag, nb: Int) {
 
   def tag = _id
@@ -22,11 +20,13 @@ case class UserControl(
     filter: Filter,
     tags: List[TagNb],
     query: Option[String],
-    bot: Boolean) {
+    bot: Boolean
+) {
 
   def toggleTag(tag: String) = copy(
     filter = filter toggle tag,
-    query = none)
+    query = none
+  )
 
   def queryString = List(
     filter.tags.nonEmpty option s"tags=${filter.tags.sorted mkString "/"}".replace(" ", "+"),

@@ -16,6 +16,9 @@
 @check = {
 <span data-icon="E" class="is is-green text check">Yes</span>
 }
+@custom(str: String) = {
+<span data-icon="E" class="is is-green text check">@str</span>
+}
 
 @all(html: Html) = {
 <td>@html</td>
@@ -37,6 +40,8 @@
   <a href="@routes.Plan.index" class="button">Support lichess</a>
 </div>
 }
+
+@engineName = {Stockfish 8+}
 
 @base.layout(
 title = title,
@@ -65,39 +70,41 @@ description = "All of lichess features are free for all and forever. We do it fo
       @tr(check) {
       <a href="@routes.Page.variantHome">9 Chess variants (Crazyhouse, Chess960, Horde, ...)</a>
       }
-      @tr(unlimited) {
-      Deep Stockfish 7 server analysis
-      }
-      @tr(check) {
-      Instant local Stockfish 7 analysis
+      @tr(custom("30 per day")) {
+      Deep @engineName server analysis
       }
       @tr(unlimited) {
-      <a href="http://en.lichess.org/blog/V0KrLSkAAMo3hsi4/study-chess-the-lichess-way">Studies (shared and persistent analysis)</a>
+      Instant local @engineName analysis
       }
       @tr(unlimited) {
-      <a href="http://en.lichess.org/blog/VmZbaigAABACtXQC/chess-insights">Chess insights (detailed analysis of your play)</a>
+      <a href="https://lichess.org/blog/WN-gLzAAAKlI89Xn/thousands-of-stockfish-analysers">Cloud engine analysis</a>
+      }
+      @tr(unlimited) {
+      <a href="https://lichess.org/blog/WFvLpiQAACMA8e9D/learn-from-your-mistakes">Learn from your mistakes</a>
+      }
+      @tr(unlimited) {
+      <a href="https://lichess.org/blog/V0KrLSkAAMo3hsi4/study-chess-the-lichess-way">Studies (shared and persistent analysis)</a>
+      }
+      @tr(unlimited) {
+      <a href="https://lichess.org/blog/VmZbaigAABACtXQC/chess-insights">Chess insights (detailed analysis of your play)</a>
       }
       @tr(check) {
       <a href="@routes.Learn.index">All chess basics lessons</a>
       }
       @tr(unlimited) {
-      <a href="@routes.Puzzle.home">Tactics puzzles from user games</a>
+      <a href="@routes.Puzzle.home">Tactical puzzles from user games</a>
       }
       @tr(unlimited) {
-      <a href="@routes.Opening.home">Opening training</a>
-      &amp; <a href="@routes.Coordinate.home">coordinate training</a>
+      <a href="@routes.UserAnalysis.index()#explorer">Opening explorer</a> (34 million games!)
       }
       @tr(unlimited) {
-      Opening explorer (16 million games!)
-      }
-      @tr(unlimited) {
-      6 men endgame tablebase
+      <a href="@routes.UserAnalysis.parse("8/3k4/8/5r2/1PP5/2RK4/8/8 w - - 0 1")#explorer">6 men endgame tablebase</a>
       }
       @tr(check) {
       Download/Upload any game as PGN
       }
       @tr(unlimited) {
-      <a href="@routes.Search.index(1)">Advanced search</a> through lichess 240 million games
+      <a href="@routes.Search.index(1)">Advanced search</a> through lichess 500 million games
       }
       @tr(unlimited) {
       <a href="@routes.Video.index">Chess video library</a>
@@ -106,13 +113,16 @@ description = "All of lichess features are free for all and forever. We do it fo
       Forum, teams, messaging, friends, challenges
       }
       @tr(check) {
-      Available in 80+ languages
+      Available in <a href="https://crowdin.com/project/lichess">80+ languages</a>
       }
       @tr(check) {
       Light/dark theme, custom boards, pieces and background
       }
       @tr(check) {
       Zero ads
+      }
+      @tr(check) {
+      No tracking
       }
       @tr(unlimited) {
       <strong>All features to come, forever</strong>
@@ -126,13 +136,13 @@ description = "All of lichess features are free for all and forever. We do it fo
       Online and offline games, with 8 variants
       }
       @tr(unlimited) {
-      Bullet, Blitz, Classical and Correspondence chess
+      Bullet, Blitz, Rapid, Classical and Correspondence chess
       }
       @tr(unlimited) {
       <a href="@routes.Tournament.home(1)">Arena tournaments</a>
       }
       @tr(check) {
-      Board editor and analysis board with Stockfish 7
+      Board editor and analysis board with @engineName
       }
       @tr(unlimited) {
       <a href="@routes.Puzzle.home">Tactics puzzles</a>

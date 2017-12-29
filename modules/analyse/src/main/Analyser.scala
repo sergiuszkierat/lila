@@ -3,16 +3,19 @@ package lila.analyse
 import akka.actor.ActorSelection
 
 import chess.format.FEN
-import lila.db.dsl._
 import lila.game.actorApi.InsertGame
-import lila.game.{ Game, GameRepo }
+import lila.game.{ GameRepo, Game }
 import lila.hub.actorApi.map.Tell
 
 final class Analyser(
     indexer: ActorSelection,
     requesterApi: RequesterApi,
     roundSocket: ActorSelection,
-    bus: lila.common.Bus) {
+    bus: lila.common.Bus
+) {
+
+  def get(game: Game): Fu[Option[Analysis]] =
+    game.analysable ?? get(game.id)
 
   def get(id: String): Fu[Option[Analysis]] = AnalysisRepo byId id
 
@@ -38,7 +41,8 @@ final class Analyser(
             analysis = analysis,
             game = game,
             variant = game.variant,
-            initialFen = initialFen | FEN(game.variant.initialFen)))
+            initialFen = initialFen | FEN(game.variant.initialFen)
+          ))
       }
     }
 }

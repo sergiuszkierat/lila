@@ -32,13 +32,30 @@ div.lobby_and_ground {
   width: 512px;
   height: 512px;
   text-align: center;
-  background: rgba(255,255,255,0.7);
+  background: rgba(255,255,255,0.8);
+  font-size: 1.1em;
+}
+body.dark #lobby_playban,
+body.dark #lobby_current_game {
+  background: rgba(0,0,0,0.8);
 }
 #lobby_playban h2,
 #lobby_current_game h2 {
   font-size: 1.5em;
-  line-height: 3;
+  line-height: 2.5em;
   margin-top: 1em;
+}
+#lobby_playban a {
+  color: #3893E8;
+}
+#lobby_playban ul {
+  margin: 10px auto;
+  display: inline-block;
+  text-align: left;
+}
+#lobby_playban ul li {
+  list-style: disc outside;
+  font-size: 1.1em;
 }
 .current_game #hooks_wrap {
   visibility: hidden;
@@ -64,6 +81,12 @@ body.dark #hooks_wrap {
 #hooks_wrap .lobby_box.seeks {
   max-height: 510px;
 }
+#hooks_wrap .lobby_box .no_hooks {
+  text-align: center;
+  line-height: 2em;
+  margin-top: 80px;
+  font-size: 1.3em;
+}
 #hooks_wrap .tabs {
   position: absolute;
   top: -23px;
@@ -81,6 +104,8 @@ body.dark #hooks_wrap {
   border: 1px solid #ccc;
   background: #dadada;
   transition: 0.13s;
+  white-space: nowrap;
+  overflow: hidden;
 }
 #hooks_wrap .tabs a:hover {
   background: #f0f0f0;
@@ -91,6 +116,9 @@ body.dark #hooks_wrap {
   border-bottom-color: #f0f0f0;
   border-top: 2px solid #d85000;
   margin-top: -1px;
+}
+#hooks_wrap .tabs a.glow {
+  animation: fbt-glowing 1s ease-in-out infinite;
 }
 #hooks_wrap .tabs .unread {
   margin-left: 5px;
@@ -133,11 +161,13 @@ body.dark #hooks_wrap .hook_filter {
   white-space: nowrap;
 }
 #hooks_wrap .hook_filter td {
-  padding: 25px 0;
+  padding: 20px 0;
 }
 #hooks_wrap .hook_filter td:first-child {
-  font-size: 1.3em;
+  font-size: 1.1em;
   padding-right: 30px;
+  width: 120px;
+  white-space: normal;
 }
 #hooks_wrap .hook_filter .checkable {
   padding: 4.3px 0;
@@ -319,61 +349,92 @@ body.dark #hooks_wrap .hook_filter {
 }
 #hook {
   display: none;
-  width: 120px;
-  height: 120px;
   color: #444;
-  text-align: center;
-  border: none;
   box-shadow: 0 0 9px #333;
   background: #d0d0d0;
+  cursor: default;
+  position: absolute;
+  z-index: 900000;
+}
+#hook .inner {
+  display: inline-block;
+  text-align: center;
+  font-size: 1.25em;
+  padding-bottom: 5px;
 }
 #hook .opponent {
-  display: block;
-  height: 20px;
-  line-height: 20px;
-  padding: 5px 0;
   background: #666;
   color: #eee;
-  overflow: hidden;
+  min-width: 120px;
+  padding: 5px;
+  margin-bottom: 5px;
 }
-#hook .clearfix {
-  width: 100%;
-  height: 30px;
-}
-#hook .rating,
-#hook .clock {
-  display: block;
-  width: 60px;
-  height: 20px;
-  padding: 5px 0;
-  font-size: 1.25em;
-  font-weight: bold;
-}
-#hook .rating {
-  float: right;
-  color: #bbb;
-  background: #666;
-}
-#hook .clock {
-  float: left;
-  color: #555;
-}
-#hook .clock.nope {
-  font-size: 2.3em;
-  padding-top: 3px;
-  line-height: 20px;
-}
-#hook .mode {
-  margin-top: 40px;
-}
-#hook .mode {
-  font-size: 1.25em;
+#hook .opponent,
+#hook span {
   display: block;
 }
-#hook .varicon::before {
-  font-size: 30px;
-  margin-right: 10px;
+/*********** POOLS *********/
+
+#hooks_wrap .pools {
+  padding: 12px 12px 0 12px;
+  max-height: 510px;
+  box-sizing: border-box;
+  display: flex;
+  flex-flow: row wrap;
+  justify-content: space-between;
+  font-family: Roboto;
+  -webkit-user-select: none;
 }
+#hooks_wrap .pools > div {
+  margin-bottom: 12px;
+  flex: 0 0 31%;
+  height: 152px;
+  cursor: pointer;
+  background: rgba(255,255,255,0.7);
+  border: 1px solid #ccc;
+  display: flex;
+  flex-flow: column;
+  justify-content: center;
+  align-items: center;
+  border-radius: 4px;
+  transition: opacity 0.7s;
+}
+body.dark #hooks_wrap .pools > div {
+  background: rgba(20,20,20,0.5);
+  border: 1px solid #3d3d3d;
+}
+#hooks_wrap .pools .active {
+  background: #fff;
+  border-radius: 0;
+  box-shadow: 0 2px 5px rgba(0,0,0,0.3);
+}
+body.dark #hooks_wrap .pools .active {
+  background: #202020;
+  box-shadow-color: #000;
+}
+#hooks_wrap .pools .transp {
+  opacity: 0.5;
+}
+#hooks_wrap .pools .spinner {
+  margin: 14px 0 0 0;
+}
+#hooks_wrap .pools .clock {
+  display: block;
+  font-size: 2.5em;
+  line-height: 1.5em;
+  letter-spacing: 5px;
+}
+#hooks_wrap .pools .perf,
+#hooks_wrap .pools .range {
+  font-size: 1.5em;
+}
+#hooks_wrap .pools .custom {
+  font-size: 1.5em;
+}
+#hooks_wrap .pools > div:hover {
+  background: rgba(191, 231, 255, 0.7);
+}
+
 /*********** MISC *********/
 
 #site_header .board_left {
@@ -436,6 +497,9 @@ div.blog.undertable time {
   overflow: hidden;
   text-overflow: ellipsis;
 }
+.leaderboards .leaderboard td:last-child {
+  text-align: right;
+}
 #lichess .enterable_list {
   height: auto;
   max-height: 193px;
@@ -445,6 +509,8 @@ div.blog.undertable time {
 }
 #lichess .enterable_list td:first-child {
   padding-left: 1em;
+  overflow: hidden;
+  max-width: 250px;
 }
 #enterable_tournaments td:last-child {
   padding-right: 10px;
@@ -469,6 +535,9 @@ div.blog.undertable time {
 #lichess .enterable_list td:last-child {
   width: 20px;
 }
+#lichess .enterable_list .rated {
+  color: #d59120;
+}
 div.new_posts li {
   margin: 0.6em 0;
   padding-left: 9px;
@@ -478,32 +547,6 @@ div.new_posts li {
 div.new_posts li span.extract {
   font-family: 'Roboto';
   font-weight: 300;
-}
-#call_boxes {
-  position: absolute;
-  top: 0;
-  right: 10px;
-  width: 250px;
-  z-index: 1;
-}
-#translation_call {
-  padding: 0.5em;
-  border: 1px solid #d0d0d0;
-  display: block;
-  border-radius: 2px;
-  position: relative;
-}
-#translation_call .button {
-  margin: 5px 0 0 0;
-  display: inline-block;
-}
-#translation_call span.name {
-  font-weight: bold;
-}
-#translation_call .progressbar {
-  margin-top: 0.5em;
-  background: #fff;
-  margin-bottom: 0.4em;
 }
 #daily_puzzle {
   width: 224px;
@@ -518,159 +561,6 @@ div.lichess_overboard .color_submits .spinner {
   width: 70px;
   height: 70px;
   margin: 10px auto 20px auto;
-}
-div.game_config {
-  padding-bottom: 0;
-}
-div.game_config.error {
-  padding-bottom: 22px;
-}
-div.game_config group.radio {
-  margin: 0 auto 1em auto;
-  width: 70%;
-}
-div.game_config group.radio label {
-  padding: 5px;
-}
-div.game_config .ui-button-text {
-  text-transform: capitalize;
-}
-#config_level .ui-button-text {
-  padding-left: 0.82em;
-  padding-right: 0.82em;
-}
-div.game_config div.ui-slider {
-  font-size: 1.3em;
-  margin: 0 15px;
-}
-div.game_config .optional_config {
-  padding: 8px 0;
-  border-bottom: solid 1px #e4e4e4;
-}
-div.game_config .mode_choice {
-  margin-top: 1em;
-}
-div.game_config .optional_config,
-div.game_config .ratings {
-  background: #f4f4f4;
-  border-top: solid 1px #e4e4e4;
-}
-div.game_config.error .ratings {
-  border-top: 0;
-}
-
-div.game_config .label_select {
-  overflow: hidden;
-  text-align: left;
-}
-div.game_config .label_select.variant {
-  margin-bottom: 8px;
-}
-div.game_config .label_select label {
-  display: block;
-  float: left;
-  width: 144px;
-  text-align: right;
-  padding: 5px 0;
-}
-div.game_config .label_select select {
-  margin-left: 10px;
-  font-weight: bold;
-  padding: 5px 8px;
-}
-div.game_config .fen_position {
-  padding: 8px 0;
-  display: none;
-}
-div.game_config .fen_position .cg-board-wrap {
-  margin: 8px auto 0 auto;
-}
-div.game_config .fen_position .fen_form {
-  width: 95%;
-  margin: auto;
-}
-div.game_config .fen_position .fen_form input {
-  border: 1px solid #ccc;
-  width: 320px;
-  padding: 2px 3px;
-}
-div.game_config .fen_position .fen_form .button {
-  float: right;
-}
-div.game_config input {
-  font-family: monospace;
-}
-div.game_config input#fen.success {
-  border-color: #00aa00;
-}
-div.game_config input#fen.failure {
-  border-color: #ac524f;
-}
-div.game_config .slider {
-  padding-top: 5px;
-  text-align: left;
-  text-indent: 15px;
-}
-div.game_config .slider span {
-  font-weight: bold;
-}
-div.game_config label.pointer {
-  cursor: pointer;
-}
-div.game_config .ratings {
-  line-height: 50px;
-  width: 100%;
-  text-align: center;
-}
-div.game_config .ratings > div {
-  display: none;
-}
-div.game_config .color_submits {
-  margin: 1em auto;
-  text-align: center;
-}
-div.game_config button {
-  display: inline-block;
-  margin: 0 5px;
-}
-div.game_config button.nope {
-  visibility: hidden;
-}
-div.game_config button:disabled {
-  opacity: 0.3;
-}
-div.game_config button.black,
-div.game_config button.white {
-  width: 50px;
-  height: 50px;
-  padding: 5px;
-}
-div.game_config button.black i,
-div.game_config button.white i {
-  display: block;
-  width: 40px;
-  height: 40px;
-  padding: 0;
-  background-size: 40px 40px;
-}
-div.game_config button.white i {
-  background-image: url(../piece/cburnett/wK.svg);
-}
-div.game_config button.black i {
-  background-image: url(../piece/cburnett/bK.svg);
-}
-div.game_config button.random {
-  width: 75px;
-  height: 75px;
-  padding: 10px;
-}
-div.game_config .color_submits button.random i {
-  background-image: url(../piece/cburnett/wbK.svg);
-  background-size: 55px 55px;
-  display: block;
-  width: 55px;
-  height: 55px;
-  padding: 0;
 }
 #nb_games_in_play {
   margin-bottom: 10px;
@@ -713,6 +603,7 @@ div.game_config .color_submits button.random i {
   text-shadow: 0 1px 1px #fff;
 }
 .tour_spotlight.invert,
+.tour_spotlight.event_spotlight,
 .tour_spotlight:hover {
   color: #fff!important;
   background: #3893E8;
@@ -732,9 +623,8 @@ div.game_config .color_submits button.random i {
 }
 .tour_spotlight img.img {
   width: 40px;
-  heigth: 40px;
   filter: brightness(9);
-  -webkit-filter: brightness(9);
+  filter: brightness(9);
 }
 .tour_spotlight i.img,
 .tour_spotlight .img.icon {
@@ -789,6 +679,7 @@ body.dark .tour_spotlight.little {
   text-shadow: 0 0 2px rgba(0,0,0,0.6);
 }
 body.dark .tour_spotlight.invert,
+body.dark .tour_spotlight.event_spotlight,
 body.dark .tour_spotlight:hover {
   background: #4166a0;
 }
@@ -798,12 +689,8 @@ body.dark .tour_spotlight .img {
 body.dark .tour_spotlight:hover .img {
   opacity: 1;
 }
-#site_header a.store {
-  display: block;
-  margin-top: 20px;
-  opacity: 0.6;
-}
 #timeline {
+  flex: 1 1;
   margin-top: 10px;
   border-top: 1px solid #e4e4e4;
   margin-left: -30px;
@@ -820,7 +707,7 @@ body.dark .tour_spotlight:hover .img {
     width: 200px;
   }
   #featured_game {
-    display: none;
+    visibility: hidden;
   }
 }
 #timeline .entry {

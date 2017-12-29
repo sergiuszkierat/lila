@@ -1,15 +1,16 @@
 package lila.db
 
-import scala.util.Success
-
-import dsl._
+import ornicar.scalalib.Zero
 import org.joda.time.DateTime
 import reactivemongo.bson._
 
+import dsl._
+import lila.common.Iso
+
 abstract class BSON[T]
-    extends BSONHandler[Bdoc, T]
-    with BSONDocumentReader[T]
-    with BSONDocumentWriter[T] {
+  extends BSONHandler[Bdoc, T]
+  with BSONDocumentReader[T]
+  with BSONDocumentWriter[T] {
 
   val logMalformed = true
 
@@ -20,8 +21,7 @@ abstract class BSON[T]
 
   def read(doc: Bdoc): T = if (logMalformed) try {
     reads(new Reader(doc))
-  }
-  catch {
+  } catch {
     case e: Exception =>
       logger.warn(s"Can't read malformed doc ${debug(doc)}", e)
       throw e
@@ -33,12 +33,17 @@ abstract class BSON[T]
 
 object BSON extends Handlers {
 
+  def toDocHandler[A](implicit handler: BSONHandler[BSONDocument, A]): BSONDocumentHandler[A] =
+    new BSONDocumentReader[A] with BSONDocumentWriter[A] with BSONHandler[BSONDocument, A] {
+      def read(doc: BSONDocument) = handler read doc
+      def write(o: A) = handler write o
+    }
+
   def LoggingHandler[T](logger: lila.log.Logger)(handler: BSONHandler[Bdoc, T]): BSONHandler[Bdoc, T] with BSONDocumentReader[T] with BSONDocumentWriter[T] =
     new BSONHandler[Bdoc, T] with BSONDocumentReader[T] with BSONDocumentWriter[T] {
       def read(doc: Bdoc): T = try {
         handler read doc
-      }
-      catch {
+      } catch {
         case e: Exception =>
           logger.warn(s"Can't read malformed doc ${debug(doc)}", e)
           throw e
@@ -48,58 +53,58 @@ object BSON extends Handlers {
 
   object MapDocument {
 
-    implicit def MapReader[V](implicit vr: BSONDocumentReader[V]): BSONDocumentReader[Map[String, V]] = new BSONDocumentReader[Map[String, V]] {
-      def read(bson: Bdoc): Map[String, V] = {
+    implicit def MapReader[K, V](implicit kIso: Iso.StringIso[K], vr: BSONDocumentReader[V]): BSONDocumentReader[Map[K, V]] = new BSONDocumentReader[Map[K, V]] {
+      def read(bson: Bdoc): Map[K, V] = {
         // mutable optimized implementation
-        val b = collection.immutable.Map.newBuilder[String, V]
+        val b = collection.immutable.Map.newBuilder[K, V]
         for (tuple <- bson.elements)
           // assume that all values in the document are Bdocs
-          b += (tuple._1 -> vr.read(tuple._2.asInstanceOf[Bdoc]))
+          b += (kIso.from(tuple.name) -> vr.read(tuple.value.asInstanceOf[Bdoc]))
         b.result
       }
     }
 
-    implicit def MapWriter[V](implicit vw: BSONDocumentWriter[V]): BSONDocumentWriter[Map[String, V]] = new BSONDocumentWriter[Map[String, V]] {
-      def write(map: Map[String, V]): Bdoc = BSONDocument {
+    implicit def MapWriter[K, V](implicit kIso: Iso.StringIso[K], vw: BSONDocumentWriter[V]): BSONDocumentWriter[Map[K, V]] = new BSONDocumentWriter[Map[K, V]] {
+      def write(map: Map[K, V]): Bdoc = BSONDocument {
         map.toStream.map { tuple =>
-          tuple._1 -> vw.write(tuple._2)
+          kIso.to(tuple._1) -> vw.write(tuple._2)
         }
       }
     }
 
-    implicit def MapHandler[V](implicit vr: BSONDocumentReader[V], vw: BSONDocumentWriter[V]): BSONHandler[Bdoc, Map[String, V]] = new BSONHandler[Bdoc, Map[String, V]] {
-      private val reader = MapReader[V]
-      private val writer = MapWriter[V]
-      def read(bson: Bdoc): Map[String, V] = reader read bson
-      def write(map: Map[String, V]): Bdoc = writer write map
+    implicit def MapHandler[K: Iso.StringIso, V: BSONDocumentHandler]: BSONHandler[Bdoc, Map[K, V]] = new BSONHandler[Bdoc, Map[K, V]] {
+      private val reader = MapReader[K, V]
+      private val writer = MapWriter[K, V]
+      def read(bson: Bdoc): Map[K, V] = reader read bson
+      def write(map: Map[K, V]): Bdoc = writer write map
     }
   }
 
   object MapValue {
 
-    implicit def MapReader[V](implicit vr: BSONReader[_ <: BSONValue, V]): BSONDocumentReader[Map[String, V]] = new BSONDocumentReader[Map[String, V]] {
-      def read(bson: Bdoc): Map[String, V] = {
+    implicit def MapReader[K, V](implicit kIso: Iso.StringIso[K], vr: BSONReader[_ <: BSONValue, V]): BSONDocumentReader[Map[K, V]] = new BSONDocumentReader[Map[K, V]] {
+      def read(bson: Bdoc): Map[K, V] = {
         val valueReader = vr.asInstanceOf[BSONReader[BSONValue, V]]
         // mutable optimized implementation
-        val b = collection.immutable.Map.newBuilder[String, V]
-        for (tuple <- bson.elements) b += (tuple._1 -> valueReader.read(tuple._2))
+        val b = collection.immutable.Map.newBuilder[K, V]
+        for (tuple <- bson.elements) b += (kIso.from(tuple.name) -> valueReader.read(tuple.value))
         b.result
       }
     }
 
-    implicit def MapWriter[V](implicit vw: BSONWriter[V, _ <: BSONValue]): BSONDocumentWriter[Map[String, V]] = new BSONDocumentWriter[Map[String, V]] {
-      def write(map: Map[String, V]): Bdoc = BSONDocument {
+    implicit def MapWriter[K, V](implicit kIso: Iso.StringIso[K], vw: BSONWriter[V, _ <: BSONValue]): BSONDocumentWriter[Map[K, V]] = new BSONDocumentWriter[Map[K, V]] {
+      def write(map: Map[K, V]): Bdoc = BSONDocument {
         map.toStream.map { tuple =>
-          tuple._1 -> vw.write(tuple._2)
+          kIso.to(tuple._1) -> vw.write(tuple._2)
         }
       }
     }
 
-    implicit def MapHandler[V](implicit vr: BSONReader[_ <: BSONValue, V], vw: BSONWriter[V, _ <: BSONValue]): BSONHandler[Bdoc, Map[String, V]] = new BSONHandler[Bdoc, Map[String, V]] {
-      private val reader = MapReader[V]
-      private val writer = MapWriter[V]
-      def read(bson: Bdoc): Map[String, V] = reader read bson
-      def write(map: Map[String, V]): Bdoc = writer write map
+    implicit def MapHandler[K, V](implicit kIso: Iso.StringIso[K], vr: BSONReader[_ <: BSONValue, V], vw: BSONWriter[V, _ <: BSONValue]): BSONHandler[Bdoc, Map[K, V]] = new BSONHandler[Bdoc, Map[K, V]] {
+      private val reader = MapReader[K, V]
+      private val writer = MapWriter[K, V]
+      def read(bson: Bdoc): Map[K, V] = reader read bson
+      def write(map: Map[K, V]): Bdoc = writer write map
     }
   }
 
@@ -108,7 +113,7 @@ object BSON extends Handlers {
     val map = {
       // mutable optimized implementation
       val b = collection.immutable.Map.newBuilder[String, BSONValue]
-      for (tuple <- doc.stream if tuple.isSuccess) b += (tuple.get._1 -> tuple.get._2)
+      for (tuple <- doc.stream if tuple.isSuccess) b += (tuple.get.name -> tuple.get.value)
       b.result
     }
 
@@ -116,7 +121,9 @@ object BSON extends Handlers {
       reader.asInstanceOf[BSONReader[BSONValue, A]] read map(k)
     def getO[A](k: String)(implicit reader: BSONReader[_ <: BSONValue, A]): Option[A] =
       map get k flatMap reader.asInstanceOf[BSONReader[BSONValue, A]].readOpt
-    def getD[A](k: String, default: A)(implicit reader: BSONReader[_ <: BSONValue, A]): A =
+    def getD[A](k: String)(implicit zero: Zero[A], reader: BSONReader[_ <: BSONValue, A]): A =
+      getO[A](k) getOrElse zero.zero
+    def getD[A](k: String, default: => A)(implicit reader: BSONReader[_ <: BSONValue, A]): A =
       getO[A](k) getOrElse default
     def getsD[A](k: String)(implicit reader: BSONReader[_ <: BSONValue, List[A]]) =
       getO[List[A]](k) getOrElse Nil
@@ -135,6 +142,7 @@ object BSON extends Handlers {
     def boolD(k: String) = boolO(k) getOrElse false
     def date(k: String) = get[DateTime](k)
     def dateO(k: String) = getO[DateTime](k)
+    def dateD(k: String, default: => DateTime) = getD(k, default)
     def bytes(k: String) = get[ByteArray](k)
     def bytesO(k: String) = getO[ByteArray](k)
     def bytesD(k: String) = bytesO(k) getOrElse ByteArray.empty
@@ -163,11 +171,11 @@ object BSON extends Handlers {
       if (b.isEmpty) None else ByteArray.ByteArrayBSONHandler.write(b).some
     def bytesO(b: Array[Byte]): Option[BSONBinary] = byteArrayO(ByteArray(b))
     def strListO(list: List[String]): Option[List[String]] = list match {
-      case Nil          => None
-      case List("")     => None
+      case Nil => None
+      case List("") => None
       case List("", "") => None
-      case List(a, "")  => Some(List(a))
-      case full         => Some(full)
+      case List(a, "") => Some(List(a))
+      case full => Some(full)
     }
     def listO[A](list: List[A])(implicit writer: BSONWriter[A, _ <: BSONValue]): Option[Barr] =
       if (list.isEmpty) None
@@ -175,6 +183,7 @@ object BSON extends Handlers {
     def docO(o: Bdoc): Option[Bdoc] = if (o.isEmpty) None else Some(o)
     def double(i: Double): BSONDouble = BSONDouble(i)
     def doubleO(i: Double): Option[BSONDouble] = if (i != 0) Some(BSONDouble(i)) else None
+    def zero[A](a: A)(implicit zero: Zero[A]): Option[A] = if (zero.zero == a) None else Some(a)
 
     import scalaz.Functor
     def map[M[_]: Functor, A, B <: BSONValue](a: M[A])(implicit writer: BSONWriter[A, B]): M[B] =
@@ -184,17 +193,17 @@ object BSON extends Handlers {
   val writer = new Writer
 
   def debug(v: BSONValue): String = v match {
-    case d: Bdoc        => debugDoc(d)
-    case d: Barr        => debugArr(d)
-    case BSONString(x)  => x
+    case d: Bdoc => debugDoc(d)
+    case d: Barr => debugArr(d)
+    case BSONString(x) => x
     case BSONInteger(x) => x.toString
-    case BSONDouble(x)  => x.toString
+    case BSONDouble(x) => x.toString
     case BSONBoolean(x) => x.toString
-    case v              => v.toString
+    case v => v.toString
   }
   def debugArr(doc: Barr): String = doc.values.toList.map(debug).mkString("[", ", ", "]")
   def debugDoc(doc: Bdoc): String = (doc.elements.toList map {
-    case (k, v) => s"$k: ${debug(v)}"
+    case BSONElement(k, v) => s"$k: ${debug(v)}"
   }).mkString("{", ", ", "}")
 
   def hashDoc(doc: Bdoc): String = debugDoc(doc).replace(" ", "")

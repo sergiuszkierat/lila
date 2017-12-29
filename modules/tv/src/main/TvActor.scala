@@ -6,13 +6,14 @@ import play.api.libs.json.Json
 import scala.concurrent.duration._
 
 import lila.common.LightUser
-import lila.game.{ Game, GameRepo }
-import lila.hub.actorApi.map.{ Tell, TellIds }
+import lila.game.GameRepo
 
 private[tv] final class TvActor(
     rendererActor: ActorSelection,
     roundSocket: ActorSelection,
-    lightUser: String => Option[LightUser]) extends Actor {
+    selectChannel: ActorRef,
+    lightUser: LightUser.GetterSync
+) extends Actor {
 
   import TvActor._
 
@@ -57,23 +58,18 @@ private[tv] final class TvActor(
       (user |@| player.rating) apply {
         case (u, r) => channelChampions += (channel -> Tv.Champion(u, r))
       }
-      channelActors.collect {
-        case (c, actor) if c != channel => actor ? ChannelActor.GetGameId mapTo manifest[Option[String]]
-      }.sequenceFu.foreach { otherIds =>
-        val gameIds = (previousId.toList ::: otherIds.toList.flatten).distinct
-        roundSocket ! TellIds(gameIds, {
-          lila.hub.actorApi.tv.Select(makeMessage("tvSelect", Json.obj(
-            "channel" -> channel.key,
-            "id" -> game.id,
-            "color" -> game.firstColor.name,
-            "player" -> user.map { u =>
-              Json.obj(
-                "name" -> u.name,
-                "title" -> u.title,
-                "rating" -> player.rating)
-            })))
-        })
-      }
+      selectChannel ! lila.socket.Channel.Publish(makeMessage("tvSelect", Json.obj(
+        "channel" -> channel.key,
+        "id" -> game.id,
+        "color" -> game.firstColor.name,
+        "player" -> user.map { u =>
+          Json.obj(
+            "name" -> u.name,
+            "title" -> u.title,
+            "rating" -> player.rating
+          )
+        }
+      )))
       if (channel == Tv.Channel.Best)
         rendererActor ? actorApi.RenderFeaturedJs(game) onSuccess {
           case html: play.twirl.api.Html =>
@@ -82,7 +78,9 @@ private[tv] final class TvActor(
               makeMessage("featured", Json.obj(
                 "html" -> html.toString,
                 "color" -> game.firstColor.name,
-                "id" -> game.id)))
+                "id" -> game.id
+              ))
+            )
             context.system.lilaBus.publish(event, 'changeFeaturedGame)
         }
       GameRepo setTv game.id

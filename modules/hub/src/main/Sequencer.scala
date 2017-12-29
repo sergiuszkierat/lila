@@ -9,7 +9,8 @@ import akka.actor._
 final class Sequencer(
     receiveTimeout: Option[FiniteDuration],
     executionTimeout: Option[FiniteDuration] = None,
-    logger: lila.log.Logger) extends Actor {
+    logger: lila.log.Logger
+) extends Actor {
 
   receiveTimeout.foreach(context.setReceiveTimeout)
 
@@ -23,7 +24,7 @@ final class Sequencer(
   private def busy: Receive = {
 
     case Done => dequeue match {
-      case None       => context become idle
+      case None => context become idle
       case Some(work) => processThenDone(work)
     }
 
@@ -37,16 +38,16 @@ final class Sequencer(
 
   private case object Done
 
-  private def processThenDone(work: Any) {
+  private def processThenDone(work: Any): Unit = {
     work match {
       case ReceiveTimeout => self ! PoisonPill
       case Sequencer.Work(run, promiseOption, timeoutOption) =>
         val future = timeoutOption.orElse(executionTimeout).fold(run()) { timeout =>
           run().withTimeout(
             duration = timeout,
-            error = lila.common.LilaException(s"Sequencer timed out after $timeout")
+            error = lila.base.LilaException(s"Sequencer timed out after $timeout")
           )(context.system)
-        } andThenAnyway {
+        } addEffectAnyway {
           self ! Done
         }
         promiseOption foreach (_ completeWith future)
@@ -58,12 +59,14 @@ final class Sequencer(
 object Sequencer {
 
   case class Work(
-    run: () => Funit,
-    promise: Option[Promise[Unit]] = None,
-    timeout: Option[FiniteDuration] = None)
+      run: () => Funit,
+      promise: Option[Promise[Unit]] = None,
+      timeout: Option[FiniteDuration] = None
+  )
 
   def work(
     run: => Funit,
     promise: Option[Promise[Unit]] = None,
-    timeout: Option[FiniteDuration] = None): Work = Work(() => run, promise, timeout)
+    timeout: Option[FiniteDuration] = None
+  ): Work = Work(() => run, promise, timeout)
 }

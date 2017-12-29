@@ -3,15 +3,16 @@ package lila.slack
 import akka.actor._
 import com.typesafe.config.Config
 
-import lila.common.PimpedConfig._
-import lila.hub.actorApi.slack.Event
 import lila.hub.actorApi.plan.ChargeEvent
+import lila.hub.actorApi.slack.Event
+import lila.hub.actorApi.user.Note
 import lila.hub.actorApi.{ DeployPre, DeployPost }
 
 final class Env(
     config: Config,
-    getLightUser: String => Option[lila.common.LightUser],
-    system: ActorSystem) {
+    getLightUser: lila.common.LightUser.Getter,
+    system: ActorSystem
+) {
 
   private val IncomingUrl = config getString "incoming.url"
   private val IncomingDefaultChannel = config getString "incoming.default_channel"
@@ -23,16 +24,18 @@ final class Env(
 
   private lazy val client = new SlackClient(
     url = IncomingUrl,
-    defaultChannel = IncomingDefaultChannel)
+    defaultChannel = IncomingDefaultChannel
+  )
 
   system.lilaBus.subscribe(system.actorOf(Props(new Actor {
     def receive = {
-      case d: ChargeEvent   => api charge d
-      case DeployPre        => api.deployPre
-      case DeployPost       => api.deployPost
-      case e: Event         => api publishEvent e
+      case d: ChargeEvent => api charge d
+      case DeployPre => api.deployPre
+      case DeployPost => api.deployPost
+      case Note(from, to, text, true) if from != "Irwin" => api.userModNote(from, to, text)
+      case e: Event => api publishEvent e
     }
-  })), 'deploy, 'slack, 'plan)
+  })), 'deploy, 'slack, 'plan, 'userNote)
 }
 
 object Env {
@@ -40,5 +43,6 @@ object Env {
   lazy val current: Env = "slack" boot new Env(
     system = lila.common.PlayApp.system,
     getLightUser = lila.user.Env.current.lightUser,
-    config = lila.common.PlayApp loadConfig "slack")
+    config = lila.common.PlayApp loadConfig "slack"
+  )
 }

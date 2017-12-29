@@ -1,22 +1,20 @@
-lichess = lichess || {};
-lichess.startChallenge = function(element, opts) {
+window.onload = function() {
+  if (!window.lichess_challenge) return;
+  var opts = lichess_challenge;
+  var element = document.getElementById('challenge');
   var challenge = opts.data.challenge;
   var accepting;
-  if (!opts.owner) lichess.openInMobileApp('/challenge/' + challenge.id);
   lichess.socket = new lichess.StrongSocket(
     opts.socketUrl,
     opts.data.socketVersion, {
       options: {
         name: "challenge"
       },
-      params: {
-        ran: "--ranph--"
-      },
       events: {
         reload: function() {
           $.ajax({
             url: opts.xhrUrl,
-            success(html) {
+            success: function(html) {
               $('.lichess_overboard').replaceWith($(html).find('.lichess_overboard'));
               init();
             }
@@ -31,7 +29,7 @@ lichess.startChallenge = function(element, opts) {
     });
     $('.lichess_overboard').find('form.accept').submit(function() {
       accepting = true;
-      $(this).html(lichess.spinnerHtml);
+      $(this).html('<span class="ddloader"></span>');
     });
     $('.lichess_overboard').find('form.xhr').submit(function(e) {
       e.preventDefault();
@@ -39,7 +37,18 @@ lichess.startChallenge = function(element, opts) {
         url: $(this).attr('action'),
         method: 'post'
       });
-      $(this).html(lichess.spinnerHtml);
+      $(this).html('<span class="ddloader"></span>');
+    });
+    $('.lichess_overboard').find('input.friend-autocomplete').each(function() {
+      var $input = $(this);
+      lichess.userAutocomplete($input, {
+        focus: 1,
+        friend: 1,
+        tag: 'span',
+        onSelect: function() {
+          $input.parents('form').submit();
+        }
+      });
     });
   };
   init();
@@ -54,6 +63,7 @@ lichess.startChallenge = function(element, opts) {
 
   var ground = Chessground(element.querySelector('.lichess_board'), {
     viewOnly: true,
+    drawable: { enabled: false, visible: false },
     fen: challenge.initialFen,
     orientation: (opts.owner ^ challenge.color === 'black') ? 'white' : 'black',
     coordinates: false,

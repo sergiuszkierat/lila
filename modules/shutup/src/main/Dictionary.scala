@@ -7,7 +7,7 @@ package lila.shutup
  */
 private object Dictionary {
 
-  def en: List[String] = dict("""
+  def en = dict("""
 (c|k)oc?k(y|suc?ker|)
 (c|k)um(shot|)
 (c|k)unt(ing|)
@@ -25,18 +25,20 @@ ball
 bastard?
 bewb
 bimbo
-bitche?
+bit?ch
 blow
 blowjob
 blumpkin
 bollock
 boner
 boob
+bot
 bugger
 buk?kake
 bull?shit
 cancer
 cawk
+cheat(er|)
 chess(|-|_)bot(.?com)?
 chink
 choad
@@ -45,6 +47,7 @@ clitoris
 clown
 condom
 coon
+cock
 cooter
 cornhole
 coward?
@@ -56,6 +59,7 @@ dogg?ystyle
 dong
 douche(bag|)
 dyke
+engine
 (f|ph)ag
 (f|ph)agg?ot
 fanny
@@ -74,7 +78,6 @@ hitler+
 homm?o(sexual|)
 honkey
 hooker
-hore
 horny
 humping
 idiot
@@ -89,12 +92,11 @@ masturbat(e|ion|ing)
 milf
 molest
 moron
-mother
+mothers?
 motherfuc?k(er|)
 mthrfckr
 muff
 nazi
-negro
 nigg?(er|a|ah)
 nonce
 nutsac?k
@@ -105,7 +107,7 @@ pecker
 pederast
 pen(1|i)s
 pig
-pimp
+pimps?
 piss
 poof
 poon
@@ -119,13 +121,13 @@ puss(i|y|ie|)
 queef
 queer
 quim
-raped?
+rape
 rapist
 rect(al|um)
-retard(ed|)
+retard
 rimjob
 schlong
-screw(d|ed|)
+screw
 scrotum
 scum(bag|)
 semen
@@ -146,11 +148,10 @@ spunk
 stfu
 stripper
 stupid
-suc?k
 taint
 tart
 terrorist
-tit(s|ies|ties|ty)(fuc?k)
+tit(|t?ies|ty)(fuc?k)
 tosser
 turd
 twat
@@ -160,9 +161,17 @@ vibrator
 vulva
 wanc?k(er|)
 wetback
-whore?
+w?hore?
 wog
 """)
 
-  private def dict(words: String) = words.lines.filter(_.nonEmpty).toList
+  def ru = dict("""
+сука
+пизда
+пидор
+пидераст
+pid(a|o)r
+""")
+
+  private def dict(words: String) = words.lines.filter(_.nonEmpty)
 }

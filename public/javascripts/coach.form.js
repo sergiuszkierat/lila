@@ -19,7 +19,7 @@ $(function() {
         return $editor.find('img.picture').length;
       }
     }, {
-      html: 'Fill in basic informations',
+      html: 'Fill in basic information',
       check: function() {
         ['profile.headline', 'profile.languages'].forEach(function(name) {
           if (!$editor.find('[name="' + name + '"]').val()) return false;
@@ -56,7 +56,7 @@ $(function() {
     $editor.find('.panel.' + $(this).data('tab')).addClass('active');
     $editor.find('div.status').removeClass('saved');
   });
-  var submit = $.fp.debounce(function() {
+  var submit = lichess.fp.debounce(function() {
     $editor.find('form.form').ajaxSubmit({
       success: function() {
         $editor.find('div.status').addClass('saved');
@@ -65,7 +65,7 @@ $(function() {
     });
   }, 1000);
   $editor.find('input, textarea, select')
-    .bind("input paste change keyup", function() {
+    .on("input paste change keyup", function() {
       $editor.find('div.status').removeClass('saved');
       submit();
     });
@@ -80,16 +80,9 @@ $(function() {
       method: 'post',
       url: $review.data('action') + '?v=' + $(this).data('value')
     });
-    $review.slideUp(300);
+    $review.hide();
     $editor.find('.tabs div[data-tab=reviews]').attr('data-count', $reviews.find('.review').length - 1);
     return false;
-  });
-
-  $editor.find('.analytics .pageview_chart').each(function() {
-    var $el = $(this);
-    $.getJSON('/monitor/coach/pageview', function(data) {
-      lichess.coachPageViewChart(data, $el);
-    });
   });
 
   $('.coach_picture form.upload input[type=file]').change(function() {

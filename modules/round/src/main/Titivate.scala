@@ -7,19 +7,24 @@ import reactivemongo.api._
 import scala.concurrent.duration._
 
 import lila.db.dsl._
-import lila.game.BSONHandlers.gameBSONHandler
 import lila.game.{ Query, Game, GameRepo }
 import lila.hub.actorApi.map.Tell
-import lila.round.actorApi.round.{ Outoftime, Abandon }
+import lila.round.actorApi.round.{ QuietFlag, Abandon }
 
+/*
+ * Cleans up unfinished games
+ * and flagged games when no one is around
+ */
 private[round] final class Titivate(
     roundMap: ActorRef,
-    bookmark: ActorSelection) extends Actor {
+    bookmark: ActorSelection,
+    chat: ActorSelection
+) extends Actor {
 
   object Schedule
   object Run
 
-  override def preStart() {
+  override def preStart(): Unit = {
     scheduleNext
     context setReceiveTimeout 30.seconds
   }
@@ -28,8 +33,9 @@ private[round] final class Titivate(
 
   def scheduleNext = scheduler.scheduleOnce(5 seconds, self, Run)
 
-  def receive = {
+  import reactivemongo.play.iteratees.cursorProducer
 
+  def receive = {
     case ReceiveTimeout =>
       val msg = "Titivate timed out!"
       logger.error(msg)
@@ -37,15 +43,15 @@ private[round] final class Titivate(
 
     case Run => GameRepo.count(_.checkable).flatMap { total =>
       GameRepo.cursor(Query.checkable)
-        .enumerate(1000, stopOnError = false)
+        .enumerator(1000, Cursor.ContOnError())
         .|>>>(Iteratee.foldM[Game, Int](0) {
           case (count, game) => {
 
             if (game.finished || game.isPgnImport || game.playedThenAborted)
               GameRepo unsetCheckAt game
 
-            else if (game.outoftime(_ => chess.Clock.maxGraceMillis)) fuccess {
-              roundMap ! Tell(game.id, Outoftime)
+            else if (game.outoftime(withGrace = true)) fuccess {
+              roundMap ! Tell(game.id, QuietFlag)
             }
 
             else if (game.abandoned) fuccess {
@@ -54,13 +60,12 @@ private[round] final class Titivate(
 
             else if (game.unplayed) {
               bookmark ! lila.hub.actorApi.bookmark.Remove(game.id)
+              chat ! lila.chat.actorApi.Remove(lila.chat.Chat.Id(game.id))
               GameRepo remove game.id
-            }
-
-            else game.clock match {
+            } else game.clock match {
 
               case Some(clock) if clock.isRunning =>
-                val minutes = (clock.estimateTotalTime / 60).toInt
+                val minutes = clock.estimateTotalSeconds / 60
                 GameRepo.setCheckAt(game, DateTime.now plusMinutes minutes)
 
               case Some(clock) =>
@@ -68,8 +73,11 @@ private[round] final class Titivate(
                 GameRepo.setCheckAt(game, DateTime.now plusHours hours)
 
               case None =>
-                val days = game.daysPerTurn | game.hasAi.fold(Game.aiAbandonedDays, Game.abandonedDays)
-                GameRepo.setCheckAt(game, DateTime.now plusDays days)
+                val hours = game.daysPerTurn.fold(
+                  if (game.hasAi) Game.aiAbandonedHours
+                  else Game.abandonedDays * 24
+                )(_ * 24)
+                GameRepo.setCheckAt(game, DateTime.now plusHours hours)
             }
           } inject (count + 1)
         })
@@ -80,7 +88,7 @@ private[round] final class Titivate(
         }.>> {
           GameRepo.count(_.checkableOld).map(lila.mon.round.titivate.old(_))
         }
-        .andThenAnyway(scheduleNext)
+        .addEffectAnyway(scheduleNext)
     }
   }
 }

@@ -1,22 +1,28 @@
 package lila.challenge
 
 import play.api.libs.json._
+import play.api.i18n.Lang
 
-import lila.common.PimpedJson._
+import lila.socket.UserLagCache
+import lila.i18n.{ I18nKeys => trans }
 
 final class JsonView(
-    getLightUser: lila.common.LightUser.Getter,
-    isOnline: lila.user.User.ID => Boolean) {
+    getLightUser: lila.common.LightUser.GetterSync,
+    isOnline: lila.user.User.ID => Boolean
+) {
 
   import Challenge._
 
-  def apply(a: AllChallenges): JsObject = Json.obj(
+  def apply(a: AllChallenges, lang: Lang): JsObject = Json.obj(
     "in" -> a.in.map(apply(Direction.In.some)),
-    "out" -> a.out.map(apply(Direction.Out.some)))
+    "out" -> a.out.map(apply(Direction.Out.some)),
+    "i18n" -> translations(lang)
+  )
 
   def show(challenge: Challenge, socketVersion: Int, direction: Option[Direction]) = Json.obj(
     "challenge" -> apply(direction)(challenge),
-    "socketVersion" -> socketVersion)
+    "socketVersion" -> socketVersion
+  )
 
   private def apply(direction: Option[Direction])(c: Challenge): JsObject = Json.obj(
     "id" -> c.id,
@@ -27,24 +33,28 @@ final class JsonView(
     "variant" -> Json.obj(
       "key" -> c.variant.key,
       "short" -> c.variant.shortName,
-      "name" -> c.variant.name),
+      "name" -> c.variant.name
+    ),
     "initialFen" -> c.initialFen,
     "rated" -> c.mode.rated,
     "timeControl" -> (c.timeControl match {
-      case c@TimeControl.Clock(l, i) => Json.obj(
+      case c @ TimeControl.Clock(clock) => Json.obj(
         "type" -> "clock",
-        "limit" -> l,
-        "increment" -> i,
-        "show" -> c.show)
+        "limit" -> clock.limitSeconds,
+        "increment" -> clock.incrementSeconds,
+        "show" -> clock.show
+      )
       case TimeControl.Correspondence(d) => Json.obj(
         "type" -> "correspondence",
-        "daysPerTurn" -> d)
+        "daysPerTurn" -> d
+      )
       case TimeControl.Unlimited => Json.obj("type" -> "unlimited")
     }),
     "color" -> c.colorChoice.toString.toLowerCase,
     "perf" -> Json.obj(
       "icon" -> iconChar(c).toString,
-      "name" -> c.perfType.name)
+      "name" -> c.perfType.name
+    )
   )
 
   private def iconChar(c: Challenge) =
@@ -57,10 +67,20 @@ final class JsonView(
       "id" -> r.id,
       "name" -> light.fold(r.id)(_.name),
       "title" -> light.map(_.title),
-      "rating" -> r.rating.int,
-      "provisional" -> r.rating.provisional,
-      "patron" -> light.??(_.isPatron).option(true),
-      "online" -> isOnline(r.id).option(true)
-    ).noNull
+      "rating" -> r.rating.int
+    ).add("provisional" -> r.rating.provisional)
+      .add("patron" -> light.??(_.isPatron))
+      .add("online" -> isOnline(r.id))
+      .add("lag" -> UserLagCache.getLagRating(r.id))
   }
+
+  private def translations(lang: Lang) = lila.i18n.JsDump.keysToObject(List(
+    trans.rated,
+    trans.casual,
+    trans.waiting,
+    trans.accept,
+    trans.decline,
+    trans.viewInFullSize,
+    trans.cancel
+  ), lila.i18n.I18nDb.Site, lang)
 }

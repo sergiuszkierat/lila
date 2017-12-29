@@ -1,6 +1,8 @@
 package lila.mod
 
 import lila.db.dsl._
+import lila.security.Permission
+import lila.report.{ Mod, Suspect }
 
 final class ModlogApi(coll: Coll) {
 
@@ -11,20 +13,24 @@ final class ModlogApi(coll: Coll) {
     Modlog(mod, none, Modlog.streamConfig)
   }
 
-  def engine(mod: String, user: String, v: Boolean) = add {
-    Modlog(mod, user.some, v.fold(Modlog.engine, Modlog.unengine))
+  def practiceConfig(mod: String) = add {
+    Modlog(mod, none, Modlog.practiceConfig)
   }
 
-  def booster(mod: String, user: String, v: Boolean) = add {
-    Modlog(mod, user.some, v.fold(Modlog.booster, Modlog.unbooster))
+  def engine(mod: Mod, sus: Suspect, v: Boolean) = add {
+    Modlog.make(mod, sus, if (v) Modlog.engine else Modlog.unengine)
   }
 
-  def troll(mod: String, user: String, v: Boolean) = add {
-    Modlog(mod, user.some, v.fold(Modlog.troll, Modlog.untroll))
+  def booster(mod: Mod, sus: Suspect, v: Boolean) = add {
+    Modlog.make(mod, sus, if (v) Modlog.booster else Modlog.unbooster)
   }
 
-  def ban(mod: String, user: String, v: Boolean) = add {
-    Modlog(mod, user.some, v.fold(Modlog.ipban, Modlog.ipunban))
+  def troll(mod: Mod, sus: Suspect) = add {
+    Modlog.make(mod, sus, if (sus.user.troll) Modlog.troll else Modlog.untroll)
+  }
+
+  def ban(mod: Mod, sus: Suspect) = add {
+    Modlog.make(mod, sus, if (sus.user.ipBan) Modlog.ipban else Modlog.ipunban)
   }
 
   def closeAccount(mod: String, user: String) = add {
@@ -35,9 +41,12 @@ final class ModlogApi(coll: Coll) {
     Modlog(mod, user.some, Modlog.reopenAccount)
   }
 
-  def setTitle(mod: String, user: String, title: Option[String]) = add {
-    val name = title flatMap lila.user.User.titlesMap.get
-    Modlog(mod, user.some, name.isDefined.fold(Modlog.setTitle, Modlog.removeTitle), details = name)
+  def addTitle(mod: String, user: String, title: String) = add {
+    Modlog(mod, user.some, Modlog.setTitle, title.some)
+  }
+
+  def removeTitle(mod: String, user: String) = add {
+    Modlog(mod, user.some, Modlog.removeTitle)
   }
 
   def setEmail(mod: String, user: String) = add {
@@ -66,6 +75,12 @@ final class ModlogApi(coll: Coll) {
     ))
   }
 
+  def toggleStickyTopic(mod: String, categ: String, topic: String, sticky: Boolean) = add {
+    Modlog(mod, none, sticky ? Modlog.stickyTopic | Modlog.unstickyTopic, details = Some(
+      categ + " / " + topic
+    ))
+  }
+
   def deleteQaQuestion(mod: String, user: String, title: String) = add {
     Modlog(mod, user.some, Modlog.deleteQaQuestion, details = Some(title take 140))
   }
@@ -90,10 +105,42 @@ final class ModlogApi(coll: Coll) {
     Modlog(mod, user.some, Modlog.chatTimeout, details = reason.some)
   }
 
+  def setPermissions(mod: String, user: String, permissions: List[Permission]) = add {
+    Modlog(mod, user.some, Modlog.permissions, details = permissions.mkString(", ").some)
+  }
+
+  def kickFromRankings(mod: String, user: String) = add {
+    Modlog(mod, user.some, Modlog.kickFromRankings)
+  }
+
+  def reportban(mod: Mod, sus: Suspect, v: Boolean) = add {
+    Modlog.make(mod, sus, if (v) Modlog.reportban else Modlog.unreportban)
+  }
+
+  def modMessage(mod: String, user: String, subject: String) = add {
+    Modlog(mod, user.some, Modlog.modMessage, details = subject.some)
+  }
+
+  def coachReview(mod: String, coach: String, author: String) = add {
+    Modlog(mod, coach.some, Modlog.coachReview, details = s"by $author".some)
+  }
+
+  def cheatDetected(user: String, gameId: String) = add {
+    Modlog("lichess", user.some, Modlog.cheatDetected, details = s"game $gameId".some)
+  }
+
+  def cli(by: String, command: String) = add {
+    Modlog(by, none, Modlog.cli, command.some)
+  }
+
+  def garbageCollect(mod: Mod, sus: Suspect) = add {
+    Modlog.make(mod, sus, Modlog.garbageCollect)
+  }
+
   def recent = coll.find($empty).sort($sort naturalDesc).cursor[Modlog]().gather[List](100)
 
-  def wasUnengined(userId: String) = coll.exists($doc(
-    "user" -> userId,
+  def wasUnengined(sus: Suspect) = coll.exists($doc(
+    "user" -> sus.user.id,
     "action" -> Modlog.unengine
   ))
 
@@ -103,7 +150,7 @@ final class ModlogApi(coll: Coll) {
   ))
 
   def userHistory(userId: String): Fu[List[Modlog]] =
-    coll.find($doc("user" -> userId)).sort($sort desc "date").cursor[Modlog]().gather[List](100)
+    coll.find($doc("user" -> userId)).sort($sort desc "date").cursor[Modlog]().gather[List](30)
 
   private def add(m: Modlog): Funit = {
     lila.mon.mod.log.create()

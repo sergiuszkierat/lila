@@ -1,10 +1,18 @@
 package lila
 
-package object puzzle extends PackageObject with WithPlay {
+import lila.rating.Glicko
+
+package object puzzle extends PackageObject {
 
   type PuzzleId = Int
-  type AttemptId = Int
+  type RoundId = Int
   type Lines = List[Line]
 
   private[puzzle] def logger = lila.log("puzzle")
+
+  case class Result(win: Boolean) extends AnyVal {
+
+    def loss = !win
+    def glicko = if (win) Glicko.Result.Win else Glicko.Result.Loss
+  }
 }

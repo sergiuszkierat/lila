@@ -181,6 +181,7 @@ div.post .message {
   margin-top: 1.5em;
   color: #555;
   line-height: 1.5em;
+  cursor: initial;
 }
 
 form.edit-post-form {
@@ -291,10 +292,6 @@ div.bar div.pagination {
   float: right;
 }
 
-#lichess_forum div.checkmateCaptcha p.error {
-  margin-left: 0;
-}
-
 #lichess_forum div.topic form.mod {
   float: right;
   margin-right: 24px;
@@ -319,8 +316,9 @@ div.bar div.pagination {
   font-weight: bold;
   cursor: pointer;
 }
-.textcomplete-dropdown li:first-child {
-  border-top: none;
+.textcomplete-dropdown li.textcomplete-header,
+.textcomplete-dropdown li.textcomplete-footer {
+  display: none;
 }
 .textcomplete-dropdown li:hover,
 .textcomplete-dropdown .active {
@@ -339,4 +337,13 @@ body.dark .textcomplete-dropdown li {
 body.dark .textcomplete-dropdown li:hover,
 body.dark .textcomplete-dropdown .active {
   background-color: #3e3e3e;
+}
+
+a.sticky,
+body.dark a.sticky {
+  color: #759900;
+}
+
+a.sticky > span {
+  margin-right: 0.6em;
 }

@@ -1,7 +1,5 @@
 package lila.message
 
-import akka.pattern.pipe
-
 import lila.common.paginator._
 import lila.db.dsl._
 import lila.db.paginator._
@@ -14,7 +12,9 @@ final class MessageApi(
     maxPerPage: Int,
     blocks: (String, String) => Fu[Boolean],
     notifyApi: lila.notify.NotifyApi,
-    follows: (String, String) => Fu[Boolean]) {
+    security: MessageSecurity,
+    lilaBus: lila.common.Bus
+) {
 
   import Thread.ThreadBSONHandler
 
@@ -23,7 +23,8 @@ final class MessageApi(
       collection = coll,
       selector = ThreadRepo visibleByUserQuery me.id,
       projection = $empty,
-      sort = ThreadRepo.recentSort),
+      sort = ThreadRepo.recentSort
+    ),
     currentPage = page,
     maxPerPage = maxPerPage
   )
@@ -33,6 +34,17 @@ final class MessageApi(
     _ ← threadOption.filter(_ isUnReadBy me).??(ThreadRepo.setReadFor(me))
   } yield threadOption
 
+  def sendPreset(mod: User, user: User, preset: ModPreset): Fu[Thread] =
+    makeThread(
+      DataForm.ThreadData(
+        user = user,
+        subject = preset.subject,
+        text = preset.text,
+        asMod = true
+      ),
+      mod
+    )
+
   def makeThread(data: DataForm.ThreadData, me: User): Fu[Thread] = {
     val fromMod = Granter(_.MessageAnyone)(me)
     UserRepo named data.user.id flatMap {
@@ -41,8 +53,10 @@ final class MessageApi(
           name = data.subject,
           text = data.text,
           creatorId = me.id,
-          invitedId = data.user.id)
-        muteThreadIfNecessary(t, me, invited, data) flatMap { thread =>
+          invitedId = data.user.id,
+          asMod = data.asMod
+        )
+        security.muteThreadIfNecessary(t, me, invited) flatMap { thread =>
           sendUnlessBlocked(thread, fromMod) flatMap {
             _ ?? {
               val text = s"${data.subject} ${data.text}"
@@ -55,13 +69,6 @@ final class MessageApi(
     }
   }
 
-  private def muteThreadIfNecessary(thread: Thread, creator: User, invited: User, data: DataForm.ThreadData): Fu[Thread] =
-    if (lila.security.Spam.detect(data.subject, data.text)) fuccess(thread deleteFor invited)
-    else if (creator.troll) follows(invited.id, creator.id) map { following =>
-      if (following) thread else thread deleteFor invited
-    }
-    else fuccess(thread)
-
   private def sendUnlessBlocked(thread: Thread, fromMod: Boolean): Fu[Boolean] =
     if (fromMod) coll.insert(thread) inject true
     else blocks(thread.invitedId, thread.creatorId) flatMap { blocks =>
@@ -71,7 +78,8 @@ final class MessageApi(
   def makePost(thread: Thread, text: String, me: User): Fu[Thread] = {
     val post = Post.make(
       text = text,
-      isByCreator = thread isCreator me)
+      isByCreator = thread isCreator me
+    )
     if (thread endsWith post) fuccess(thread) // prevent duplicate post
     else blocks(thread receiverOf post, me.id) flatMap {
       case true => fuccess(thread)
@@ -91,8 +99,21 @@ final class MessageApi(
         ThreadRepo.deleteFor(me.id)(thread.id) zip
           notifyApi.remove(
             lila.notify.Notification.Notifies(me.id),
-            $doc("content.thread.id" -> thread.id)) void
+            $doc("content.thread.id" -> thread.id)
+          ) void
       }
+    }
+
+  def deleteThreadsBy(user: User): Funit =
+    ThreadRepo.createdByUser(user.id) flatMap {
+      _.map { thread =>
+        val victimId = thread otherUserId user
+        ThreadRepo.deleteFor(victimId)(thread.id) zip
+          notifyApi.remove(
+            lila.notify.Notification.Notifies(victimId),
+            $doc("content.thread.id" -> thread.id)
+          ) void
+      }.sequenceFu.void
     }
 
   def notify(thread: Thread): Funit = thread.posts.headOption ?? { post =>
@@ -102,11 +123,14 @@ final class MessageApi(
     (thread isVisibleBy thread.receiverOf(post)) ?? {
       import lila.notify.{ Notification, PrivateMessage }
       import lila.common.String.shorten
-      notifyApi addNotification Notification(
+      lilaBus.publish(Event.NewMessage(thread, post), 'newMessage)
+      notifyApi addNotification Notification.make(
         Notification.Notifies(thread receiverOf post),
         PrivateMessage(
-          PrivateMessage.SenderId(thread senderOf post),
+          PrivateMessage.SenderId(thread visibleSenderOf post),
           PrivateMessage.Thread(id = thread.id, name = shorten(thread.name, 80)),
-          PrivateMessage.Text(shorten(post.text, 80))))
+          PrivateMessage.Text(shorten(post.text, 80))
+        )
+      )
     }
 }

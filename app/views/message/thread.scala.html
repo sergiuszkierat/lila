@@ -1,8 +1,8 @@
-@(thread: lila.message.Thread, form: Form[_], blocks: Boolean)(implicit ctx: Context, me: User)
+@(thread: lila.message.Thread, form: Option[Form[_]], blocks: Boolean)(implicit ctx: Context, me: User)
 
 @message.layout(
 title = thread.name) {
-<div id="lichess_message" class="content_box">
+<div id="lichess_message" class="content_box @if(thread.asMod){ mod}">
   <div class="thread_actions">
     <form action="@routes.Message.delete(thread.id)" method="post">
       <button type="submit" class="delete button"> Delete</button>
@@ -14,9 +14,9 @@ title = thread.name) {
   </div>
 
   @thread.posts.map { post =>
-  <div class="thread_message" id="message_@post.id">
+  <div class="thread_message embed_analyse" id="message_@post.id">
     <span class="infos">
-      @userIdLink(thread.senderOf(post), none) <span data-icon="H"></span> @userIdLink(thread.receiverOf(post), "inline".some) - @momentFormat(post.createdAt)
+      @userIdLink(thread.visibleSenderOf(post), none) <span data-icon="H"></span> @userIdLink(thread.visibleReceiverOf(post), "inline".some) - @momentFromNow(post.createdAt)
     </span>
     <div class="thread_message_body">@autoLink(post.text)</div>
   </div>
@@ -24,18 +24,29 @@ title = thread.name) {
 
   <div class="answer" id="bottom">
     @if(blocks) {
-    <p>This user blocks you. You cannot answer.</p>
+    <p class="end">@userIdLink(thread.visibleOtherUserId(me).some) blocks you. You cannot answer.</p>
     } else {
+    @if(!thread.isVisibleByOther(me) && !me.troll) {
+    <p class="end">
+      @userIdLink(thread.visibleOtherUserId(me).some) has closed this thread.
+      @if(!thread.asMod){
+        <a href="@routes.Message.form?user=@thread.otherUserId(me)" class="button">Create a new one</a>
+      }
+    </p>
+    } else {
+    @form.map { f =>
     <form action="@routes.Message.answer(thread.id)" method="post">
       <div class="field_body">
-        <textarea required="required" name="@form("text").name" id="@form("text").id">@form("text").value</textarea>
-        @errMsg(form("text"))
+        <textarea required="required" name="@f("text").name" id="@f("text").id">@f("text").value</textarea>
+        @errMsg(f("text"))
       </div>
       <div class="actions">
         <button class="send button" data-icon="E" type="submit"> @trans.send()</button>
         <a class="cancel" href="@routes.Message.inbox(1)">@trans.cancel()</a>
       </div>
     </form>
+    }
+    }
     }
   </div>
 </div>

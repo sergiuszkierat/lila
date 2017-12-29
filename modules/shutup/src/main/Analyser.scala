@@ -7,10 +7,10 @@ object Analyser {
     bigRegex.findAllMatchIn(text).map(_.toString).toList
   )
 
-  private def wordsRegexes: List[String] = Dictionary.en.map { word =>
-    if (word endsWith "s") word
-    else word + "s?"
-  }
+  private def wordsRegexes =
+    Dictionary.en.map { word => word + "e?[ds]?"
+    } ++
+      Dictionary.ru
 
   private val bigRegex = {
     """(?i)\b""" +

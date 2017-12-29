@@ -3,13 +3,12 @@ package lila.tournament
 import akka.actor._
 import scala.concurrent.duration._
 
-import actorApi._
-
-private[tournament] final class CreatedOrganizer(
+private final class CreatedOrganizer(
     api: TournamentApi,
-    isOnline: String => Boolean) extends Actor {
+    isOnline: String => Boolean
+) extends Actor {
 
-  override def preStart {
+  override def preStart: Unit = {
     pairingLogger.info("Start CreatedOrganizer")
     context setReceiveTimeout 15.seconds
     scheduleNext
@@ -28,7 +27,6 @@ private[tournament] final class CreatedOrganizer(
       throw new RuntimeException(msg)
 
     case Tick =>
-      val myself = self
       TournamentRepo.allCreated(30).map { tours =>
         tours foreach { tour =>
           tour.schedule match {
@@ -41,18 +39,13 @@ private[tournament] final class CreatedOrganizer(
               case _ =>
             }
             case Some(schedule) if tour.hasWaitedEnough => api start tour
-            case _                                      => ejectLeavers(tour)
+            case _ => funit
           }
         }
         lila.mon.tournament.created(tours.size)
       }.chronometer
         .mon(_.tournament.createdOrganizer.tickTime)
         .logIfSlow(500, logger)(_ => "CreatedOrganizer.Tick")
-        .result andThenAnyway scheduleNext
+        .result addEffectAnyway scheduleNext
   }
-
-  private def ejectLeavers(tour: Tournament) =
-    PlayerRepo userIds tour.id foreach {
-      _ filterNot isOnline foreach { api.withdraw(tour.id, _) }
-    }
 }

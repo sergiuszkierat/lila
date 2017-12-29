@@ -4,58 +4,67 @@ import chess.format.pgn.Glyphs
 import chess.format.{ Forsyth, Uci, UciCharPair }
 import chess.opening._
 import chess.variant.Variant
+import JsonView.WithFlags
 import lila.analyse.{ Analysis, Info, Advice }
-import lila.socket.tree._
-
-import play.api.libs.json._
+import chess.Centis
+import lila.tree._
 
 object TreeBuilder {
 
   private type Ply = Int
   private type OpeningOf = String => Option[FullOpening]
 
-  private def makeEval(info: Info) = Node.Eval(
-    cp = info.score.map(_.ceiled.centipawns),
+  private def makeEval(info: Info) = Eval(
+    cp = info.cp,
     mate = info.mate,
-    best = info.best)
+    best = info.best
+  )
 
   def apply(
     game: lila.game.Game,
     analysis: Option[Analysis],
     initialFen: String,
-    withOpening: Boolean): Root = apply(
+    withFlags: WithFlags
+  ): Root = apply(
     id = game.id,
     pgnMoves = game.pgnMoves,
     variant = game.variant,
     analysis = analysis,
     initialFen = initialFen,
-    withOpening = withOpening)
+    withFlags = withFlags,
+    clocks = withFlags.clocks ?? game.bothClockStates
+  )
 
   def apply(
     id: String,
-    pgnMoves: List[String],
+    pgnMoves: Vector[String],
     variant: Variant,
     analysis: Option[Analysis],
     initialFen: String,
-    withOpening: Boolean): Root = {
+    withFlags: WithFlags,
+    clocks: Option[Vector[Centis]]
+  ): Root = {
+    val withClocks = withFlags.clocks ?? clocks
     chess.Replay.gameMoveWhileValid(pgnMoves, initialFen, variant) match {
       case (init, games, error) =>
         error foreach logChessError(id)
         val openingOf: OpeningOf =
-          if (withOpening && Variant.openingSensibleVariants(variant)) FullOpeningDB.findByFen
+          if (withFlags.opening && Variant.openingSensibleVariants(variant)) FullOpeningDB.findByFen
           else _ => None
         val fen = Forsyth >> init
         val infos: Vector[Info] = analysis.??(_.infos.toVector)
         val advices: Map[Ply, Advice] = analysis.??(_.advices.map { a =>
           a.ply -> a
-        }.toMap)
+        }(scala.collection.breakOut))
         val root = Root(
           ply = init.turns,
           fen = fen,
           check = init.situation.check,
           opening = openingOf(fen),
+          clock = withFlags.clocks ?? init.clock.map(_.limit),
           crazyData = init.situation.board.crazyData,
-          eval = infos lift 0 map makeEval)
+          eval = infos lift 0 map makeEval
+        )
         def makeBranch(index: Int, g: chess.Game, m: Uci.WithSan) = {
           val fen = Forsyth >> g
           val info = infos lift (index - 1)
@@ -67,6 +76,7 @@ object TreeBuilder {
             fen = fen,
             check = g.situation.check,
             opening = openingOf(fen),
+            clock = withClocks ?? (_ lift (g.turns - init.turns - 1)),
             crazyData = g.situation.board.crazyData,
             eval = info map makeEval,
             glyphs = Glyphs.fromList(advice.map(_.judgment.glyph).toList),
@@ -75,9 +85,11 @@ object TreeBuilder {
                 Node.Comment(
                   Node.Comment.Id.make,
                   Node.Comment.Text(text),
-                  Node.Comment.Author.Lichess)
+                  Node.Comment.Author.Lichess
+                )
               }
-            })
+            }
+          )
           advices.get(g.turns + 1).flatMap { adv =>
             games.lift(index - 1).map {
               case (fromGame, _) =>
@@ -106,7 +118,8 @@ object TreeBuilder {
         check = g.situation.check,
         opening = openingOf(fen),
         crazyData = g.situation.board.crazyData,
-        eval = none)
+        eval = none
+      )
     }
     chess.Replay.gameMoveWhileValid(info.variation take 20, fromFen, variant) match {
       case (init, games, error) =>

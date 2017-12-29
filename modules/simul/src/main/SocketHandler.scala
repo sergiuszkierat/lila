@@ -1,29 +1,29 @@
 package lila.simul
 
-import scala.concurrent.duration._
-
 import akka.actor._
 import akka.pattern.ask
 
 import actorApi._
-import akka.actor.ActorSelection
-import lila.common.PimpedJson._
 import lila.hub.actorApi.map._
 import lila.socket.actorApi.{ Connected => _, _ }
 import lila.socket.Handler
+import lila.socket.Socket.Uid
 import lila.user.User
+import lila.chat.Chat
 import makeTimeout.short
 
 private[simul] final class SocketHandler(
     hub: lila.hub.Env,
     socketHub: ActorRef,
     chat: ActorSelection,
-    exists: Simul.ID => Fu[Boolean]) {
+    exists: Simul.ID => Fu[Boolean]
+) {
 
   def join(
     simId: String,
-    uid: String,
-    user: Option[User]): Fu[Option[JsSocketHandler]] =
+    uid: Uid,
+    user: Option[User]
+  ): Fu[Option[JsSocketHandler]] =
     exists(simId) flatMap {
       _ ?? {
         for {
@@ -40,12 +40,15 @@ private[simul] final class SocketHandler(
   private def controller(
     socket: ActorRef,
     simId: String,
-    uid: String,
-    member: Member): Handler.Controller = ({
-    case ("p", o) => o int "v" foreach { v => socket ! PingVersion(uid, v) }
+    uid: Uid,
+    member: Member
+  ): Handler.Controller = ({
+    case ("p", o) => socket ! Ping(uid, o)
   }: Handler.Controller) orElse lila.chat.Socket.in(
-    chatId = simId,
+    chatId = Chat.Id(simId),
     member = member,
     socket = socket,
-    chat = chat)
+    chat = chat,
+    publicSource = lila.hub.actorApi.shutup.PublicSource.Simul(simId).some
+  )
 }

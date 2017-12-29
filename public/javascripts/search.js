@@ -24,13 +24,14 @@ $(function() {
       var option = [];
       option.push("<option value='" + user + "'");
       option.push(isSelected(row, "winner", user, 'req-winner'));
+      option.push(isSelected(row, "loser", user, 'req-loser'));
       option.push(isSelected(row, "whiteUser", user, 'req-white'));
       option.push(isSelected(row, "blackUser", user, 'req-black'));
       option.push(">" + user + "</option>");
       options.push(option.join(""));
     });
     $(row).find('select').html(options.join(""));
-    $(row).toggle(options.length > 1);
+    $(row).toggleNone(options.length > 1);
   }
 
   function reloadUserChoices() {
@@ -39,19 +40,19 @@ $(function() {
     });
   }
   reloadUserChoices();
-  $usernames.bind("input paste", reloadUserChoices);
+  $usernames.on("input paste", reloadUserChoices);
 
   var toggleAiLevel = function() {
     $form.find(".opponent select").each(function() {
-      $form.find(".aiLevel").toggle($(this).val() == 1);
-      $form.find(".opponentName").toggle($(this).val() != 1);
+      $form.find(".aiLevel").toggleNone($(this).val() == 1);
+      $form.find(".opponentName").toggleNone($(this).val() != 1);
     });
   };
   toggleAiLevel();
   $form.find(".opponent select").change(toggleAiLevel);
 
   var serialize = function(all) {
-    var sel = $form.find(":input");
+    var sel = $form.find("input,select");
     return (all ? sel : sel.not('[type=hidden]')).filter(function() {
       return !!this.value;
     }).serialize()
@@ -62,8 +63,9 @@ $(function() {
     var s = $(this).hasClass('download') ? serialize(true) : serialized;
     $(this).attr("href", $(this).attr("href").split('?')[0] + "?" + s);
   });
-  $result.find('.search_infinitescroll:has(.pager a)').each(function() {
-    var $next = $(this).find(".pager a:last");
+  $result.find('.search_infinitescroll').each(function() {
+    var $next = $(this).find(".pager a");
+    if (!$next.length) return;
     $next.attr("href", $next.attr("href") + "&" + serialized);
     $(this).infinitescroll({
       navSelector: ".pager",
@@ -88,6 +90,6 @@ $(function() {
       $form.submit();
     };
     $form.find("select, input[type=checkbox]").change(submit);
-    $usernames.bind("keyup", $.fp.debounce(submit, 1500));
+    $usernames.on("keyup", lichess.fp.debounce(submit, 1500));
   }
 });

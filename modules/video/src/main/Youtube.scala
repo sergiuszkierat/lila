@@ -1,7 +1,6 @@
 package lila.video
 
 import org.joda.time.DateTime
-import play.api.libs.functional.syntax._
 import play.api.libs.json._
 import play.api.libs.ws.WS
 import play.api.Play.current
@@ -10,7 +9,8 @@ private[video] final class Youtube(
     url: String,
     apiKey: String,
     max: Int,
-    api: VideoApi) {
+    api: VideoApi
+) {
 
   import Youtube._
 
@@ -31,8 +31,8 @@ private[video] final class Youtube(
         duration = Some(entry.contentDetails.seconds),
         publishedAt = entry.snippet.publishedAt.flatMap { at =>
           scala.util.Try { new DateTime(at) }.toOption
-        })
-      ).recover {
+        }
+      )).recover {
         case e: Exception => logger.warn("update all youtube", e)
       }
     }.sequenceFu.void
@@ -45,7 +45,7 @@ private[video] final class Youtube(
       "key" -> apiKey
     ).get() flatMap {
         case res if res.status == 200 => readEntries reads res.json match {
-          case JsError(err)          => fufail(err.toString)
+          case JsError(err) => fufail(err.toString)
           case JsSuccess(entries, _) => fuccess(entries.toList)
         }
         case res =>
@@ -60,26 +60,30 @@ object Youtube {
   def empty = Metadata(0, 0, None, None, None)
 
   case class Metadata(
-    views: Int,
-    likes: Int,
-    description: Option[String],
-    duration: Option[Int], // in seconds
-    publishedAt: Option[DateTime])
+      views: Int,
+      likes: Int,
+      description: Option[String],
+      duration: Option[Int], // in seconds
+      publishedAt: Option[DateTime]
+  )
 
   private[video] case class Entry(
-    id: String,
-    snippet: Snippet,
-    statistics: Statistics,
-    contentDetails: ContentDetails)
+      id: String,
+      snippet: Snippet,
+      statistics: Statistics,
+      contentDetails: ContentDetails
+  )
 
   private[video] case class Snippet(
-    description: Option[String],
-    publishedAt: Option[String])
+      description: Option[String],
+      publishedAt: Option[String]
+  )
 
   private[video] case class Statistics(
-    viewCount: String,
-    likeCount: String,
-    dislikeCount: String)
+      viewCount: String,
+      likeCount: String,
+      dislikeCount: String
+  )
 
   private val iso8601Formatter = org.joda.time.format.ISOPeriodFormat.standard()
 

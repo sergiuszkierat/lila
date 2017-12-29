@@ -1,17 +1,18 @@
 package lila.round
 
 import akka.actor._
-import akka.pattern.{ ask, pipe }
+import akka.pattern.ask
 import org.joda.time.DateTime
 import scala.concurrent.duration._
 
 import actorApi._, round._
-import chess.Color
-import lila.game.{ Game, Pov, Event }
+import chess.{ DecayingStats, Color }
+import lila.game.{ Game, Progress, Pov, Event }
 import lila.hub.actorApi.DeployPost
 import lila.hub.actorApi.map._
 import lila.hub.actorApi.round.FishnetPlay
 import lila.hub.SequentialActor
+import lila.socket.UserLagCache
 import makeTimeout.large
 
 private[round] final class Round(
@@ -24,30 +25,26 @@ private[round] final class Round(
     drawer: Drawer,
     forecastApi: ForecastApi,
     socketHub: ActorRef,
-    moretimeDuration: Duration,
-    activeTtl: Duration) extends SequentialActor {
+    /* Send a message to self,
+     * but by going through the actor map,
+     * so this actor is spaned again if it had died/expired */
+    awakeWith: Any => Unit,
+    moretimeDuration: FiniteDuration,
+    activeTtl: Duration
+) extends SequentialActor {
 
   context setReceiveTimeout activeTtl
 
-  override def preStart() {
-    context.system.lilaBus.subscribe(self, 'deploy)
-  }
-
-  override def postStop() {
-    super.postStop()
-    context.system.lilaBus.unsubscribe(self)
-  }
-
   implicit val proxy = new GameProxy(gameId)
 
-  object lags { // player lag in millis
-    var white = 0
-    var black = 0
-    def get(c: Color) = c.fold(white, black)
-    def set(c: Color, v: Int) {
-      if (c.white) white = v
-      else black = v
-    }
+  override def preStart(): Unit = {
+    context.system.lilaBus.subscribe(self, 'deploy)
+    scheduleExpiration
+  }
+
+  override def postStop(): Unit = {
+    super.postStop()
+    context.system.lilaBus.unsubscribe(self)
   }
 
   var takebackSituation = Round.TakebackSituation()
@@ -61,15 +58,15 @@ private[round] final class Round(
     case p: HumanPlay =>
       p.trace.finishFirstSegment()
       handleHumanPlay(p) { pov =>
-        if (pov.game outoftime lags.get) finisher.outOfTime(pov.game)
+        if (pov.game.outoftime(withGrace = true)) finisher.outOfTime(pov.game)
         else {
-          lags.set(pov.color, p.lag.toMillis.toInt)
-          reportNetworkLag(pov)
+          recordLagStats(pov)
           player.human(p, self)(pov)
         }
       } >>- {
         p.trace.finish()
         lila.mon.round.move.full.count()
+        scheduleExpiration
       }
 
     case FishnetPlay(uci, currentFen) => handle { game =>
@@ -90,9 +87,6 @@ private[round] final class Round(
 
     case GoBerserk(color) => handle(color) { pov =>
       pov.game.goBerserk(color) ?? { progress =>
-        messenger.system(pov.game, (_.untranslated(
-          s"${pov.color.name.capitalize} is going berserk!"
-        )))
         proxy.save(progress) >> proxy.invalidating(_ goBerserk pov) inject progress.events
       }
     }
@@ -101,26 +95,31 @@ private[round] final class Round(
       (pov.game.resignable && !pov.game.hasAi && pov.game.hasClock) ?? {
         socketHub ? Ask(pov.gameId, IsGone(!pov.color)) flatMap {
           case true => finisher.rageQuit(pov.game, Some(pov.color))
-          case _    => fuccess(List(Event.Reload))
+          case _ => fuccess(List(Event.Reload))
         }
       }
-    }
-
-    case NoStartColor(color) => handle(color) { pov =>
-      finisher.other(pov.game, _.NoStart, Some(!pov.color))
     }
 
     case DrawForce(playerId) => handle(playerId) { pov =>
       (pov.game.drawable && !pov.game.hasAi && pov.game.hasClock) ?? {
         socketHub ? Ask(pov.gameId, IsGone(!pov.color)) flatMap {
           case true => finisher.rageQuit(pov.game, None)
-          case _    => fuccess(List(Event.Reload))
+          case _ => fuccess(List(Event.Reload))
         }
       }
     }
 
-    case Outoftime => handle { game =>
-      game.outoftime(lags.get) ?? finisher.outOfTime(game)
+    // checks if any player can safely (grace) be flagged
+    case QuietFlag => handle { game =>
+      game.outoftime(withGrace = true) ?? finisher.outOfTime(game)
+    }
+
+    // flags a specific player, possibly without grace if self
+    case ClientFlag(color, from) => handle { game =>
+      (game.turnColor == color) ?? {
+        val toSelf = from has game.player(color).id
+        game.outoftime(withGrace = !toSelf) ?? finisher.outOfTime(game)
+      }
     }
 
     // exceptionally we don't block nor publish events
@@ -130,16 +129,16 @@ private[round] final class Round(
       proxy withGame { game =>
         game.abandoned ?? {
           self ! PoisonPill
-          if (game.abortable) finisher.other(game, _.Aborted)
+          if (game.abortable) finisher.other(game, _.Aborted, None)
           else finisher.other(game, _.Resign, Some(!game.player.color))
         }
       }
     }
 
-    case DrawYes(playerRef)  => handle(playerRef)(drawer.yes)
-    case DrawNo(playerRef)   => handle(playerRef)(drawer.no)
+    case DrawYes(playerRef) => handle(playerRef)(drawer.yes)
+    case DrawNo(playerRef) => handle(playerRef)(drawer.no)
     case DrawClaim(playerId) => handle(playerId)(drawer.claim)
-    case DrawForce           => handle(drawer force _)
+    case DrawForce => handle(drawer force _)
     case Cheat(color) => handle { game =>
       (game.playable && !game.imported) ?? {
         finisher.other(game, _.Cheat, Some(!color))
@@ -163,7 +162,7 @@ private[round] final class Round(
     }
 
     case RematchYes(playerRef) => handle(playerRef)(rematcher.yes)
-    case RematchNo(playerRef)  => handle(playerRef)(rematcher.no)
+    case RematchNo(playerRef) => handle(playerRef)(rematcher.no)
 
     case TakebackYes(playerRef) => handle(playerRef) { pov =>
       takebacker.yes(takebackSituation)(pov) map {
@@ -181,12 +180,14 @@ private[round] final class Round(
     }
 
     case Moretime(playerRef) => handle(playerRef) { pov =>
-      pov.game.clock.ifTrue(pov.game moretimeable !pov.color) ?? { clock =>
-        val newClock = clock.giveTime(!pov.color, moretimeDuration.toSeconds)
-        val progress = (pov.game withClock newClock) + Event.Clock(newClock)
-        messenger.system(pov.game, (_.untranslated(
-          "%s + %d seconds".format(!pov.color, moretimeDuration.toSeconds)
-        )))
+      (pov.game moretimeable !pov.color) ?? {
+        val progress =
+          if (pov.game.hasClock) giveMoretime(pov.game, List(!pov.color), moretimeDuration)
+          else pov.game.correspondenceClock.fold(Progress(pov.game)) { clock =>
+            messenger.system(pov.game, (_.untranslated(s"${!pov.color} gets more time")))
+            val p = pov.game.correspondenceGiveTime
+            p.game.correspondenceClock.map(Event.CorrespondenceClock.apply).fold(p)(p + _)
+          }
         proxy save progress inject progress.events
       }
     }
@@ -194,22 +195,18 @@ private[round] final class Round(
     case ForecastPlay(lastMove) => handle { game =>
       forecastApi.nextMove(game, lastMove) map { mOpt =>
         mOpt foreach { move =>
-          self ! HumanPlay(game.player.id, move, false, 0.seconds)
+          self ! HumanPlay(game.player.id, move, false)
         }
         Nil
       }
     }
 
     case DeployPost => handle { game =>
-      game.clock.filter(_ => game.playable) ?? { clock =>
-        val freeSeconds = 15
-        val newClock = clock.giveTime(Color.White, freeSeconds).giveTime(Color.Black, freeSeconds)
-        val progress = (game withClock newClock) + Event.Clock(newClock)
+      game.playable ?? {
+        val freeTime = 15.seconds
         messenger.system(game, (_.untranslated("Lichess has been updated")))
         messenger.system(game, (_.untranslated("Sorry for the inconvenience!")))
-        Color.all.foreach { c =>
-          messenger.system(game, (_.untranslated(s"$c + $freeSeconds seconds")))
-        }
+        val progress = giveMoretime(game, Color.all, freeTime)
         proxy save progress inject progress.events
       }
     }
@@ -217,38 +214,90 @@ private[round] final class Round(
     case AbortForMaintenance => handle { game =>
       messenger.system(game, (_.untranslated("Game aborted for server maintenance")))
       messenger.system(game, (_.untranslated("Sorry for the inconvenience!")))
-      game.playable ?? finisher.other(game, _.Aborted)
+      game.playable ?? finisher.other(game, _.Aborted, None)
     }
 
     case AbortForce => handle { game =>
-      game.playable ?? finisher.other(game, _.Aborted)
+      game.playable ?? finisher.other(game, _.Aborted, None)
+    }
+
+    case NoStart => handle { game =>
+      game.timeBeforeExpiration.exists(_.centis == 0) ?? finisher.noStart(game)
     }
   }
 
-  private def reportNetworkLag(pov: Pov) =
-    if (pov.game.turns == 20 || pov.game.turns == 21) List(lags.white, lags.black).foreach { lag =>
-      if (lag > 0) lila.mon.round.move.networkLag(lag)
+  private def giveMoretime(game: Game, colors: List[Color], duration: FiniteDuration): Progress =
+    game.clock.fold(Progress(game)) { clock =>
+      val centis = duration.toCentis
+      val newClock = colors.foldLeft(clock) {
+        case (c, color) => c.giveTime(color, centis)
+      }
+      colors.foreach { c =>
+        messenger.system(game, (_.untranslated(
+          "%s + %d seconds".format(c, duration.toSeconds)
+        )))
+      }
+      (game withClock newClock) ++ colors.map { Event.ClockInc(_, centis) }
     }
 
-  protected def handle[A](op: Game => Fu[Events]): Funit =
+  private def recordLagStats(pov: Pov) =
+    if ((pov.game.playedTurns & 30) == 10) {
+      // Triggers every 32 moves starting on ply 10.
+      // i.e. 10, 11, 42, 43, 74, 75, ...
+      for {
+        clock <- pov.game.clock
+        lt = clock.lag(pov.color)
+        lag <- lt.avgLag
+      } {
+        pov.player.userId.foreach { UserLagCache.put(_, lag) }
+        if (pov.game.playedTurns < 12) {
+          import lila.mon.round.move.{ lag => lRec }
+          lRec.avgReported(lag.centis)
+          lt.history match {
+            case h: DecayingStats => lRec.compDeviation(h.deviation.toInt)
+          }
+          for {
+            lowEst <- lt.lowEstimate
+            avgComp <- lt.avgLagComp
+            uncomp <- (lt.totalLag - lt.totalComp) / lt.lagSteps
+          } {
+            lRec.estimateError((avgComp - lowEst).centis)
+            lRec.uncomped(f"${lt.quotaGain.centis / 10}%02d")(uncomp.centis)
+            lRec.uncompedAll(uncomp.centis)
+          }
+        }
+      }
+    }
+
+  private def scheduleExpiration: Funit = proxy.game map {
+    _ ?? { game =>
+      game.timeBeforeExpiration foreach { centis =>
+        context.system.scheduler.scheduleOnce((centis.millis + 1000).millis) {
+          awakeWith(NoStart)
+        }
+      }
+    }
+  }
+
+  private def handle[A](op: Game => Fu[Events]): Funit =
     handleGame(proxy.game)(op)
 
-  protected def handle(playerId: String)(op: Pov => Fu[Events]): Funit =
-    handlePov((proxy playerPov playerId))(op)
+  private def handle(playerId: String)(op: Pov => Fu[Events]): Funit =
+    handlePov(proxy playerPov playerId)(op)
 
-  protected def handleHumanPlay(p: HumanPlay)(op: Pov => Fu[Events]): Funit =
+  private def handleHumanPlay(p: HumanPlay)(op: Pov => Fu[Events]): Funit =
     handlePov {
       p.trace.segment("fetch", "db") {
         proxy playerPov p.playerId
       }
     }(op)
 
-  protected def handle(color: Color)(op: Pov => Fu[Events]): Funit =
+  private def handle(color: Color)(op: Pov => Fu[Events]): Funit =
     handlePov(proxy pov color)(op)
 
   private def handlePov(pov: Fu[Option[Pov]])(op: Pov => Fu[Events]): Funit = publish {
     pov flatten "pov not found" flatMap { p =>
-      if (p.player.isAi) fufail("player can't play AI") else op(p)
+      if (p.player.isAi) fufail(s"player $p can't play AI") else op(p)
     }
   } recover errorHandler("handlePov")
 
@@ -260,18 +309,24 @@ private[round] final class Round(
     game flatten "game not found" flatMap op
   } recover errorHandler("handleGame")
 
-  private def publish[A](op: Fu[Events]): Funit = op.addEffect { events =>
-    if (events.nonEmpty) socketHub ! Tell(gameId, EventList(events))
-    if (events exists {
-      case e: Event.Move => e.threefold
-      case _             => false
-    }) self ! Threefold
-  }.void recover errorHandler("publish")
+  private def publish[A](op: Fu[Events]): Funit = op.map { events =>
+    if (events.nonEmpty) {
+      socketHub ! Tell(gameId, EventList(events))
+      if (events exists {
+        case e: Event.Move => e.threefold
+        case _ => false
+      }) self ! Threefold
+    }
+  }
 
   private def errorHandler(name: String): PartialFunction[Throwable, Unit] = {
-    case e: ClientError  => lila.mon.round.error.client()
-    case e: FishnetError => lila.mon.round.error.fishnet()
-    case e: Exception    => logger.warn(s"$name: ${e.getMessage}")
+    case e: ClientError =>
+      logger.info(s"Round client error $name", e)
+      lila.mon.round.error.client()
+    case e: FishnetError =>
+      logger.info(s"Round fishnet error $name", e)
+      lila.mon.round.error.fishnet()
+    case e: Exception => logger.warn(s"$name: ${e.getMessage}")
   }
 }
 
@@ -279,7 +334,8 @@ object Round {
 
   case class TakebackSituation(
       nbDeclined: Int = 0,
-      lastDeclined: Option[DateTime] = none) {
+      lastDeclined: Option[DateTime] = none
+  ) {
 
     def decline = TakebackSituation(nbDeclined + 1, DateTime.now.some)
 
@@ -289,5 +345,4 @@ object Round {
 
     def reset = TakebackSituation()
   }
-
 }

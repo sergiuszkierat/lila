@@ -4,7 +4,6 @@ import org.joda.time.DateTime
 import scala.concurrent.duration._
 
 import lila.db.dsl._
-import lila.memo.AsyncCache
 import lila.notify.{ Notification, NotifyApi }
 import lila.security.Granter
 import lila.user.{ User, UserRepo }
@@ -13,15 +12,19 @@ final class CoachApi(
     coachColl: Coll,
     reviewColl: Coll,
     photographer: Photographer,
-    notifyApi: NotifyApi) {
+    asyncCache: lila.memo.AsyncCache.Builder,
+    notifyApi: NotifyApi
+) {
 
   import BsonHandlers._
 
-  private val cache = AsyncCache.single[List[Coach]](
+  private val cache = asyncCache.single[List[Coach]](
+    name = "coach.list",
     f = coachColl.find($empty).list[Coach](),
-    timeToLive = 10 minutes)
+    expireAfter = _.ExpireAfterWrite(30 minutes)
+  )
 
-  private def all = cache(true)
+  private def all = cache.get
 
   def byId(id: Coach.Id): Fu[Option[Coach]] = all.map(_.find(_.id == id))
 
@@ -35,7 +38,7 @@ final class CoachApi(
   def findOrInit(user: User): Fu[Option[Coach.WithUser]] = Granter(_.Coach)(user) ?? {
     find(user) orElse {
       val c = Coach.WithUser(Coach make user, user)
-      coachColl.insert(c.coach) >> cache.clear inject c.some
+      coachColl.insert(c.coach) >>- cache.refresh inject c.some
     }
   }
 
@@ -46,7 +49,7 @@ final class CoachApi(
 
   def listedWithUserList: Fu[List[Coach.WithUser]] =
     all.map(_.filter(_.isListed)) flatMap { coaches =>
-      UserRepo.byIds(coaches.map(_.id.value)) map { users =>
+      UserRepo.byIdsSecondary(coaches.map(_.id.value)) map { users =>
         coaches.flatMap { coach =>
           users find coach.is filter Granter(_.Coach) map { Coach.WithUser(coach, _) }
         }
@@ -58,10 +61,10 @@ final class CoachApi(
       $id(c.coach.id),
       data(c.coach),
       upsert = true
-    ).void >> cache.clear
+    ).void >>- cache.refresh
 
   def setNbReviews(id: Coach.Id, nb: Int): Funit =
-    coachColl.update($id(id), $set("nbReviews" -> nb)).void >> cache.clear
+    coachColl.update($id(id), $set("nbReviews" -> nb)).void >>- cache.refresh
 
   private[coach] def toggleApproved(username: String, value: Boolean): Fu[String] =
     find(username) flatMap {
@@ -69,16 +72,16 @@ final class CoachApi(
       case Some(c) => coachColl.update(
         $id(c.coach.id),
         $set("approved" -> value)
-      ) >> cache.clear inject "Done!"
+      ) >>- cache.refresh inject "Done!"
     }
 
   def uploadPicture(c: Coach.WithUser, picture: Photographer.Uploaded): Funit =
     photographer(c.coach.id, picture).flatMap { pic =>
-      coachColl.update($id(c.coach.id), $set("picturePath" -> pic.path))
-    } >> cache.clear
+      coachColl.update($id(c.coach.id), $set("picturePath" -> pic.path)).void
+    } >>- cache.refresh
 
   def deletePicture(c: Coach.WithUser): Funit =
-    coachColl.update($id(c.coach.id), $unset("picturePath")) >> cache.clear
+    coachColl.update($id(c.coach.id), $unset("picturePath")).void >>- cache.refresh
 
   private def withUser(user: User)(coach: Coach): Coach.WithUser =
     Coach.WithUser(coach, user)
@@ -97,17 +100,19 @@ final class CoachApi(
             text = data.text,
             approved = false,
             createdAt = DateTime.now,
-            updatedAt = DateTime.now)
+            updatedAt = DateTime.now
+          )
           case Some(r) => r.copy(
             score = data.score,
             text = data.text,
             approved = false,
-            updatedAt = DateTime.now)
+            updatedAt = DateTime.now
+          )
         }
         if (me.troll) fuccess(review)
         else {
           reviewColl.update($id(id), review, upsert = true) >>
-            notifyApi.addNotification(Notification(
+            notifyApi.addNotification(Notification.make(
               notifies = Notification.Notifies(coach.id.value),
               content = lila.notify.CoachReview
             )) >> refreshCoachNbReviews(coach.id) inject review
@@ -116,15 +121,21 @@ final class CoachApi(
 
     def byId(id: String) = reviewColl.byId[CoachReview](id)
 
-    def isPending(user: User, coach: Coach): Fu[Boolean] =
-      reviewColl.exists(
-        $id(CoachReview.makeId(user, coach)) ++ $doc("approved" -> false)
-      )
+    def mine(user: User, coach: Coach): Fu[Option[CoachReview]] =
+      reviewColl.byId[CoachReview](CoachReview.makeId(user, coach))
 
     def approve(r: CoachReview, v: Boolean) = {
-      if (v) reviewColl.update($id(r.id), $set("approved" -> v)).void
+      if (v) reviewColl.update(
+        $id(r.id),
+        $set("approved" -> v) ++ $unset("moddedAt")
+      ).void
       else reviewColl.remove($id(r.id)).void
     } >> refreshCoachNbReviews(r.coachId)
+
+    def mod(r: CoachReview) = reviewColl.update($id(r.id), $set(
+      "approved" -> false,
+      "moddedAt" -> DateTime.now
+    )) >> refreshCoachNbReviews(r.coachId)
 
     private def refreshCoachNbReviews(id: Coach.Id): Funit =
       reviewColl.countSel($doc("coachId" -> id.value, "approved" -> true)) flatMap {
@@ -142,6 +153,14 @@ final class CoachApi(
 
     def allByCoach(c: Coach): Fu[CoachReview.Reviews] =
       findRecent($doc("coachId" -> c.id.value))
+
+    def deleteAllBy(userId: User.ID): Funit = for {
+      reviews <- reviewColl.find($doc("userId" -> userId)).list[CoachReview]
+      _ <- reviews.map { review =>
+        reviewColl.remove($doc("userId" -> review.userId)).void
+      }.sequenceFu
+      _ <- reviews.map(_.coachId).distinct.map(refreshCoachNbReviews).sequenceFu
+    } yield ()
 
     private def findRecent(selector: Bdoc): Fu[CoachReview.Reviews] =
       reviewColl.find(selector)

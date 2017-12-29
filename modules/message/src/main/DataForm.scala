@@ -19,12 +19,15 @@ private[message] final class DataForm(security: MessageSecurity) {
         }
       }),
     "subject" -> text(minLength = 3, maxLength = 100),
-    "text" -> text(minLength = 3, maxLength = 8000)
+    "text" -> text(minLength = 3, maxLength = 8000),
+    "mod" -> optional(nonEmptyText)
   )({
-      case (username, subject, text) => ThreadData(
+      case (username, subject, text, mod) => ThreadData(
         user = fetchUser(username) err "Unknown username " + username,
         subject = subject,
-        text = text)
+        text = text,
+        asMod = mod.isDefined
+      )
     })(_.export.some))
 
   def post = Form(single(
@@ -39,8 +42,10 @@ object DataForm {
   case class ThreadData(
       user: User,
       subject: String,
-      text: String) {
+      text: String,
+      asMod: Boolean
+  ) {
 
-    def export = (user.username, subject, text)
+    def export = (user.username, subject, text, asMod option "1")
   }
 }

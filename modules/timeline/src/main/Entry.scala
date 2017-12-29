@@ -13,7 +13,8 @@ case class Entry(
     typ: String,
     chan: Option[String],
     data: Bdoc,
-    date: DateTime) {
+    date: DateTime
+) {
 
   import Entry._
   import atomBsonHandlers._
@@ -21,28 +22,31 @@ case class Entry(
   def similarTo(other: Entry) = typ == other.typ && data == other.data
 
   lazy val decode: Option[Atom] = Try(typ match {
-    case "follow"       => followHandler.read(data)
-    case "team-join"    => teamJoinHandler.read(data)
-    case "team-create"  => teamCreateHandler.read(data)
-    case "forum-post"   => forumPostHandler.read(data)
-    case "note-create"  => noteCreateHandler.read(data)
-    case "tour-join"    => tourJoinHandler.read(data)
-    case "qa-question"  => qaQuestionHandler.read(data)
-    case "qa-answer"    => qaAnswerHandler.read(data)
-    case "qa-comment"   => qaCommentHandler.read(data)
-    case "game-end"     => gameEndHandler.read(data)
+    case "follow" => followHandler.read(data)
+    case "team-join" => teamJoinHandler.read(data)
+    case "team-create" => teamCreateHandler.read(data)
+    case "forum-post" => forumPostHandler.read(data)
+    case "note-create" => noteCreateHandler.read(data)
+    case "tour-join" => tourJoinHandler.read(data)
+    case "qa-question" => qaQuestionHandler.read(data)
+    case "qa-answer" => qaAnswerHandler.read(data)
+    case "qa-comment" => qaCommentHandler.read(data)
+    case "game-end" => gameEndHandler.read(data)
     case "simul-create" => simulCreateHandler.read(data)
-    case "simul-join"   => simulJoinHandler.read(data)
+    case "simul-join" => simulJoinHandler.read(data)
     case "study-create" => studyCreateHandler.read(data)
-    case "study-like"   => studyLikeHandler.read(data)
-    case "plan-start"   => planStartHandler.read(data)
-    case _              => sys error s"Unhandled atom type: $typ"
+    case "study-like" => studyLikeHandler.read(data)
+    case "plan-start" => planStartHandler.read(data)
+    case "blog-post" => blogPostHandler.read(data)
+    case _ => sys error s"Unhandled atom type: $typ"
   }) match {
     case Success(atom) => Some(atom)
     case Failure(err) =>
       lila.log("timeline").warn(err.getMessage)
       none
   }
+
+  def userIds = decode.??(_.userIds)
 
   def okForKid = decode ?? (_.okForKid)
 }
@@ -52,26 +56,26 @@ object Entry {
   case class ForUsers(entry: Entry, userIds: List[String])
 
   private def toBson[A](data: A)(implicit writer: BSONDocumentWriter[A]) = writer write data
-  private def fromBson[A](bson: Bdoc)(implicit reader: BSONDocumentReader[A]) = reader read bson
 
   private[timeline] def make(data: Atom): Entry = {
     import atomBsonHandlers._
     data match {
-      case d: Follow      => "follow" -> toBson(d)
-      case d: TeamJoin    => "team-join" -> toBson(d)
-      case d: TeamCreate  => "team-create" -> toBson(d)
-      case d: ForumPost   => "forum-post" -> toBson(d)
-      case d: NoteCreate  => "note-create" -> toBson(d)
-      case d: TourJoin    => "tour-join" -> toBson(d)
-      case d: QaQuestion  => "qa-question" -> toBson(d)
-      case d: QaAnswer    => "qa-answer" -> toBson(d)
-      case d: QaComment   => "qa-comment" -> toBson(d)
-      case d: GameEnd     => "game-end" -> toBson(d)
+      case d: Follow => "follow" -> toBson(d)
+      case d: TeamJoin => "team-join" -> toBson(d)
+      case d: TeamCreate => "team-create" -> toBson(d)
+      case d: ForumPost => "forum-post" -> toBson(d)
+      case d: NoteCreate => "note-create" -> toBson(d)
+      case d: TourJoin => "tour-join" -> toBson(d)
+      case d: QaQuestion => "qa-question" -> toBson(d)
+      case d: QaAnswer => "qa-answer" -> toBson(d)
+      case d: QaComment => "qa-comment" -> toBson(d)
+      case d: GameEnd => "game-end" -> toBson(d)
       case d: SimulCreate => "simul-create" -> toBson(d)
-      case d: SimulJoin   => "simul-join" -> toBson(d)
+      case d: SimulJoin => "simul-join" -> toBson(d)
       case d: StudyCreate => "study-create" -> toBson(d)(studyCreateHandler)
-      case d: StudyLike   => "study-like" -> toBson(d)(studyLikeHandler)
-      case d: PlanStart   => "plan-start" -> toBson(d)(planStartHandler)
+      case d: StudyLike => "study-like" -> toBson(d)(studyLikeHandler)
+      case d: PlanStart => "plan-start" -> toBson(d)(planStartHandler)
+      case d: BlogPost => "blog-post" -> toBson(d)(blogPostHandler)
     }
   } match {
     case (typ, bson) =>
@@ -94,6 +98,7 @@ object Entry {
     implicit val studyCreateHandler = Macros.handler[StudyCreate]
     implicit val studyLikeHandler = Macros.handler[StudyLike]
     implicit val planStartHandler = Macros.handler[PlanStart]
+    implicit val blogPostHandler = Macros.handler[BlogPost]
   }
 
   object atomJsonWrite {
@@ -112,22 +117,24 @@ object Entry {
     implicit val studyCreateWrite = Json.writes[StudyCreate]
     implicit val studyLikeWrite = Json.writes[StudyLike]
     implicit val planStartWrite = Json.writes[PlanStart]
+    implicit val blogPostWrite = Json.writes[BlogPost]
     implicit val atomWrite = Writes[Atom] {
-      case d: Follow      => followWrite writes d
-      case d: TeamJoin    => teamJoinWrite writes d
-      case d: TeamCreate  => teamCreateWrite writes d
-      case d: ForumPost   => forumPostWrite writes d
-      case d: NoteCreate  => noteCreateWrite writes d
-      case d: TourJoin    => tourJoinWrite writes d
-      case d: QaQuestion  => qaQuestionWrite writes d
-      case d: QaAnswer    => qaAnswerWrite writes d
-      case d: QaComment   => qaCommentWrite writes d
-      case d: GameEnd     => gameEndWrite writes d
+      case d: Follow => followWrite writes d
+      case d: TeamJoin => teamJoinWrite writes d
+      case d: TeamCreate => teamCreateWrite writes d
+      case d: ForumPost => forumPostWrite writes d
+      case d: NoteCreate => noteCreateWrite writes d
+      case d: TourJoin => tourJoinWrite writes d
+      case d: QaQuestion => qaQuestionWrite writes d
+      case d: QaAnswer => qaAnswerWrite writes d
+      case d: QaComment => qaCommentWrite writes d
+      case d: GameEnd => gameEndWrite writes d
       case d: SimulCreate => simulCreateWrite writes d
-      case d: SimulJoin   => simulJoinWrite writes d
+      case d: SimulJoin => simulJoinWrite writes d
       case d: StudyCreate => studyCreateWrite writes d
-      case d: StudyLike   => studyLikeWrite writes d
-      case d: PlanStart   => planStartWrite writes d
+      case d: StudyLike => studyLikeWrite writes d
+      case d: PlanStart => planStartWrite writes d
+      case d: BlogPost => blogPostWrite writes d
     }
   }
 
@@ -138,6 +145,7 @@ object Entry {
     Json.obj(
       "type" -> e.typ,
       "data" -> e.decode,
-      "date" -> e.date)
+      "date" -> e.date
+    )
   }
 }

@@ -8,7 +8,8 @@ final class FutureSequencer(
     system: ActorSystem,
     receiveTimeout: Option[FiniteDuration],
     executionTimeout: Option[FiniteDuration] = None,
-    logger: lila.log.Logger) {
+    logger: lila.log.Logger
+) {
 
   import FutureSequencer._
 
@@ -28,14 +29,15 @@ object FutureSequencer {
 
   import scala.util.Try
 
-  case class Timeout(duration: FiniteDuration) extends lila.common.LilaException {
+  case class Timeout(duration: FiniteDuration) extends lila.base.LilaException {
     val message = s"FutureSequencer timed out after $duration"
   }
 
   private final class FSequencer(
       receiveTimeout: Option[FiniteDuration],
       executionTimeout: Option[FiniteDuration] = None,
-      logger: lila.log.Logger) extends Actor {
+      logger: lila.log.Logger
+  ) extends Actor {
 
     receiveTimeout.foreach(context.setReceiveTimeout)
 
@@ -49,7 +51,7 @@ object FutureSequencer {
     private def busy: Receive = {
 
       case Done => dequeue match {
-        case None       => context become idle
+        case None => context become idle
         case Some(work) => processThenDone(work)
       }
 
@@ -63,7 +65,7 @@ object FutureSequencer {
 
     private case object Done
 
-    private def processThenDone(work: Any) {
+    private def processThenDone(work: Any): Unit = {
       work match {
         case ReceiveTimeout => self ! PoisonPill
         case FSequencer.Work(run, promise, timeoutOption) =>
@@ -72,7 +74,7 @@ object FutureSequencer {
               duration = timeout,
               error = Timeout(timeout)
             )(context.system)
-          }.andThenAnyway {
+          }.addEffectAnyway {
             self ! Done
           }
         case FSequencer.WithQueueSize(f) =>
@@ -88,14 +90,16 @@ object FutureSequencer {
   private object FSequencer {
 
     case class Work[A](
-      run: () => Fu[A],
-      promise: Promise[A],
-      timeout: Option[FiniteDuration] = None)
+        run: () => Fu[A],
+        promise: Promise[A],
+        timeout: Option[FiniteDuration] = None
+    )
 
     def work[A](
       run: => Fu[A],
       promise: Promise[A],
-      timeout: Option[FiniteDuration] = None): Work[A] = Work(() => run, promise, timeout)
+      timeout: Option[FiniteDuration] = None
+    ): Work[A] = Work(() => run, promise, timeout)
 
     case class WithQueueSize(f: Int => Unit)
   }

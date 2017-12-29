@@ -4,6 +4,14 @@ import scala.concurrent.duration._
 
 object Future {
 
+  def fold[T, R](list: List[T])(zero: R)(op: (R, T) => Fu[R]): Fu[R] =
+    list match {
+      case head :: rest => op(zero, head) flatMap { res =>
+        fold(rest)(res)(op)
+      }
+      case Nil => fuccess(zero)
+    }
+
   def lazyFold[T, R](futures: Stream[Fu[T]])(zero: R)(op: (R, T) => R): Fu[R] =
     Stream.cons.unapply(futures).fold(fuccess(zero)) {
       case (future, rest) => future flatMap { f =>
@@ -11,22 +19,16 @@ object Future {
       }
     }
 
-  def filter[A](list: List[A])(f: A => Fu[Boolean]): Fu[List[A]] = {
-    list.map {
-      element => f(element) map (_ option element)
-    }.sequenceFu.map(_.flatten)
-  }
-
   def filterNot[A](list: List[A])(f: A => Fu[Boolean]): Fu[List[A]] = {
     list.map {
-      element => !f(element) map (_ option element)
-    }.sequenceFu.map(_.flatten)
+      element => !f(element) dmap (_ option element)
+    }.sequenceFu.dmap(_.flatten)
   }
 
   def traverseSequentially[A, B](list: List[A])(f: A => Fu[B]): Fu[List[B]] =
     list match {
       case h :: t => f(h).flatMap { r =>
-        traverseSequentially(t)(f) map (r +: _)
+        traverseSequentially(t)(f) dmap (r +: _)
       }
       case Nil => fuccess(Nil)
     }
@@ -34,17 +36,31 @@ object Future {
   def applySequentially[A](list: List[A])(f: A => Funit): Funit =
     list match {
       case h :: t => f(h) >> applySequentially(t)(f)
-      case Nil    => funit
+      case Nil => funit
     }
 
   def find[A](list: List[A])(f: A => Fu[Boolean]): Fu[Option[A]] = list match {
     case Nil => fuccess(none)
     case h :: t => f(h).flatMap {
-      case true  => fuccess(h.some)
+      case true => fuccess(h.some)
       case false => find(t)(f)
     }
   }
 
+  def exists[A](list: List[A])(pred: A => Fu[Boolean]): Fu[Boolean] = find(list)(pred).map(_.isDefined)
+
   def delay[A](duration: FiniteDuration)(run: => Fu[A])(implicit system: akka.actor.ActorSystem): Fu[A] =
-    akka.pattern.after(duration, system.scheduler)(run)
+    if (duration == 0.millis) run
+    else akka.pattern.after(duration, system.scheduler)(run)
+
+  def makeItLast[A](duration: FiniteDuration)(run: => Fu[A])(implicit system: akka.actor.ActorSystem): Fu[A] =
+    if (duration == 0.millis) run
+    else run zip akka.pattern.after(duration, system.scheduler)(funit) dmap (_._1)
+
+  def retry[T](op: => Fu[T], delay: FiniteDuration, retries: Int, logger: lila.log.Logger)(implicit system: akka.actor.ActorSystem): Fu[T] =
+    op recoverWith {
+      case e if retries > 0 =>
+        logger.info(s"$retries retries - ${e.getMessage}")
+        akka.pattern.after(delay, system.scheduler)(retry(op, delay, retries - 1, logger))
+    }
 }

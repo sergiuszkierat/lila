@@ -8,7 +8,7 @@ object JsonView {
     Json.obj(
       "dark" -> p.dark,
       "transp" -> p.transp,
-      "bgImg" -> p.bgImg,
+      "bgImg" -> p.bgImgOrDefault,
       "is3d" -> p.is3d,
       "theme" -> p.theme,
       "pieceSet" -> p.pieceSet,
@@ -33,11 +33,12 @@ object JsonView {
       "challenge" -> p.challenge,
       "message" -> p.message,
       "coordColor" -> p.coordColor,
-      "puzzleDifficulty" -> p.puzzleDifficulty,
       "submitMove" -> p.submitMove,
       "confirmResign" -> p.confirmResign,
       "insightShare" -> p.insightShare,
       "keyboardMove" -> p.keyboardMove,
-      "moveEvent" -> p.moveEvent)
+      "zen" -> p.zen,
+      "moveEvent" -> p.moveEvent
+    )
   }
 }

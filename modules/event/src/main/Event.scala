@@ -1,8 +1,7 @@
 package lila.event
 
 import org.joda.time.DateTime
-
-import lila.db.dsl._
+import play.api.i18n.Lang
 
 case class Event(
     _id: String,
@@ -11,11 +10,13 @@ case class Event(
     description: Option[String],
     homepageHours: Int,
     url: String,
+    lang: Lang,
     enabled: Boolean,
     createdBy: Event.UserId,
     createdAt: DateTime,
     startsAt: DateTime,
-    finishesAt: DateTime) {
+    finishesAt: DateTime
+) {
 
   def willStartLater = startsAt isAfter DateTime.now
 
@@ -25,7 +26,9 @@ case class Event(
 
   def featureSince = startsAt minusHours homepageHours
 
-  def featureNow = featureSince.isBefore(DateTime.now) && !isFinished
+  def featureNow = featureSince.isBefore(DateTime.now) && !isFinishedSoon
+
+  def isFinishedSoon = finishesAt.isBefore(DateTime.now plusMinutes 5)
 
   def isFinished = finishesAt.isBefore(DateTime.now)
 
@@ -38,7 +41,7 @@ case class Event(
 
 object Event {
 
-  def makeId = ornicar.scalalib.Random nextStringUppercase 8
+  def makeId = ornicar.scalalib.Random nextString 8
 
   case class UserId(value: String) extends AnyVal
 }

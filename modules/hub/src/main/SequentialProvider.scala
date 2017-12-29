@@ -6,7 +6,7 @@ import scala.util.Try
 import akka.actor._
 import akka.pattern.pipe
 
-import lila.common.LilaException
+import lila.base.LilaException
 
 trait SequentialProvider extends Actor {
 
@@ -22,8 +22,6 @@ trait SequentialProvider extends Actor {
 
   def debug = false
   lazy val name = ornicar.scalalib.Random nextString 4
-
-  val windowCount = new lila.common.WindowCount(1 second)
 
   private def idle: Receive = {
 
@@ -51,10 +49,10 @@ trait SequentialProvider extends Actor {
   private val queue = collection.mutable.Queue[Envelope]()
   private def dequeue: Option[Any] = Try(queue.dequeue).toOption
 
-  private def debugQueue {
+  private def debugQueue: Unit = {
     if (debug) queue.size match {
       case size if (size == 50 || (size >= 100 && size % 100 == 0)) =>
-        logger.branch("SequentialProvider").warn(s"Seq[$name] queue = $size, mps = ${windowCount.get}")
+        logger.branch("SequentialProvider").warn(s"Seq[$name] queue = $size")
       case _ =>
     }
   }
@@ -65,15 +63,14 @@ trait SequentialProvider extends Actor {
     case _ => fuccess(Status.Failure)
   }
 
-  private def processThenDone(signal: Any) {
-    windowCount.add
+  private def processThenDone(signal: Any): Unit = {
     signal match {
       // we don't want to send Done after actor death
       case SequentialProvider.Terminate => self ! PoisonPill
       case Envelope(msg, replyTo) =>
         (process orElse fallback)(msg)
           .withTimeout(futureTimeout, LilaException(s"Sequential provider timeout: $futureTimeout"))(context.system)
-          .pipeTo(replyTo) andThenAnyway { self ! Done }
+          .pipeTo(replyTo) addEffectAnyway { self ! Done }
       case x => logger.branch("SequentialProvider").warn(s"should never have received $x")
     }
   }

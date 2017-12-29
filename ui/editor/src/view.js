@@ -1,7 +1,7 @@
-var chessground = require('chessground');
-var partial = chessground.util.partial;
+var chessground = require('./chessground');
+var dragNewPiece = require('chessground/drag').dragNewPiece;
+var eventPosition = require('chessground/util').eventPosition;
 var editor = require('./editor');
-var drag = require('./drag');
 var m = require('mithril');
 
 function castleCheckBox(ctrl, id, label, reversed) {
@@ -20,10 +20,32 @@ function optgroup(name, opts) {
   }, opts);
 }
 
+function studyButton(ctrl, fen) {
+  return m('form', {
+    method: 'post',
+    action: '/study/as'
+  }, [
+    m('input[type=hidden][name=orientation]', {
+      value: ctrl.bottomColor()
+    }),
+    m('input[type=hidden][name=variant]', {
+      value: 'standard'
+    }),
+    m('input[type=hidden][name=fen]', {
+      value: fen
+    }),
+    m('button.button.text', {
+      type: 'submit',
+      'data-icon': '4',
+      disabled: !ctrl.positionLooksLegit()
+    },
+    'Study')
+  ]);
+}
+
 function controls(ctrl, fen) {
   var positionIndex = ctrl.positionIndex[fen.split(' ')[0]];
   var currentPosition = ctrl.data.positions && positionIndex !== -1 ? ctrl.data.positions[positionIndex] : null;
-  var encodedFen = fen.replace(/\s/g, '_');
   var position2option = function(pos) {
     return {
       tag: 'option',
@@ -31,9 +53,10 @@ function controls(ctrl, fen) {
         value: pos.fen,
         selected: currentPosition && currentPosition.fen === pos.fen
       },
-      children: [pos.name]
+      children: [pos.eco ? pos.eco + " " + pos.name : pos.name]
     };
-  }
+  };
+  var looksLegit = ctrl.positionLooksLegit();
   return m('div.editor-side', [
     ctrl.embed ? null : m('div', [
       ctrl.data.positions ? m('select.positions', {
@@ -41,14 +64,14 @@ function controls(ctrl, fen) {
           ctrl.loadNewFen(e.target.value);
         }
       }, [
-        optgroup('Set the board', [
+        optgroup(ctrl.trans('setTheBoard'), [
           currentPosition ? null : m('option', {
             value: fen,
             selected: true
-          }, '- Position -'),
+          }, '- ' + ctrl.trans('boardEditor') + ' -'),
           ctrl.extraPositions.map(position2option)
         ]),
-        optgroup('Popular openings',
+        optgroup(ctrl.trans('popularOpenings'),
           ctrl.data.positions.map(position2option)
         )
       ]) : null
@@ -68,11 +91,11 @@ function controls(ctrl, fen) {
         m('strong', ctrl.trans('castling')),
         m('div', [
           castleCheckBox(ctrl, 'K', ctrl.trans('whiteCastlingKingside'), ctrl.options.inlineCastling),
-          castleCheckBox(ctrl, 'Q', ctrl.trans('whiteCastlingQueenside'), true)
+          castleCheckBox(ctrl, 'Q', 'O-O-O', true)
         ]),
         m('div', [
           castleCheckBox(ctrl, 'k', ctrl.trans('blackCastlingKingside'), ctrl.options.inlineCastling),
-          castleCheckBox(ctrl, 'q', ctrl.trans('blackCastlingQueenside'), true)
+          castleCheckBox(ctrl, 'q', 'O-O-O', true)
         ])
       ])
     ]),
@@ -83,34 +106,40 @@ function controls(ctrl, fen) {
       m('a.button.frameless', {
         onclick: ctrl.clearBoard
       }, 'Empty board')
-    ]) : m('div', [
-      m('a.button.text[data-icon=B]', {
-        onclick: ctrl.chessground.toggleOrientation
-      }, ctrl.trans('flipBoard')),
-      ctrl.positionLooksLegit() ? m('a.button.text[data-icon="A"]', {
-        href: editor.makeUrl('/analysis/', fen),
-        rel: 'nofollow'
-      }, ctrl.trans('analysis')) : m('span.button.disabled.text[data-icon="A"]', {
-        rel: 'nofollow'
-      }, ctrl.trans('analysis')),
-      m('a.button', {
+    ]) : [
+      m('div', [
+        m('a.button.text[data-icon=B]', {
           onclick: function() {
-            $.modal($('.continue_with'));
+            ctrl.chessground.toggleOrientation();
+          }
+        }, ctrl.trans('flipBoard')),
+        looksLegit ? m('a.button.text[data-icon="A"]', {
+          href: editor.makeUrl('/analysis/', fen),
+          rel: 'nofollow'
+        }, ctrl.trans('analysis')) : m('span.button.disabled.text[data-icon="A"]', {
+          rel: 'nofollow'
+        }, ctrl.trans('analysis')),
+        m('a.button', {
+          class: looksLegit ? '' : 'disabled',
+          onclick: function() {
+            if (ctrl.positionLooksLegit()) $.modal($('.continue_with'));
           }
         },
-        m('span.text[data-icon=U]', ctrl.trans('continueFromHere')))
-    ]),
-    ctrl.embed ? null : m('div.continue_with', [
-      m('a.button', {
-        href: '/?fen=' + encodedFen + '#ai',
-        rel: 'nofollow'
-      }, ctrl.trans('playWithTheMachine')),
-      m('br'),
-      m('a.button', {
-        href: '/?fen=' + encodedFen + '#friend',
-        rel: 'nofollow'
-      }, ctrl.trans('playWithAFriend'))
-    ])
+        m('span.text[data-icon=U]', ctrl.trans('continueFromHere'))),
+        studyButton(ctrl, fen)
+      ]),
+      m('div.continue_with', [
+        m('a.button', {
+          href: '/?fen=' + fen + '#ai',
+          rel: 'nofollow'
+        }, ctrl.trans('playWithTheMachine')),
+        m('br'),
+        m('a.button', {
+          href: '/?fen=' + fen + '#friend',
+          rel: 'nofollow'
+        }, ctrl.trans('playWithAFriend'))
+      ])
+    ]
   ]);
 }
 
@@ -136,40 +165,115 @@ function inputs(ctrl, fen) {
   ]);
 }
 
+// can be 'pointer', 'trash', or [color, role]
+function selectedToClass(s) {
+  return (s === 'pointer' || s === 'trash') ? s : s.join(' ');
+}
+
+var lastTouchMovePos;
+
 function sparePieces(ctrl, color, orientation, position) {
+
+  var selectedClass = selectedToClass(ctrl.vm.selected());
+
+  var pieces = ['king', 'queen', 'rook', 'bishop', 'knight', 'pawn'].map(function(role) {
+    return [color, role];
+  });
+
   return m('div', {
     class: ['spare', position, 'orientation-' + orientation, color].join(' ')
-  }, ['king', 'queen', 'rook', 'bishop', 'knight', 'pawn'].map(function(role) {
-    return m('div.no-square', m('piece', {
-      class: color + ' ' + role,
-      'data-color': color,
-      'data-role': role
-    }))
+  }, ['pointer'].concat(pieces).concat('trash').map(function(s) {
+
+    var className = selectedToClass(s);
+
+    var attrs = {
+      class: className
+    };
+
+    var containerClass = 'no-square' +
+      (
+        (
+          selectedClass === className &&
+            (
+              !ctrl.chessground ||
+              !ctrl.chessground.state.draggable.current ||
+              !ctrl.chessground.state.draggable.current.newPiece
+            )
+        ) ?
+        ' selected-square' : ''
+      );
+
+      if (s === 'trash') {
+        attrs['data-icon'] = 'q';
+        containerClass += ' trash';
+      } else if (s !== 'pointer') {
+        attrs['data-color'] = s[0];
+        attrs['data-role'] = s[1];
+      }
+
+      return m('div', {
+        class: containerClass,
+        onmousedown: onSelectSparePiece(ctrl, s, 'mouseup'),
+        ontouchstart: onSelectSparePiece(ctrl, s, 'touchend'),
+        ontouchmove: function(e) {
+          lastTouchMovePos = eventPosition(e)
+        }
+      }, m('piece', attrs));
   }));
+}
+
+function onSelectSparePiece(ctrl, s, upEvent) {
+  return function(e) {
+    if (['pointer', 'trash'].indexOf(s) !== -1) {
+      ctrl.vm.selected(s);
+    } else {
+      ctrl.vm.selected('pointer');
+
+      if (e.type === 'touchstart') {
+        e.preventDefault();
+      }
+
+      dragNewPiece(ctrl.chessground.state, {
+        color: s[0],
+        role: s[1]
+      }, e, true);
+
+      document.addEventListener(upEvent, function(e) {
+        var eventPos = eventPosition(e) || lastTouchMovePos;
+
+        if (eventPos && ctrl.chessground.getKeyAtDomPos(eventPos)) {
+          ctrl.vm.selected('pointer');
+        } else {
+          ctrl.vm.selected(s);
+        }
+        m.redraw();
+      }, {once: true});
+    }
+  };
+}
+
+function makeCursor(selected) {
+
+  if (selected === 'pointer') return 'pointer';
+
+  var name = selected === 'trash' ? 'trash' : selected.join('-');
+  var url = lichess.assetUrl('/assets/cursors/' + name + '.cur');
+
+  return 'url(' + url + '), default !important';
 }
 
 var eventNames = ['mousedown', 'touchstart'];
 
 module.exports = function(ctrl) {
   var fen = ctrl.computeFen();
-  var color = ctrl.chessground.data.orientation;
+  var color = ctrl.bottomColor();
   var opposite = color === 'white' ? 'black' : 'white';
+
   return m('div.editor', {
-    config: function(el, isUpdate, context) {
-      if (isUpdate) return;
-      var onstart = partial(drag, ctrl);
-      eventNames.forEach(function(name) {
-        document.addEventListener(name, onstart);
-      });
-      context.onunload = function() {
-        eventNames.forEach(function(name) {
-          document.removeEventListener(name, onstart);
-        });
-      };
-    }
+    style: 'cursor: ' + makeCursor(ctrl.vm.selected())
   }, [
     sparePieces(ctrl, opposite, color, 'top'),
-    chessground.view(ctrl.chessground),
+    chessground(ctrl),
     sparePieces(ctrl, color, color, 'bottom'),
     controls(ctrl, fen),
     inputs(ctrl, fen)

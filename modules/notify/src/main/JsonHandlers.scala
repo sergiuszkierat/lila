@@ -3,8 +3,7 @@ package lila.notify
 import lila.common.LightUser
 import play.api.libs.json._
 
-final class JSONHandlers(
-    getLightUser: LightUser.Getter) {
+final class JSONHandlers(getLightUser: LightUser.GetterSync) {
 
   implicit val privateMessageThreadWrites = Json.writes[PrivateMessage.Thread]
   implicit val qaQuestionWrites = Json.writes[QaAnswer.Question]
@@ -16,36 +15,50 @@ final class JSONHandlers(
         case MentionedInThread(mentionedBy, topic, _, category, postId) => Json.obj(
           "mentionedBy" -> getLightUser(mentionedBy.value),
           "topic" -> topic.value, "category" -> category.value,
-          "postId" -> postId.value)
+          "postId" -> postId.value
+        )
         case InvitedToStudy(invitedBy, studyName, studyId) => Json.obj(
           "invitedBy" -> getLightUser(invitedBy.value),
           "studyName" -> studyName.value,
-          "studyId" -> studyId.value)
+          "studyId" -> studyId.value
+        )
         case PrivateMessage(senderId, thread, text) => Json.obj(
           "sender" -> getLightUser(senderId.value),
           "thread" -> privateMessageThreadWrites.writes(thread),
-          "text" -> text.value)
+          "text" -> text.value
+        )
         case QaAnswer(answeredBy, question, answerId) => Json.obj(
           "answerer" -> getLightUser(answeredBy.value),
           "question" -> question,
-          "answerId" -> answerId.value)
+          "answerId" -> answerId.value
+        )
         case TeamJoined(id, name) => Json.obj(
           "id" -> id.value,
-          "name" -> name.value)
-        case NewBlogPost(id, slug, title) => Json.obj(
-          "id" -> id.value,
-          "slug" -> slug.value,
-          "title" -> title.value)
+          "name" -> name.value
+        )
         case LimitedTournamentInvitation | ReportedBanned | CoachReview => Json.obj()
+        case TitledTournamentInvitation(id, text) => Json.obj(
+          "id" -> id,
+          "text" -> text
+        )
         case GameEnd(gameId, opponentId, win) => Json.obj(
           "id" -> gameId.value,
           "opponent" -> opponentId.map(_.value).flatMap(getLightUser),
-          "win" -> win.map(_.value))
-        case _: PlanStart  => Json.obj()
+          "win" -> win.map(_.value)
+        )
+        case _: PlanStart => Json.obj()
         case _: PlanExpire => Json.obj()
         case RatingRefund(perf, points) => Json.obj(
           "perf" -> perf,
-          "points" -> points)
+          "points" -> points
+        )
+        case CorresAlarm(gameId, opponent) => Json.obj(
+          "id" -> gameId,
+          "op" -> opponent
+        )
+        case IrwinDone(userId) => Json.obj(
+          "user" -> getLightUser(userId)
+        )
       }
     }
 
@@ -53,7 +66,8 @@ final class JSONHandlers(
       "content" -> writeBody(notification.content),
       "type" -> notification.content.key,
       "read" -> notification.read.value,
-      "date" -> notification.createdAt)
+      "date" -> notification.createdAt
+    )
   }
 
   import lila.common.paginator.PaginatorJson._
@@ -64,7 +78,8 @@ final class JSONHandlers(
 
     def writes(newNotification: NewNotification) = Json.obj(
       "notification" -> newNotification.notification,
-      "unread" -> newNotification.unreadNotifications)
+      "unread" -> newNotification.unreadNotifications
+    )
   }
 }
 

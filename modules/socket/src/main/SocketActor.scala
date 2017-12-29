@@ -1,21 +1,20 @@
 package lila.socket
 
 import scala.concurrent.duration._
-import scala.concurrent.Future
 import scala.util.Random
 
 import akka.actor.{ Deploy => _, _ }
 import play.api.libs.json._
-import play.twirl.api.Html
 
 import actorApi._
+import chess.Centis
 import lila.common.LightUser
-import lila.hub.actorApi.{ Deploy, GetUids, SocketUids, HasUserId }
+import lila.hub.actorApi.{ Deploy, HasUserId }
 import lila.memo.ExpireSetMemo
 
 abstract class SocketActor[M <: SocketMember](uidTtl: Duration) extends Socket with Actor {
 
-  val members = scala.collection.mutable.Map.empty[String, M]
+  val members = scala.collection.mutable.AnyRefMap.empty[String, M]
   val aliveUids = new ExpireSetMemo(uidTtl)
   var pong = initialPong
 
@@ -26,7 +25,7 @@ abstract class SocketActor[M <: SocketMember](uidTtl: Duration) extends Socket w
   // to ensure the listener is ready (sucks, I know)
   val startsOnApplicationBoot: Boolean = false
 
-  override def preStart {
+  override def preStart: Unit = {
     if (startsOnApplicationBoot)
       context.system.scheduler.scheduleOnce(1 second) {
         lilaBus.publish(lila.socket.SocketHub.Open(self), 'socket)
@@ -34,10 +33,10 @@ abstract class SocketActor[M <: SocketMember](uidTtl: Duration) extends Socket w
     else lilaBus.publish(lila.socket.SocketHub.Open(self), 'socket)
   }
 
-  override def postStop() {
+  override def postStop(): Unit = {
     super.postStop()
     lilaBus.publish(lila.socket.SocketHub.Close(self), 'socket)
-    members.keys foreach eject
+    members foreachKey eject
   }
 
   // to be defined in subclassing actor
@@ -46,145 +45,150 @@ abstract class SocketActor[M <: SocketMember](uidTtl: Duration) extends Socket w
   // generic message handler
   def receiveGeneric: Receive = {
 
-    case Ping(uid)         => ping(uid)
+    case Ping(uid, _, lagCentis) => ping(uid, lagCentis)
 
-    case Broom             => broom
+    case Broom => broom
 
     // when a member quits
-    case Quit(uid)         => quit(uid)
-
-    case GetUids           => sender ! SocketUids(members.keySet.toSet)
+    case Quit(uid) => quit(uid)
 
     case HasUserId(userId) => sender ! members.values.exists(_.userId.contains(userId))
 
-    case Resync(uid)       => resync(uid)
+    case Resync(uid) => resync(uid)
 
-    case d: Deploy         => onDeploy(d)
+    case d: Deploy => onDeploy(d)
   }
 
   def receive = receiveSpecific orElse receiveGeneric
 
-  def notifyAll[A: Writes](t: String, data: A) {
+  def notifyAll[A: Writes](t: String, data: A): Unit =
     notifyAll(makeMessage(t, data))
-  }
 
-  def notifyAll(t: String) {
+  def notifyAll(t: String): Unit =
     notifyAll(makeMessage(t))
-  }
 
-  def notifyAll(msg: JsObject) {
-    members.values.foreach(_ push msg)
-  }
+  def notifyAll(msg: JsObject): Unit =
+    members.foreachValue(_ push msg)
 
-  def notifyIf[A: Writes](pred: SocketMember => Boolean, t: String, data: A) {
-    val msg = makeMessage(t, data)
-    members.values.filter(pred).foreach(_ push msg)
-  }
+  def notifyIf(msg: JsObject)(condition: M => Boolean): Unit =
+    members.foreachValue { member =>
+      if (condition(member)) member push msg
+    }
 
-  def notifyAllAsync[A: Writes](t: String, data: A) = Future {
-    notifyAll(t, data)
-  }
-
-  def notifyAllAsync(t: String) = Future {
-    notifyAll(t)
-  }
-
-  def notifyAllAsync(msg: JsObject) = Future {
-    notifyAll(msg)
-  }
-
-  def notifyMember[A: Writes](t: String, data: A)(member: M) {
+  def notifyMember[A: Writes](t: String, data: A)(member: M): Unit = {
     member push makeMessage(t, data)
   }
 
-  def notifyUid[A: Writes](t: String, data: A)(uid: Socket.Uid) {
+  def notifyUid[A: Writes](t: String, data: A)(uid: Socket.Uid): Unit = {
     withMember(uid.value)(_ push makeMessage(t, data))
   }
 
-  def ping(uid: String) {
+  def ping(uid: String, lagCentis: Option[Centis]): Unit = {
     setAlive(uid)
-    withMember(uid)(_ push pong)
-  }
-
-  def broom {
-    members.keys foreach { uid =>
-      if (!aliveUids.get(uid)) eject(uid)
+    withMember(uid) { member =>
+      member push pong
+      for {
+        lc <- lagCentis
+        user <- member.userId
+      } UserLagCache.put(user, lc)
     }
   }
 
-  def eject(uid: String) {
+  private val monitoredTimeout = Set("jannlee", "yasser-seirawan", "isaacly", "thibault")
+
+  def broom: Unit = {
+    members.keys foreach { uid =>
+      if (!aliveUids.get(uid)) {
+        for { // Does people time out here?
+          member <- members get uid
+          userId <- member.userId
+          if monitoredTimeout(userId)
+        } {
+          lila.mon.socket.eject(userId)
+          lila.mon.socket.ejectAll()
+        }
+        eject(uid)
+      }
+    }
+  }
+
+  def eject(uid: String): Unit = {
     withMember(uid) { member =>
       member.end
       quit(uid)
     }
   }
 
-  def quit(uid: String) {
+  def quit(uid: String): Unit = {
     members get uid foreach { member =>
       members -= uid
       lilaBus.publish(SocketLeave(uid, member), 'socketDoor)
     }
   }
 
-  def onDeploy(d: Deploy) {
+  def onDeploy(d: Deploy): Unit = {
     notifyAll(makeMessage(d.key))
   }
 
   private val resyncMessage = makeMessage("resync")
 
-  protected def resync(member: M) {
+  protected def resync(member: M): Unit = {
     import scala.concurrent.duration._
     context.system.scheduler.scheduleOnce((Random nextInt 2000).milliseconds) {
       resyncNow(member)
     }
   }
 
-  protected def resync(uid: String) {
+  protected def resync(uid: String): Unit = {
     withMember(uid)(resync)
   }
 
-  protected def resyncNow(member: M) {
+  protected def resyncNow(member: M): Unit = {
     member push resyncMessage
   }
 
-  def addMember(uid: String, member: M) {
+  def addMember(uid: String, member: M): Unit = {
     eject(uid)
     members += (uid -> member)
     setAlive(uid)
     lilaBus.publish(SocketEnter(uid, member), 'socketDoor)
   }
 
-  def setAlive(uid: String) { aliveUids put uid }
+  def setAlive(uid: String): Unit = { aliveUids put uid }
 
   def membersByUserId(userId: String): Iterable[M] = members collect {
     case (_, member) if member.userId.contains(userId) => member
   }
 
-  def uidToUserId(uid: Socket.Uid): Option[String] = members get uid.value flatMap (_.userId)
-
-  def userIds: Iterable[String] = members.values.flatMap(_.userId)
-
-  val maxSpectatorUsers = 10
-
-  def showSpectators(lightUser: String => Option[LightUser])(watchers: Iterable[SocketMember]): JsValue = {
-
-    val (total, anons, userIds) = watchers.foldLeft((0, 0, Set.empty[String])) {
-      case ((total, anons, userIds), member) => member.userId match {
-        case Some(userId) if !userIds(userId) && userIds.size < maxSpectatorUsers => (total + 1, anons, userIds + userId)
-        case Some(_) => (total + 1, anons, userIds)
-        case _ => (total + 1, anons + 1, userIds)
-      }
-    }
-
-    if (total == 0) JsNull
-    else if (userIds.size >= maxSpectatorUsers) Json.obj("nb" -> total)
-    else Json.obj(
-      "nb" -> total,
-      "users" -> userIds.flatMap { lightUser(_) }.map(_.titleName),
-      "anons" -> anons)
+  def firstMemberByUserId(userId: String): Option[M] = members collectFirst {
+    case (_, member) if member.userId.contains(userId) => member
   }
 
-  def withMember(uid: String)(f: M => Unit) {
+  def uidToUserId(uid: Socket.Uid): Option[String] = members get uid.value flatMap (_.userId)
+
+  val maxSpectatorUsers = 15
+
+  def showSpectators(lightUser: LightUser.Getter)(watchers: Iterable[SocketMember]): Fu[JsValue] = watchers.size match {
+    case 0 => fuccess(JsNull)
+    case s if s > maxSpectatorUsers => fuccess(Json.obj("nb" -> s))
+    case s => {
+      val userIdsWithDups = watchers.toSeq.flatMap(_.userId)
+      val anons = s - userIdsWithDups.size
+      val userIds = userIdsWithDups.distinct
+
+      val total = anons + userIds.size
+
+      userIds.map(lightUser).sequenceFu.map { users =>
+        Json.obj(
+          "nb" -> total,
+          "users" -> users.flatten.map(_.titleName),
+          "anons" -> anons
+        )
+      }
+    }
+  }
+
+  def withMember(uid: String)(f: M => Unit): Unit = {
     members get uid foreach f
   }
 }

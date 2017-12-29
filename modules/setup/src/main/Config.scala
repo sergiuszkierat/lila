@@ -1,7 +1,6 @@
 package lila.setup
 
-import chess.format.Forsyth
-import chess.{ Game => ChessGame, Board, Situation, Clock, Speed }
+import chess.{ Game => ChessGame, Situation, Clock, Speed }
 
 import lila.game.Game
 import lila.lobby.Color
@@ -31,7 +30,7 @@ private[setup] trait Config {
   lazy val creatorColor = color.resolve
 
   def makeGame(v: chess.variant.Variant): ChessGame =
-    ChessGame(board = Board init v, clock = makeClock)
+    ChessGame(situation = Situation(v), clock = makeClock.map(_.toClock))
 
   def makeGame: ChessGame = makeGame(variant)
 
@@ -42,7 +41,7 @@ private[setup] trait Config {
   def makeClock = hasClock option justMakeClock
 
   protected def justMakeClock =
-    Clock((time * 60).toInt, clockHasTime.fold(increment, 1))
+    Clock.Config((time * 60).toInt, clockHasTime.fold(increment, 1))
 
   def makeDaysPerTurn: Option[Int] = (timeMode == TimeMode.Correspondence) option days
 }
@@ -62,25 +61,26 @@ trait Positional { self: Config =>
   def fenGame(builder: ChessGame => Game): Game = {
     val baseState = fen ifTrue (variant == chess.variant.FromPosition) flatMap Forsyth.<<<
     val (chessGame, state) = baseState.fold(makeGame -> none[SituationPlus]) {
-      case sit@SituationPlus(Situation(board, color), _) =>
+      case sit @ SituationPlus(s, _) =>
         val game = ChessGame(
-          board = board,
-          player = color,
+          situation = s,
           turns = sit.turns,
           startedAtTurn = sit.turns,
-          clock = makeClock)
+          clock = makeClock.map(_.toClock)
+        )
         if (Forsyth.>>(game) == Forsyth.initial) makeGame(chess.variant.Standard) -> none
         else game -> baseState
     }
     val game = builder(chessGame)
     state.fold(game) {
-      case sit@SituationPlus(Situation(board, _), _) => game.copy(
+      case sit @ SituationPlus(Situation(board, _), _) => game.copy(
         variant = chess.variant.FromPosition,
         castleLastMoveTime = game.castleLastMoveTime.copy(
           lastMove = board.history.lastMove.map(_.origDest),
           castles = board.history.castles
         ),
-        turns = sit.turns)
+        turns = sit.turns
+      )
     }
   }
 }
@@ -93,14 +93,23 @@ trait BaseConfig {
 
   val variantsWithFen = variants :+ chess.variant.FromPosition.id
   val aiVariants = variants :+
+    chess.variant.Crazyhouse.id :+
     chess.variant.KingOfTheHill.id :+
     chess.variant.ThreeCheck.id :+
+    chess.variant.Antichess.id :+
     chess.variant.Atomic.id :+
     chess.variant.Horde.id :+
     chess.variant.RacingKings.id :+
     chess.variant.FromPosition.id
   val variantsWithVariants =
-    variants :+ chess.variant.Crazyhouse.id :+ chess.variant.KingOfTheHill.id :+ chess.variant.ThreeCheck.id :+ chess.variant.Antichess.id :+ chess.variant.Atomic.id :+ chess.variant.Horde.id :+ chess.variant.RacingKings.id
+    variants :+
+      chess.variant.Crazyhouse.id :+
+      chess.variant.KingOfTheHill.id :+
+      chess.variant.ThreeCheck.id :+
+      chess.variant.Antichess.id :+
+      chess.variant.Atomic.id :+
+      chess.variant.Horde.id :+
+      chess.variant.RacingKings.id
   val variantsWithFenAndVariants =
     variantsWithVariants :+ chess.variant.FromPosition.id
 
@@ -108,7 +117,7 @@ trait BaseConfig {
 
   private val timeMin = 0
   private val timeMax = 180
-  private val acceptableFractions = Set(1/2d, 3/4d, 3/2d)
+  private val acceptableFractions = Set(1 / 4d, 1 / 2d, 3 / 4d, 3 / 2d)
   def validateTime(t: Double) =
     t >= timeMin && t <= timeMax && (t.isWhole || acceptableFractions(t))
 

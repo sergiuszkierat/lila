@@ -13,16 +13,18 @@ final class CoachPager(api: CoachApi) {
       Paginator.fromList(
         list = all sortWith order.predicate,
         currentPage = page,
-        maxPerPage = maxPerPage)
+        maxPerPage = maxPerPage
+      )
     }
 }
 
 object CoachPager {
 
   sealed abstract class Order(
-    val key: String,
-    val name: String,
-    val predicate: (Coach.WithUser, Coach.WithUser) => Boolean)
+      val key: String,
+      val name: String,
+      val predicate: (Coach.WithUser, Coach.WithUser) => Boolean
+  )
 
   object Order {
     case object Login extends Order("login", "Last login",

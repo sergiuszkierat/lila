@@ -1,11 +1,9 @@
 package lila.lobby
 
-import akka.actor.ActorRef
-import chess.{ Game => ChessGame, Board, Mode, Clock, Color => ChessColor }
-import org.joda.time.DateTime
+import chess.{ Game => ChessGame, Situation, Color => ChessColor }
 
-import actorApi.{ RemoveHook, BiteHook, BiteSeek, JoinHook, JoinSeek, LobbyUser }
-import lila.game.{ GameRepo, Game, Player, Pov, Progress, PerfPicker }
+import actorApi.{ JoinHook, JoinSeek }
+import lila.game.{ GameRepo, Game, Player, PerfPicker }
 import lila.user.{ User, UserRepo }
 
 private[lobby] object Biter {
@@ -27,7 +25,10 @@ private[lobby] object Biter {
       blame(creatorColor, ownerOption, makeGame(hook))
     ).start
     _ ← GameRepo insertDenormalized game
-  } yield JoinHook(uid, hook, game, creatorColor)
+  } yield {
+    lila.mon.lobby.hook.join()
+    JoinHook(uid, hook, game, creatorColor)
+  }
 
   private def join(seek: Seek, lobbyUser: LobbyUser): Fu[JoinSeek] = for {
     user ← UserRepo byId lobbyUser.id flatten s"No such user: ${lobbyUser.id}"
@@ -43,10 +44,11 @@ private[lobby] object Biter {
   private def assignCreatorColor(
     creatorUser: Option[User],
     joinerUser: Option[User],
-    color: Color): Fu[chess.Color] = color match {
+    color: Color
+  ): Fu[chess.Color] = color match {
     case Color.Random => UserRepo.firstGetsWhite(creatorUser.map(_.id), joinerUser.map(_.id)) map chess.Color.apply
-    case Color.White  => fuccess(chess.White)
-    case Color.Black  => fuccess(chess.Black)
+    case Color.White => fuccess(chess.White)
+    case Color.Black => fuccess(chess.Black)
   }
 
   private def blame(color: ChessColor, userOption: Option[User], game: Game) =
@@ -56,40 +58,41 @@ private[lobby] object Biter {
 
   private def makeGame(hook: Hook) = Game.make(
     game = ChessGame(
-      board = Board init hook.realVariant,
-      clock = hook.clock.some),
+      situation = Situation(hook.realVariant),
+      clock = hook.clock.toClock.some
+    ),
     whitePlayer = Player.white,
     blackPlayer = Player.black,
     mode = hook.realMode,
     variant = hook.realVariant,
     source = lila.game.Source.Lobby,
-    pgnImport = None)
+    pgnImport = None
+  )
 
   private def makeGame(seek: Seek) = Game.make(
     game = ChessGame(
-      board = Board init seek.realVariant,
-      clock = none),
+      situation = Situation(seek.realVariant),
+      clock = none
+    ),
     whitePlayer = Player.white,
     blackPlayer = Player.black,
     mode = seek.realMode,
     variant = seek.realVariant,
     source = lila.game.Source.Lobby,
     daysPerTurn = seek.daysPerTurn,
-    pgnImport = None)
+    pgnImport = None
+  )
 
   def canJoin(hook: Hook, user: Option[LobbyUser]): Boolean =
-    hook.realMode.casual.fold(
-      user.isDefined || hook.allowAnon,
-      user ?? { _.lame == hook.lame }
-    ) &&
-      !(user ?? (u => hook.userId contains u.id)) &&
-      !(hook.userId ?? (user ?? (_.blocking)).contains) &&
-      !(user.map(_.id) ?? (hook.user ?? (_.blocking)).contains) &&
-      hook.realRatingRange.fold(true) { range =>
-        user ?? { u =>
-          (hook.perfType map (_.key) flatMap u.ratingMap.get) ?? range.contains
+    hook.isAuth == user.isDefined && user.fold(true) { u =>
+      u.lame == hook.lame &&
+        !hook.userId.contains(u.id) &&
+        !hook.userId.??(u.blocking.contains) &&
+        !hook.user.??(_.blocking).contains(u.id) &&
+        hook.realRatingRange.fold(true) { range =>
+          (hook.perfType map u.ratingAt) ?? range.contains
         }
-      }
+    }
 
   def canJoin(seek: Seek, user: LobbyUser): Boolean =
     seek.user.id != user.id &&
@@ -97,6 +100,9 @@ private[lobby] object Biter {
       !(user.blocking contains seek.user.id) &&
       !(seek.user.blocking contains user.id) &&
       seek.realRatingRange.fold(true) { range =>
-        (seek.perfType map (_.key) flatMap user.ratingMap.get) ?? range.contains
+        (seek.perfType map user.ratingAt) ?? range.contains
       }
+
+  @inline final def showHookTo(hook: Hook, member: actorApi.Member): Boolean =
+    hook.uid == member.uid || canJoin(hook, member.user)
 }

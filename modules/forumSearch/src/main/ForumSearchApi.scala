@@ -1,8 +1,5 @@
 package lila.forumSearch
 
-import reactivemongo.api.Cursor
-
-import lila.forum.actorApi._
 import lila.forum.{ Post, PostView, PostLiteView, PostApi, PostRepo }
 import lila.search._
 
@@ -10,7 +7,8 @@ import play.api.libs.json._
 
 final class ForumSearchApi(
     client: ESClient,
-    postApi: PostApi) extends SearchReadApi[PostView, Query] {
+    postApi: PostApi
+) extends SearchReadApi[PostView, Query] {
 
   def search(query: Query, from: From, size: Size) =
     client.search(query, from, size) flatMap { res =>
@@ -33,20 +31,35 @@ final class ForumSearchApi(
     Fields.topicId -> view.topic.id,
     Fields.staff -> view.post.isStaff,
     Fields.troll -> view.post.troll,
-    Fields.date -> view.post.createdAt.getDate)
+    Fields.date -> view.post.createdAt
+  )
+
+  import reactivemongo.play.iteratees.cursorProducer
 
   def reset = client match {
     case c: ESClientHttp => c.putMapping >> {
-      lila.log("forumSearch").info(s"Index to ${c.index.name}")
+      import play.api.libs.iteratee._
+      import reactivemongo.api.ReadPreference
       import lila.db.dsl._
-
-      PostRepo.cursor($empty).foldBulksM({}) { (_, posts) =>
-        for {
-          views <- postApi liteViews posts.toList
-          _ <- c.storeBulk(views map (v => Id(v.post.id) -> toDoc(v)))
-        } yield Cursor.Cont({})
-      }
-    }
+      logger.info(s"Index to ${c.index.name}")
+      val batchSize = 500
+      val maxEntries = Int.MaxValue
+      PostRepo.cursor(
+        selector = $empty,
+        readPreference = ReadPreference.secondaryPreferred
+      )
+        .enumerator(maxEntries) &>
+        Enumeratee.grouped(Iteratee takeUpTo batchSize) |>>>
+        Iteratee.foldM[Seq[Post], Int](0) {
+          case (nb, posts) => for {
+            views <- postApi liteViews posts.toList
+            _ <- c.storeBulk(views map (v => Id(v.post.id) -> toDoc(v)))
+          } yield {
+            logger.info(s"Indexed $nb forum posts")
+            nb + posts.size
+          }
+        }
+    } >> client.refresh
 
     case _ => funit
   }

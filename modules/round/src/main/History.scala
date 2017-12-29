@@ -1,16 +1,12 @@
 package lila.round
 
-import scala.concurrent.duration._
-
-import actorApi._
-import akka.actor._
 import org.joda.time.DateTime
+import reactivemongo.api.commands.GetLastError
 import reactivemongo.bson._
 
 import lila.db.BSON.BSONJodaDateTimeHandler
 import lila.db.dsl._
 import lila.game.Event
-import lila.socket.actorApi.GetVersion
 
 /**
  * NOT THREAD SAFE
@@ -19,7 +15,8 @@ import lila.socket.actorApi.GetVersion
 private[round] final class History(
     load: Fu[VersionedEvents],
     persist: VersionedEvents => Unit,
-    withPersistence: Boolean) {
+    withPersistence: Boolean
+) {
 
   private var events: VersionedEvents = _
 
@@ -37,7 +34,7 @@ private[round] final class History(
     else if (v == version) Some(Nil)
     else events.takeWhile(_.version > v).reverse.some filter {
       case first :: rest => first.version == v + 1
-      case _             => true
+      case _ => true
     }
   }
 
@@ -51,7 +48,7 @@ private[round] final class History(
     vevs.reverse
   }
 
-  private def waitForLoadedEvents {
+  private def waitForLoadedEvents: Unit = {
     if (events == null) {
       events = load awaitSeconds 3
     }
@@ -59,7 +56,7 @@ private[round] final class History(
 
   private var persistenceEnabled = withPersistence
 
-  def enablePersistence {
+  def enablePersistence: Unit = {
     if (!persistenceEnabled) {
       persistenceEnabled = true
       if (events != null) persist(events)
@@ -74,7 +71,8 @@ private[round] object History {
   def apply(coll: Coll)(gameId: String, withPersistence: Boolean): History = new History(
     load = serverStarting ?? load(coll, gameId, withPersistence),
     persist = persist(coll, gameId) _,
-    withPersistence = withPersistence)
+    withPersistence = withPersistence
+  )
 
   private def serverStarting = !lila.common.PlayApp.startedSinceMinutes(5)
 
@@ -86,12 +84,14 @@ private[round] object History {
       case _ =>
     }
 
-  private def persist(coll: Coll, gameId: String)(vevs: List[VersionedEvent]) {
-    if (vevs.nonEmpty) coll.uncheckedUpdate(
+  private def persist(coll: Coll, gameId: String)(vevs: List[VersionedEvent]) =
+    if (vevs.nonEmpty) coll.update(
       $doc("_id" -> gameId),
       $doc(
         "$set" -> $doc("e" -> vevs.reverse),
-        "$setOnInsert" -> $doc("d" -> DateTime.now)),
-      upsert = true)
-  }
+        "$setOnInsert" -> $doc("d" -> DateTime.now)
+      ),
+      upsert = true,
+      writeConcern = GetLastError.Unacknowledged
+    )
 }

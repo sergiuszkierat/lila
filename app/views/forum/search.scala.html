@@ -1,6 +1,6 @@
 @(text: String, views: Paginator[lila.forum.PostView])(implicit ctx: Context)
 
-@title = @{ trans.search.str() + " \"" + text.trim + "\"" }
+@title = @{ trans.search.txt() + " \"" + text.trim + "\"" }
 
 @forum.layout(
 title = title,
@@ -25,10 +25,10 @@ searchText = text
     <tr class="paginated_element">
       <td>
         <a class="post" href="@routes.ForumPost.redirect(view.post.id)">@view.categ.name - @view.topic.name #@view.post.number</a>
-        <p>@shortenWithBr(view.post.text, 200)</p>
+        <p>@lila.common.String.html.shortenWithBr(view.post.text, 200)</p>
       </td>
       <td class="info">
-        @momentFormat(view.post.createdAt) by @authorLink(view.post)
+        @momentFromNow(view.post.createdAt) by @authorLink(view.post)
       </td>
     </tr>
     }

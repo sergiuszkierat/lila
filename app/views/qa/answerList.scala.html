@@ -33,7 +33,7 @@
     <div class="content">
       <div class="answer">
         <div class="meta">
-          <span class="light">Answered @momentFromNow(a.createdAt) by @userIdLink(a.userId.some)</span>
+          <span class="light">Answered @momentFromNow(a.createdAt) by @userIdLink(userIdOption=a.userId.some, modIcon=a.displayModIcon)</span>
           @if(lila.qa.QaAuth canEdit a) {
           <a class="thin button toggle-edit-answer" data-icon="m"> Edit</a>
           }
@@ -66,7 +66,7 @@
         </form>
         }
         <div class="comments" id="answer-@a.id-comments">
-          @views.html.qa.commentList(q, a.comments, routes.QaComment.answer(q.id, a.id).url)
+          @views.html.qa.commentList(q, a.comments.sorted, routes.QaComment.answer(q.id, a.id).url)
         </div>
       </div>
     </div>

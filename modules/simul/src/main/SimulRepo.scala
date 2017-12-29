@@ -8,8 +8,6 @@ import chess.Status
 import chess.variant.Variant
 import lila.db.BSON
 import lila.db.dsl._
-import lila.game.{ Game, GameRepo }
-import lila.user.{ User, UserRepo }
 
 private[simul] final class SimulRepo(simulColl: Coll) {
 
@@ -24,7 +22,11 @@ private[simul] final class SimulRepo(simulColl: Coll) {
     def read(bsonInt: BSONInteger): Variant = Variant(bsonInt.value) err s"No such variant: ${bsonInt.value}"
     def write(x: Variant) = BSONInteger(x.id)
   }
-  private implicit val ClockBSONHandler = Macros.handler[SimulClock]
+  private implicit val ClockBSONHandler = {
+    import chess.Clock.Config
+    implicit val clockHandler = Macros.handler[Config]
+    Macros.handler[SimulClock]
+  }
   private implicit val PlayerBSONHandler = Macros.handler[SimulPlayer]
   private implicit val ApplicantBSONHandler = Macros.handler[SimulApplicant]
   private implicit val SimulPairingBSONHandler = new BSON[SimulPairing] {
@@ -33,13 +35,15 @@ private[simul] final class SimulRepo(simulColl: Coll) {
       gameId = r str "gameId",
       status = r.get[Status]("status"),
       wins = r boolO "wins",
-      hostColor = r.strO("hostColor").flatMap(chess.Color.apply) | chess.White)
+      hostColor = r.strO("hostColor").flatMap(chess.Color.apply) | chess.White
+    )
     def writes(w: BSON.Writer, o: SimulPairing) = $doc(
       "player" -> o.player,
       "gameId" -> o.gameId,
       "status" -> o.status,
       "wins" -> o.wins,
-      "hostColor" -> o.hostColor.name)
+      "hostColor" -> o.hostColor.name
+    )
   }
 
   private implicit val SimulBSONHandler = Macros.handler[Simul]
@@ -51,6 +55,9 @@ private[simul] final class SimulRepo(simulColl: Coll) {
 
   def find(id: Simul.ID): Fu[Option[Simul]] =
     simulColl.byId[Simul](id)
+
+  def byIds(ids: List[Simul.ID]): Fu[List[Simul]] =
+    simulColl.byIds[Simul](ids)
 
   def exists(id: Simul.ID): Fu[Boolean] =
     simulColl.exists($id(id))
@@ -103,5 +110,7 @@ private[simul] final class SimulRepo(simulColl: Coll) {
 
   def cleanup = simulColl.remove(
     createdSelect ++ $doc(
-      "createdAt" -> $doc("$lt" -> (DateTime.now minusMinutes 60))))
+      "createdAt" -> $doc("$lt" -> (DateTime.now minusMinutes 60))
+    )
+  )
 }

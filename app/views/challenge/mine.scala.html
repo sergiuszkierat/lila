@@ -1,4 +1,4 @@
-@(c: lila.challenge.Challenge, json: play.api.libs.json.JsObject)(implicit ctx: Context)
+@(c: lila.challenge.Challenge, json: play.api.libs.json.JsObject, error: Option[String])(implicit ctx: Context)
 
 @import lila.challenge.Challenge.Status
 
@@ -12,7 +12,8 @@
 title = challengeTitle(c),
 side = Html(""),
 openGraph = challengeOpenGraph(c).some,
-moreJs = js(c, json, true)) {
+moreJs = js(c, json, true),
+moreCss = cssTag("challenge.css")) {
 <div class="lichess_game" id="challenge">
   <div class="lichess_board_wrap cg-512">
     <div class="lichess_overboard padded">
@@ -27,11 +28,22 @@ moreJs = js(c, json, true)) {
         @cancelForm
         }.getOrElse {
         @trans.toInviteSomeoneToPlayGiveThisUrl():
-        <input id="lichess_id_input" class="copyable autoselect" spellcheck="false" readonly="true" value="@protocol@commonDomain@routes.Round.watcher(c.id, "white")" />
+        <input id="lichess_id_input" class="copyable autoselect" spellcheck="false" readonly="true" value="@netBaseUrl@routes.Round.watcher(c.id, "white")" />
         <button class="copy button" data-rel="lichess_id_input" data-icon="&quot;"></button>
         <br />
         @trans.theFirstPersonToComeOnThisUrlWillPlayWithYou()
-        <br /><br />
+        <br />
+        @if(ctx.isAuth) {
+        <br />
+        Or invite a lichess user:<br />
+        <form class="user-invite" action="@routes.Challenge.toFriend(c.id)" method="POST">
+          <input name="username" class="friend-autocomplete" placeholder="@trans.search()" />
+          @error.map { e =>
+          <p style="color: red">@e</p>
+          }
+        </form>
+        <br />
+        }
         @cancelForm
         }
         @c.initialFen.map { fen =>

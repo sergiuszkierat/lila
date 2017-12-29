@@ -13,12 +13,15 @@ sealed trait ESClient {
   def deleteById(id: Id): Funit
 
   def deleteByIds(ids: List[Id]): Funit
+
+  def refresh: Funit
 }
 
 final class ESClientHttp(
     endpoint: String,
     val index: Index,
-    writeable: Boolean) extends ESClient {
+    writeable: Boolean
+) extends ESClient {
   import play.api.libs.ws.WS
   import play.api.Play.current
 
@@ -48,17 +51,21 @@ final class ESClientHttp(
       case (Id(id), doc) => id -> JsString(Json.stringify(doc))
     }))
 
+  def refresh =
+    HTTP(s"refresh/${index.name}", Json.obj())
+
   private[search] def HTTP[D: Writes, R](url: String, data: D, read: String => R): Fu[R] =
     WS.url(s"$endpoint/$url").post(Json toJson data) flatMap {
       case res if res.status == 200 => fuccess(read(res.body))
-      case res                      => fufail(s"$url ${res.status}")
+      case res => fufail(s"$url ${res.status}")
     }
   private[search] def HTTP(url: String, data: JsObject): Funit = HTTP(url, data, _ => ())
 
   private def monitor[A](op: String)(f: Fu[A]) =
     f.mon(_.search.client(op)).addEffects(
       _ => lila.mon.search.failure(op)(),
-      _ => lila.mon.search.success(op)())
+      _ => lila.mon.search.success(op)()
+    )
 }
 
 final class ESClientStub extends ESClient {
@@ -69,4 +76,5 @@ final class ESClientStub extends ESClient {
   def deleteById(id: Id) = funit
   def deleteByIds(ids: List[Id]) = funit
   def putMapping = funit
+  def refresh = funit
 }

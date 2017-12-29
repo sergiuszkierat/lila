@@ -1,10 +1,13 @@
 package lila.blog
 
 import io.prismic._
-import lila.memo.AsyncCache
 import scala.concurrent.duration._
 
-final class BlogApi(prismicUrl: String, collection: String) {
+final class BlogApi(
+    asyncCache: lila.memo.AsyncCache.Builder,
+    prismicUrl: String,
+    collection: String
+) {
 
   def recent(api: Api, ref: Option[String], nb: Int): Fu[Option[Response]] =
     api.forms(collection).ref(resolveRef(api)(ref) | api.master.ref)
@@ -27,7 +30,7 @@ final class BlogApi(prismicUrl: String, collection: String) {
     ref.map(_.trim).filterNot(_.isEmpty).flatMap { reqRef =>
       api.refs.values.collectFirst {
         case r if r.label == reqRef => r.ref
-        case r if r.ref == reqRef   => r.ref
+        case r if r.ref == reqRef => r.ref
       }
     }
 
@@ -35,14 +38,16 @@ final class BlogApi(prismicUrl: String, collection: String) {
   private val prismicLogger = (level: Symbol, message: String) => level match {
     case 'DEBUG => logger debug message
     case 'ERROR => logger error message
-    case _      => logger info message
+    case _ => logger info message
   }
 
-  private val fetchPrismicApi = AsyncCache.single[Api](
+  private val fetchPrismicApi = asyncCache.single[Api](
+    name = "blogApi.fetchPrismicApi",
     f = Api.get(prismicUrl, cache = cache, logger = prismicLogger),
-    timeToLive = 10 seconds)
+    expireAfter = _.ExpireAfterWrite(15 seconds)
+  )
 
-  def prismicApi = fetchPrismicApi(true)
+  def prismicApi = fetchPrismicApi.get
 }
 
 object BlogApi {

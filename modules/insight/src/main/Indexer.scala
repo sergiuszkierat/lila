@@ -10,12 +10,9 @@ import lila.db.dsl._
 import lila.game.BSONHandlers.gameBSONHandler
 import lila.game.{ Game, GameRepo, Query }
 import lila.hub.Sequencer
-import lila.rating.PerfType
 import lila.user.User
 
 private final class Indexer(storage: Storage, sequencer: ActorRef) {
-
-  private implicit val timeout = makeTimeout minutes 5
 
   def all(user: User): Funit = {
     val p = scala.concurrent.Promise[Unit]()
@@ -26,11 +23,11 @@ private final class Indexer(storage: Storage, sequencer: ActorRef) {
   def update(game: Game, userId: String, previous: Entry): Funit =
     PovToEntry(game, userId, previous.provisional) flatMap {
       case Right(e) => storage update e.copy(number = previous.number)
-      case _        => funit
+      case _ => funit
     }
 
   private def compute(user: User): Funit = storage.fetchLast(user.id) flatMap {
-    case None    => fromScratch(user)
+    case None => fromScratch(user)
     case Some(e) => computeFrom(user, e.date plusSeconds 1, e.number + 1)
   }
 
@@ -63,6 +60,8 @@ private final class Indexer(storage: Storage, sequencer: ActorRef) {
       .uno[Game]
 
   private def computeFrom(user: User, from: DateTime, fromNumber: Int): Funit = {
+    import reactivemongo.play.iteratees.cursorProducer
+
     storage nbByPerf user.id flatMap { nbs =>
       var nbByPerf = nbs
       def toEntry(game: Game): Fu[Option[Entry]] = game.perfType ?? { pt =>
@@ -71,11 +70,11 @@ private final class Indexer(storage: Storage, sequencer: ActorRef) {
         PovToEntry(game, user.id, provisional = nb < 10).addFailureEffect { e =>
           println(e)
           e.printStackTrace
-        } map (_.toOption)
+        } map (_.right.toOption)
       }
       val query = gameQuery(user) ++ $doc(Game.BSONFields.createdAt $gte from)
       GameRepo.sortedCursor(query, Query.sortChronological)
-        .enumerate(maxGames, stopOnError = true) &>
+        .enumerator(maxGames) &>
         Enumeratee.grouped(Iteratee takeUpTo 4) &>
         Enumeratee.mapM[Seq[Game]].apply[Seq[Entry]] { games =>
           games.map(toEntry).sequenceFu.map(_.flatten).addFailureEffect { e =>

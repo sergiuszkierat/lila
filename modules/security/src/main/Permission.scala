@@ -16,6 +16,7 @@ object Permission {
   case object ChatTimeout extends Permission("ROLE_CHAT_TIMEOUT")
   case object UserSpy extends Permission("ROLE_USER_SPY")
   case object UserEvaluate extends Permission("ROLE_USER_EVALUATE")
+  case object ViewPrivateComms extends Permission("ROLE_VIEW_PRIVATE_COMS")
   case object MarkTroll extends Permission("ROLE_CHAT_BAN", List(UserSpy, ChatTimeout))
   case object MarkEngine extends Permission("ROLE_ADJUST_CHEATER", List(UserSpy))
   case object MarkBooster extends Permission("ROLE_ADJUST_BOOSTER", List(UserSpy))
@@ -27,8 +28,8 @@ object Permission {
   case object SeeReport extends Permission("ROLE_SEE_REPORT")
   case object SeeInsight extends Permission("ROLE_SEE_INSIGHT")
   case object StreamConfig extends Permission("ROLE_STREAM_CONFIG")
+  case object PracticeConfig extends Permission("ROLE_PRACTICE_CONFIG")
   case object Beta extends Permission("ROLE_BETA")
-  case object GuineaPig extends Permission("ROLE_GUINEA_PIG")
   case object MessageAnyone extends Permission("ROLE_MESSAGE_ANYONE")
   case object UserSearch extends Permission("ROLE_USER_SEARCH")
   case object CloseTeam extends Permission("ROLE_CLOSE_TEAM")
@@ -36,30 +37,46 @@ object Permission {
   case object ManageTournament extends Permission("ROLE_MANAGE_TOURNAMENT")
   case object ManageEvent extends Permission("ROLE_MANAGE_EVENT")
   case object ChangePermission extends Permission("ROLE_CHANGE_PERMISSION")
-  case object PublicMod extends Permission("ROLE_PUBLIC_MOD", List(GuineaPig))
-  case object Developer extends Permission("ROLE_DEVELOPER", List(GuineaPig))
+  case object PublicMod extends Permission("ROLE_PUBLIC_MOD")
+  case object Developer extends Permission("ROLE_DEVELOPER")
   case object Coach extends Permission("ROLE_COACH")
   case object PreviewCoach extends Permission("ROLE_PREVIEW_COACH")
+  case object ModNote extends Permission("ROLE_MOD_NOTE")
+  case object RemoveRanking extends Permission("ROLE_REMOVE_RANKING")
+  case object ReportBan extends Permission("ROLE_REPORT_BAN")
+  case object ModMessage extends Permission("ROLE_MOD_MESSAGE")
+  case object Impersonate extends Permission("ROLE_IMPERSONATE")
+  case object DisapproveCoachReview extends Permission("ROLE_DISAPPROVE_COACH_REVIEW")
+  case object PayPal extends Permission("ROLE_PAYPAL")
+  case object Relay extends Permission("ROLE_RELAY")
+  case object Cli extends Permission("ROLE_ClI")
+  case object Settings extends Permission("ROLE_SETTINGS")
 
   case object Hunter extends Permission("ROLE_HUNTER", List(
     ViewBlurs, MarkEngine, MarkBooster, StaffForum,
-    UserSpy, UserEvaluate, SeeReport, Beta, SeeInsight,
-    UserSearch, GuineaPig))
+    UserSpy, UserEvaluate, SeeReport, SeeInsight,
+    UserSearch, ModNote, RemoveRanking, ModMessage
+  ))
 
   case object Admin extends Permission("ROLE_ADMIN", List(
-    Hunter, ModerateForum, IpBan, CloseAccount, ReopenAccount,
+    Hunter, ModerateForum, IpBan, CloseAccount, ReopenAccount, ViewPrivateComms,
     ChatTimeout, MarkTroll, SetTitle, SetEmail, ModerateQa, StreamConfig,
     MessageAnyone, CloseTeam, TerminateTournament, ManageTournament, ManageEvent,
-    GuineaPig, PreviewCoach))
+    PreviewCoach, PracticeConfig, RemoveRanking, ReportBan, Beta, DisapproveCoachReview,
+    Relay
+  ))
 
   case object SuperAdmin extends Permission("ROLE_SUPER_ADMIN", List(
-    Admin, ChangePermission, PublicMod, Developer))
+    Admin, ChangePermission, Developer, Impersonate, PayPal, Cli, Settings
+  ))
 
   lazy val allButSuperAdmin: List[Permission] = List(
     Admin, Hunter, MarkTroll, ChatTimeout, ChangePermission, ViewBlurs, StaffForum, ModerateForum,
-    UserSpy, MarkEngine, MarkBooster, IpBan, ModerateQa, StreamConfig,
+    UserSpy, MarkEngine, MarkBooster, IpBan, ModerateQa, StreamConfig, PracticeConfig,
     Beta, MessageAnyone, UserSearch, CloseTeam, TerminateTournament, ManageTournament, ManageEvent,
-    PublicMod, Developer, Coach, PreviewCoach, GuineaPig)
+    PublicMod, Developer, Coach, PreviewCoach, ModNote, RemoveRanking, ReportBan,
+    Relay, Cli, Settings
+  )
 
   lazy private val all: List[Permission] = SuperAdmin :: allButSuperAdmin
 
@@ -67,7 +84,7 @@ object Permission {
 
   def apply(name: String): Option[Permission] = allByName get name
 
-  def apply(names: List[String]): List[Permission] = (names map apply).flatten
+  def apply(names: List[String]): List[Permission] = names flatMap { apply(_) }
 
   def exists(name: String) = allByName contains name
 }

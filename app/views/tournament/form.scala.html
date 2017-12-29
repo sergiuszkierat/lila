@@ -1,4 +1,4 @@
-@(form: Form[_], config: lila.tournament.DataForm)(implicit ctx: Context)
+@(form: Form[_], config: lila.tournament.DataForm, me: User)(implicit ctx: Context)
 
 @import config._
 @import lila.tournament.DataForm._
@@ -16,9 +16,7 @@ moreJs = moreJs) {
 
     <form class="plain create content_box_content" action="@routes.Tournament.create" method="POST">
       <input type="hidden" name="@form("system").id" value="1" />
-      @form.globalError.map { error =>
-      <p class="error">@error.message</p>
-      }
+      @globalError(form)
       <table>
         <tr>
           <th><label for="isprivate">@trans.isPrivate()</label></th>
@@ -28,6 +26,19 @@ moreJs = moreJs) {
           <th><label for="@form("password").id">@trans.password()</label></th>
           <td>@base.form.input(form("password"))</td>
         </tr>
+        @if(lila.tournament.DataForm.canPickName(me)) {
+        <tr class="name">
+          <th><label for="@form("name").id">@trans.name()</label></th>
+          <td>
+            <style>.tournament_box form.create input[name=name] { width: 15em!important; }</style>
+            @base.form.input(form("name")) Arena<br />
+            @errMsg(form("name"))
+            Pick a <strong>very safe name</strong> for the tournament.<br />
+            Anything even <strong>slightly inappropriate</strong> could get your account closed.<br />
+            Leave empty to name the tournament after a random Grandmaster.
+          </td>
+        </tr>
+        }
         <tr class="variant">
           <th><label for="@form("variant").id">@trans.variant()</label></th>
           <td>@base.form.select(form("variant"), translatedVariantChoicesWithVariants.map(x => x._1 -> x._2))</td>
@@ -35,28 +46,13 @@ moreJs = moreJs) {
         <tr class="position">
           <th><label for="@form("position").id">@trans.startPosition()</label></th>
           <td>
-            @defining(form("position")) { field =>
-            <select name="@field.name">
-              @defining(chess.StartingPosition.initial) { v =>
-              <option value="@v.eco" @(if(field.value == Some(v.eco)) "selected" else "")>@v.name</option>
-              }
-              @chess.StartingPosition.categories.map { categ =>
-              <optgroup label="@categ.name">
-                @categ.positions.map { v =>
-                <option value="@v.eco" @(if(field.value == Some(v.eco)) "selected" else "")>@v.fullName</option>
-                }
-              </optgroup>
-              }
-            </select>
-            }
+            @tournament.startingPosition(form("position"))
           </td>
         </tr>
         <tr>
           <th><label for="@form("mode").id">@trans.mode()</label></th>
           <td>
-            @globalCasualOnlyMessage.getOrElse {
             @base.form.select(form("mode"), translatedModeChoices.map(x => x._1 -> x._2))
-            }
           </td>
         </tr>
         <tr class="time">

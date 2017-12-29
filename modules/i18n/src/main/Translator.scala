@@ -1,42 +1,72 @@
 package lila.i18n
 
 import play.api.i18n.Lang
-import play.api.mvc.RequestHeader
 import play.twirl.api.Html
 
-private[i18n] final class Translator(messages: Messages, pool: I18nPool) {
+import lila.common.String.html.escapeHtml
 
-  private val defaultMessages = messages.get("default") err "No default messages"
+object Translator {
 
-  def html(key: String, args: List[Any])(implicit req: RequestHeader): Html =
-    Html(str(key, args)(req))
+  object html {
 
-  def str(key: String, args: List[Any])(implicit req: RequestHeader): String =
-    translate(key, args)(pool lang req) getOrElse key
+    def literal(key: MessageKey, db: I18nDb.Ref, args: Seq[Any], lang: Lang): Html =
+      translate(key, db, lang, I18nQuantity.Other /* grmbl */ , args)
 
-  def transTo(key: String, args: Seq[Any])(lang: Lang): String =
-    translate(key, args)(lang) getOrElse key
+    def plural(key: MessageKey, db: I18nDb.Ref, count: Count, args: Seq[Any], lang: Lang): Html =
+      translate(key, db, lang, I18nQuantity(lang, count), args)
 
-  def rawTranslation(lang: Lang)(key: String): Option[String] =
-    messages get lang.language flatMap (_ get key)
+    private def translate(key: MessageKey, db: I18nDb.Ref, lang: Lang, quantity: I18nQuantity, args: Seq[Any]): Html =
+      findTranslation(key, db, lang) flatMap { translation =>
+        val htmlArgs = escapeArgs(args)
+        try {
+          translation match {
+            case literal: Literal => Some(literal.formatHtml(htmlArgs))
+            case plurals: Plurals => plurals.formatHtml(quantity, htmlArgs)
+          }
+        } catch {
+          case e: Exception =>
+            logger.warn(s"Failed to format html $db/$lang/$key -> $translation (${args.toList})", e)
+            Some(Html(key))
+        }
+      } getOrElse {
+        logger.info(s"No translation found for $quantity $key in $lang")
+        Html(key)
+      }
 
-  private def defaultTranslation(key: String, args: Seq[Any]): Option[String] =
-    defaultMessages get key flatMap { pattern =>
-      formatTranslation(key, pattern, args)
+    private def escapeArgs(args: Seq[Any]): Seq[Html] = args.map {
+      case s: String => escapeHtml(s)
+      case h: Html => h
+      case a => Html(a.toString)
     }
-
-  private def translate(key: String, args: Seq[Any])(lang: Lang): Option[String] =
-    if (lang.language == pool.default.language) defaultTranslation(key, args)
-    else messages get lang.language flatMap (_ get key) flatMap { pattern =>
-      formatTranslation(key, pattern, args)
-    } orElse defaultTranslation(key, args)
-
-  private def formatTranslation(key: String, pattern: String, args: Seq[Any]) = try {
-    Some(if (args.isEmpty) pattern else pattern.format(args: _*))
   }
-  catch {
-    case e: Exception =>
-      logger.warn(s"Failed to translate $key -> $pattern ($args)", e)
-      None
+
+  object txt {
+
+    def literal(key: MessageKey, db: I18nDb.Ref, args: Seq[Any], lang: Lang): String =
+      translate(key, db, lang, I18nQuantity.Other /* grmbl */ , args)
+
+    def plural(key: MessageKey, db: I18nDb.Ref, count: Count, args: Seq[Any], lang: Lang): String =
+      translate(key, db, lang, I18nQuantity(lang, count), args)
+
+    private def translate(key: MessageKey, db: I18nDb.Ref, lang: Lang, quantity: I18nQuantity, args: Seq[Any]): String =
+      findTranslation(key, db, lang) flatMap { translation =>
+        try {
+          translation match {
+            case literal: Literal => Some(literal.formatTxt(args))
+            case plurals: Plurals => plurals.formatTxt(quantity, args)
+          }
+        } catch {
+          case e: Exception =>
+            logger.warn(s"Failed to format txt $db/$lang/$key -> $translation (${args.toList})", e)
+            Some(key)
+        }
+      } getOrElse {
+        logger.info(s"No translation found for $quantity $db/$lang/$key in $lang")
+        key
+      }
   }
+
+  private[i18n] def findTranslation(key: MessageKey, db: I18nDb.Ref, lang: Lang): Option[Translation] =
+    I18nDb(db).get(lang).flatMap(_ get key) orElse
+      I18nDb(db).get(defaultLang).flatMap(_ get key)
 }

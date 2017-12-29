@@ -12,7 +12,8 @@ case class Categ(
     nbTopicsTroll: Int,
     nbPostsTroll: Int,
     lastPostIdTroll: String,
-    quiet: Boolean = false) {
+    quiet: Boolean = false
+) {
 
   def id = _id
 
@@ -20,7 +21,7 @@ case class Categ(
   def nbPosts(troll: Boolean): Int = troll.fold(nbPostsTroll, nbPosts)
   def lastPostId(troll: Boolean): String = troll.fold(lastPostIdTroll, lastPostId)
 
-  def isStaff = slug == "staff"
+  def isStaff = slug == Categ.staffId
 
   def isTeam = team.nonEmpty
 
@@ -30,7 +31,12 @@ case class Categ(
     lastPostId = post.troll.fold(lastPostId, post.id),
     nbTopicsTroll = nbTopicsTroll + 1,
     nbPostsTroll = nbPostsTroll + 1,
-    lastPostIdTroll = post.id)
+    lastPostIdTroll = post.id
+  )
 
   def slug = id
+}
+
+object Categ {
+  val staffId = "staff"
 }

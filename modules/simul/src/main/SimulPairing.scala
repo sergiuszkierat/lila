@@ -1,22 +1,25 @@
 package lila.simul
 
-import lila.game.{ PovRef, IdGenerator }
+import lila.game.IdGenerator
 
 case class SimulPairing(
     player: SimulPlayer,
     gameId: String,
     status: chess.Status,
     wins: Option[Boolean],
-    hostColor: chess.Color) {
+    hostColor: chess.Color
+) {
 
   def finished = status >= chess.Status.Mate
+  def ongoing = !finished
 
   def is(userId: String): Boolean = player is userId
   def is(other: SimulPlayer): Boolean = player is other
 
   def finish(s: chess.Status, w: Option[String], t: Int) = copy(
     status = s,
-    wins = w map player.is)
+    wins = w map player.is
+  )
 
   def winnerColor = wins.map { w =>
     if (w) !hostColor else hostColor
@@ -30,5 +33,6 @@ private[simul] object SimulPairing {
     gameId = IdGenerator.game,
     status = chess.Status.Created,
     wins = none,
-    hostColor = chess.White)
+    hostColor = chess.White
+  )
 }

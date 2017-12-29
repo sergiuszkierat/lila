@@ -1,18 +1,13 @@
 package lila.fishnet
 
-import org.joda.time.DateTime
-import reactivemongo.bson._
 import scala.concurrent.duration._
-
-import lila.db.dsl._
 
 private final class Monitor(
     moveDb: MoveDB,
     repo: FishnetRepo,
     sequencer: lila.hub.FutureSequencer,
-    scheduler: lila.common.Scheduler) {
-
-  private case class AnalysisMeta(time: Int, nodes: Int, nps: Int, depth: Int, pvSize: Int)
+    scheduler: lila.common.Scheduler
+) {
 
   private def sumOf[A](items: List[A])(f: A => Option[Int]) = items.foldLeft(0) {
     case (acc, a) => acc + f(a).getOrElse(0)
@@ -27,13 +22,13 @@ private final class Monitor(
     result.stockfish.options.hashInt foreach { monitor.hash(_) }
     result.stockfish.options.threadsInt foreach { monitor.threads(_) }
 
-    monitor.totalSecond(sumOf(result.analysis)(_.time) * threads.|(1) / 1000)
-    monitor.totalMeganode(sumOf(result.analysis) { eval =>
+    monitor.totalSecond(sumOf(result.evaluations)(_.time) * threads.|(1) / 1000)
+    monitor.totalMeganode(sumOf(result.evaluations) { eval =>
       eval.nodes ifFalse eval.mateFound
     } / 1000000)
-    monitor.totalPosition(result.analysis.size)
+    monitor.totalPosition(result.evaluations.size)
 
-    val metaMovesSample = sample(result.analysis.drop(6).filterNot(_.mateFound), 100)
+    val metaMovesSample = sample(result.evaluations.drop(6).filterNot(_.mateFound), 100)
     def avgOf(f: JsonApi.Request.Evaluation => Option[Int]): Option[Int] = {
       val (sum, nb) = metaMovesSample.foldLeft(0 -> 0) {
         case ((sum, nb), move) => f(move).fold(sum -> nb) { v =>
@@ -46,20 +41,14 @@ private final class Monitor(
     avgOf(_.nodes) foreach { monitor.node(_) }
     avgOf(_.cappedNps) foreach { monitor.nps(_) }
     avgOf(_.depth) foreach { monitor.depth(_) }
-    avgOf(_.pvList.size.some) foreach { monitor.pvSize(_) }
+    avgOf(_.pv.size.some) foreach { monitor.pvSize(_) }
 
-    // endgame positions count and total time
-    if (work.game.variant.standard)
-      chess.Replay.boardsFromUci(~work.game.uciList, work.game.initialFen, work.game.variant).fold(
-        err => logger.warn(s"Monitor couldn't get ${work.game.id}'s boards"),
-        boards => {
-          val (count, time) = (boards zip result.analysis).foldLeft(0 -> 0) {
-            case ((count, time), (board, _)) if board.pieces.size > 5 => (count, time)
-            case ((count, time), (_, eval))                           => (count + 1, time + ~eval.time)
-          }
-          if (count > 0) monitor.endgameCount(count)
-          if (time > 0) monitor.endgameTime(time)
-        })
+    val significantPvSizes =
+      result.evaluations.filterNot(_.mateFound).filterNot(_.deadDraw).map(_.pv.size)
+
+    monitor.pvTotal(significantPvSizes.size)
+    monitor.pvShort(significantPvSizes.count(_ < 3))
+    monitor.pvLong(significantPvSizes.count(_ >= 6))
   }
 
   private def sample[A](elems: List[A], n: Int) =
@@ -87,7 +76,7 @@ private final class Monitor(
     instances.map(_.python.value).groupBy(identity).mapValues(_.size) foreach {
       case (s, nb) => python(s)(nb)
     }
-  } andThenAnyway scheduleClients
+  } addEffectAnyway scheduleClients
 
   private def monitorWork: Unit = {
 
@@ -99,9 +88,10 @@ private final class Monitor(
     sequencer.withQueueSize(lila.mon.fishnet.queue.sequencer(Analysis.key)(_))
 
     repo.countAnalysis(acquired = false).map { queued(Analysis.key)(_) } >>
-      repo.countAnalysis(acquired = true).map { acquired(Analysis.key)(_) }
+      repo.countAnalysis(acquired = true).map { acquired(Analysis.key)(_) } >>
+      repo.countUserAnalysis.map { forUser(Analysis.key)(_) }
 
-  } andThenAnyway scheduleWork
+  } addEffectAnyway scheduleWork
 
   private def scheduleClients = scheduler.once(1 minute)(monitorClients)
   private def scheduleWork = scheduler.once(10 seconds)(monitorWork)
@@ -117,6 +107,8 @@ object Monitor {
     if (work.level == 8) work.acquiredAt foreach { acquiredAt =>
       lila.mon.fishnet.move.time(client.userId.value)(nowMillis - acquiredAt.getMillis)
     }
+    if (work.level == 1)
+      lila.mon.fishnet.move.fullTimeLvl1(client.userId.value)(nowMillis - work.createdAt.getMillis)
   }
 
   private def success(work: Work, client: Client) = {

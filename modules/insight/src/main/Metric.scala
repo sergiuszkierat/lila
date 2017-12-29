@@ -4,13 +4,14 @@ import play.twirl.api.Html
 import reactivemongo.bson._
 
 sealed abstract class Metric(
-  val key: String,
-  val name: String,
-  val dbKey: String,
-  val position: Position,
-  val per: Position,
-  val dataType: Metric.DataType,
-  val description: Html)
+    val key: String,
+    val name: String,
+    val dbKey: String,
+    val position: Position,
+    val per: Position,
+    val dataType: Metric.DataType,
+    val description: Html
+)
 
 object Metric {
 
@@ -24,7 +25,6 @@ object Metric {
     case object Percent extends DataType
   }
 
-  import BSONHandlers._
   import DataType._
   import Position._
   import Entry.{ BSONFields => F }
@@ -67,20 +67,20 @@ object Metric {
 
   def requiresAnalysis(m: Metric) = m match {
     case MeanCpl => true
-    case _       => false
+    case _ => false
   }
 
   def requiresStableRating(m: Metric) = m match {
-    case RatingDiff     => true
+    case RatingDiff => true
     case OpponentRating => true
-    case _              => false
+    case _ => false
   }
 
   def isStacked(m: Metric) = m match {
-    case Result      => true
+    case Result => true
     case Termination => true
-    case PieceRole   => true
-    case _           => false
+    case PieceRole => true
+    case _ => false
   }
 
   def valuesOf(metric: Metric): List[MetricValue] = metric match {

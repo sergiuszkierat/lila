@@ -5,14 +5,12 @@ import lila.analyse.{ Analysis, AnalysisRepo }
 import lila.db.BSON.BSONJodaDateTimeHandler
 import lila.db.dsl._
 import lila.evaluation.Statistics
-import lila.evaluation.{ AccountAction, Analysed, GameAssessment, PlayerAssessment, PlayerAggregateAssessment, PlayerFlags, PlayerAssessments, Assessible }
+import lila.evaluation.{ AccountAction, Analysed, PlayerAssessment, PlayerAggregateAssessment, PlayerFlags, PlayerAssessments, Assessible }
 import lila.game.{ Game, Player, GameRepo, Source, Pov }
 import lila.user.{ User, UserRepo }
 
-import org.joda.time.DateTime
-import reactivemongo.bson._
 import reactivemongo.api.ReadPreference
-import scala.concurrent._
+import reactivemongo.bson._
 import scala.util.Random
 
 import chess.Color
@@ -23,7 +21,8 @@ final class AssessApi(
     modApi: ModApi,
     reporter: ActorSelection,
     fishnet: ActorSelection,
-    userIdsSharingIp: String => Fu[List[String]]) {
+    userIdsSharingIp: String => Fu[List[String]]
+) {
 
   import PlayerFlags.playerFlagsBSONHandler
 
@@ -56,12 +55,13 @@ final class AssessApi(
       getPlayerAssessmentsByUserId(userId, nb) zip
       relatedUsers zip
       (relatedUsers flatMap UserRepo.filterByEngine) map {
-        case (((Some(user), assessedGamesHead :: assessedGamesTail), relatedUs), relatedCheaters) =>
+        case Some(user) ~ (assessedGamesHead :: assessedGamesTail) ~ relatedUs ~ relatedCheaters =>
           Some(PlayerAggregateAssessment(
             user,
             assessedGamesHead :: assessedGamesTail,
             relatedUs,
-            relatedCheaters))
+            relatedCheaters
+          ))
         case _ => none
       }
   }
@@ -73,7 +73,7 @@ final class AssessApi(
 
   def getPlayerAggregateAssessmentWithGames(userId: String, nb: Int = 100): Fu[Option[PlayerAggregateAssessment.WithGames]] =
     getPlayerAggregateAssessment(userId, nb) flatMap {
-      case None      => fuccess(none)
+      case None => fuccess(none)
       case Some(pag) => withGames(pag).map(_.some)
     }
 
@@ -82,7 +82,7 @@ final class AssessApi(
       (gs map { g =>
         AnalysisRepo.byId(g.id) flatMap {
           case Some(a) => onAnalysisReady(g, a, false)
-          case _       => funit
+          case _ => funit
         }
       }).sequenceFu.void
     }) >> assessUser(user.id)
@@ -107,29 +107,39 @@ final class AssessApi(
     })
   }
 
-  def assessUser(userId: String): Funit =
+  def assessUser(userId: String): Funit = {
     getPlayerAggregateAssessment(userId) flatMap {
       case Some(playerAggregateAssessment) => playerAggregateAssessment.action match {
         case AccountAction.Engine | AccountAction.EngineAndBan =>
-          modApi.autoAdjust(userId)
-        case AccountAction.Report(reason) =>
+          UserRepo.getTitle(userId).flatMap {
+            case None => modApi.autoMark(userId, "lichess")
+            case Some(title) => fuccess {
+              val reason = s"Would mark as engine, but has a $title title"
+              reporter ! lila.hub.actorApi.report.Cheater(userId, playerAggregateAssessment.reportText(reason, 3))
+            }
+          }
+        case AccountAction.Report(reason) => fuccess {
           reporter ! lila.hub.actorApi.report.Cheater(userId, playerAggregateAssessment.reportText(reason, 3))
-          funit
+        }
         case AccountAction.Nothing =>
           // reporter ! lila.hub.actorApi.report.Clean(userId)
           funit
       }
-      case none => funit
+      case _ => funit
     }
+  }
 
-  private val assessableSources: Set[Source] = Set(Source.Lobby, Source.Tournament)
+  private val assessableSources: Set[Source] = Set(Source.Lobby, Source.Pool, Source.Tournament)
+
+  private def randomPercent(percent: Int): Boolean =
+    Random.nextInt(100) < percent
 
   def onGameReady(game: Game, white: User, black: User): Funit = {
 
     import AutoAnalysis.Reason._
 
     def manyBlurs(player: Player) =
-      (player.blurs.toDouble / game.playerMoves(player.color)) >= 0.7
+      game.playerBlurPercent(player.color) >= 70
 
     def winnerGreatProgress(player: Player): Boolean = {
       game.winner ?? (player ==)
@@ -137,7 +147,7 @@ final class AssessApi(
       player.color.fold(white, black).perfs(perfType).progress >= 100
     }
 
-    def noFastCoefVariation(player: Player): Option[Double] =
+    def noFastCoefVariation(player: Player): Option[Float] =
       Statistics.noFastMoves(Pov(game, player)) ?? Statistics.moveTimeCoefVariation(Pov(game, player))
 
     def winnerUserOption = game.winnerColor.map(_.fold(white, black))
@@ -148,7 +158,7 @@ final class AssessApi(
 
     def suspCoefVariation(c: Color) = {
       val x = noFastCoefVariation(game player c)
-      x.filter(_ < 0.45) orElse x.filter(_ < 0.5).ifTrue(Random.nextBoolean)
+      x.filter(_ < 0.45f) orElse x.filter(_ < 0.5f).ifTrue(Random.nextBoolean)
     }
     val whiteSuspCoefVariation = suspCoefVariation(chess.White)
     val blackSuspCoefVariation = suspCoefVariation(chess.Black)
@@ -167,19 +177,19 @@ final class AssessApi(
       // someone is using a bot
       else if (game.players.exists(_.hasSuspiciousHoldAlert)) HoldAlert.some
       // white has consistent move times
-      else if (whiteSuspCoefVariation.isDefined) whiteSuspCoefVariation.map(_ => WhiteMoveTime)
+      else if (whiteSuspCoefVariation.isDefined && randomPercent(70)) whiteSuspCoefVariation.map(_ => WhiteMoveTime)
       // black has consistent move times
-      else if (blackSuspCoefVariation.isDefined) blackSuspCoefVariation.map(_ => BlackMoveTime)
+      else if (blackSuspCoefVariation.isDefined && randomPercent(70)) blackSuspCoefVariation.map(_ => BlackMoveTime)
       // don't analyse half of other bullet games
-      else if (game.speed == chess.Speed.Bullet && Random.nextInt(2) == 0) none
+      else if (game.speed == chess.Speed.Bullet && randomPercent(50)) none
       // someone blurs a lot
       else if (game.players exists manyBlurs) Blurs.some
       // the winner shows a great rating progress
       else if (game.players exists winnerGreatProgress) WinnerRatingProgress.some
       // analyse some tourney games
-      // else if (game.isTournament) Random.nextInt(5) == 0 option "Tourney random"
+      // else if (game.isTournament) randomPercent(20) option "Tourney random"
       /// analyse new player games
-      else if (winnerNbGames.??(30 >) && Random.nextInt(3) > 0) NewPlayerWin.some
+      else if (winnerNbGames.??(30 >) && randomPercent(75)) NewPlayerWin.some
       else none
 
     shouldAnalyse foreach { reason =>

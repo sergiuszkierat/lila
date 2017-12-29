@@ -3,7 +3,6 @@ package lila.tournament
 import lila.user.User
 
 import akka.actor._
-import org.joda.time.DateTime
 import scala.concurrent.duration._
 
 import lila.db.dsl._
@@ -12,7 +11,8 @@ import lila.rating.PerfType
 
 private final class TournamentInviter private (
     api: TournamentApi,
-    notifyApi: NotifyApi) extends Actor {
+    notifyApi: NotifyApi
+) extends Actor {
 
   import TournamentInviter._
 
@@ -21,9 +21,10 @@ private final class TournamentInviter private (
     case User.Active(user) if qualifies(user) =>
       notifyApi.exists(Notification.Notifies(user.id), $doc("content.type" -> "u")) flatMap {
         case true => funit
-        case false => notifyApi addNotificationWithoutSkipOrEvent Notification(
+        case false => notifyApi addNotificationWithoutSkipOrEvent Notification.make(
           Notification.Notifies(user.id),
-          LimitedTournamentInvitation)
+          LimitedTournamentInvitation
+        )
       }
   }
 
@@ -48,15 +49,16 @@ private final class TournamentInviter private (
 object TournamentInviter {
 
   val minGames = 20
-  val perfs = List(PerfType.Blitz, PerfType.Classical)
+  val perfs = List(PerfType.Blitz, PerfType.Rapid)
 
   def bestRating(user: User) = user.perfs.bestRatingInWithMinGames(perfs, minGames)
 
   def findNextFor(
     user: User,
     tours: VisibleTournaments,
-    canEnter: Tournament => Fu[Boolean]): Fu[Option[Tournament]] = bestRating(user) match {
-    case None                          => fuccess(none)
+    canEnter: Tournament => Fu[Boolean]
+  ): Fu[Option[Tournament]] = bestRating(user) match {
+    case None => fuccess(none)
     case Some(rating) if rating > 2000 => fuccess(none)
     case Some(rating) => lila.common.Future.find(tours.unfinished.filter { t =>
       t.conditions.maxRating.??(_.rating >= rating)

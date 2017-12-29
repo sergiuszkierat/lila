@@ -1,25 +1,24 @@
 package controllers
 
 import play.api.libs.json._
-import play.api.mvc._, Results._
+import play.api.mvc._
 import scala.concurrent.duration._
 
 import lila.api.{ Context, BodyContext }
 import lila.app._
-import lila.app.mashup.GameFilterMenu
-import lila.common.HTTPRequest
+import lila.app.mashup.{ GameFilterMenu, GameFilter }
 import lila.common.paginator.Paginator
-import lila.evaluation.{ PlayerAggregateAssessment }
-import lila.game.{ GameRepo, Pov, Game => GameModel }
+import lila.common.{ IpAddress, HTTPRequest }
+import lila.common.PimpedJson._
+import lila.game.{ GameRepo, Game => GameModel }
 import lila.rating.PerfType
+import lila.socket.UserLagCache
 import lila.user.{ User => UserModel, UserRepo }
 import views._
 
 object User extends LilaController {
 
   private def env = Env.user
-  private def gamePaginator = Env.game.paginator
-  private def forms = lila.user.DataForm
   private def relationApi = Env.relation.api
   private def userGameSearch = Env.gameSearch.userGameSearch
 
@@ -34,121 +33,149 @@ object User extends LilaController {
     }
   }
 
-  def show(username: String) = OpenBody { implicit ctx =>
-    filter(username, none, 1)
-  }
-
-  def showMini(username: String) = Open { implicit ctx =>
-    OptionFuResult(UserRepo named username) { user =>
-      GameRepo lastPlayedPlaying user zip
-        (ctx.userId ?? { relationApi.fetchBlocks(user.id, _) }) zip
-        (ctx.userId ?? { Env.game.crosstableApi(user.id, _) }) zip
-        (ctx.isAuth ?? { Env.pref.api.followable(user.id) }) zip
-        (ctx.userId ?? { relationApi.fetchRelation(_, user.id) }) flatMap {
-          case ((((pov, blocked), crosstable), followable), relation) =>
-            negotiate(
-              html = fuccess {
-                Ok(html.user.mini(user, pov, blocked, followable, relation, crosstable))
-                  .withHeaders(CACHE_CONTROL -> "max-age=5")
-              },
-              api = _ => {
-                import lila.game.JsonView.crosstableWrites
-                fuccess(Ok(Json.obj(
-                  "crosstable" -> crosstable,
-                  "perfs" -> lila.user.JsonView.perfs(user, user.best8Perfs)
-                )))
-              })
+  def studyTv(username: String) = Open { implicit ctx =>
+    OptionResult(UserRepo named username) { user =>
+      Redirect {
+        Env.relation.online.studying getIfPresent user.id match {
+          case None => routes.Study.byOwnerDefault(user.id)
+          case Some(studyId) => routes.Study.show(studyId)
         }
+      }
     }
   }
 
-  def showFilter(username: String, filterName: String, page: Int) = OpenBody { implicit ctx =>
-    filter(username, filterName.some, page)
+  private def apiGames(u: UserModel, filter: String, page: Int)(implicit ctx: BodyContext[_]) = {
+    userGames(u, filter, page) flatMap Env.api.userGameApi.jsPaginator map { res =>
+      Ok(res ++ Json.obj("filter" -> GameFilter.All.name))
+    }
+  }.mon(_.http.response.user.show.mobile)
+
+  def show(username: String) = OpenBody { implicit ctx =>
+    EnabledUser(username) { u =>
+      negotiate(
+        html = renderShow(u),
+        api = _ => apiGames(u, GameFilter.All.name, 1)
+      )
+    }
+  }
+  private def renderShow(u: UserModel, status: Results.Status = Results.Ok)(implicit ctx: Context) =
+    if (HTTPRequest.isSynchronousHttp(ctx.req)) {
+      for {
+        as <- Env.activity.read.recent(u)
+        nbs ← Env.current.userNbGames(u, ctx)
+        info ← Env.current.userInfo(u, nbs, ctx)
+        social ← Env.current.socialInfo(u, ctx)
+      } yield status(html.user.show.activity(u, as, info, social))
+    }.mon(_.http.response.user.show.website)
+    else Env.activity.read.recent(u) map { as =>
+      status(html.activity.list(u, as))
+    }
+
+  def gamesAll(username: String, page: Int) = games(username, GameFilter.All.name, page)
+
+  def games(username: String, filter: String, page: Int) = OpenBody { implicit ctx =>
+    Reasonable(page) {
+      EnabledUser(username) { u =>
+        negotiate(
+          html = for {
+            nbs ← Env.current.userNbGames(u, ctx)
+            filters = GameFilterMenu(u, nbs, filter)
+            pag <- GameFilterMenu.paginatorOf(
+              userGameSearch = userGameSearch,
+              user = u,
+              nbs = nbs.some,
+              filter = filters.current,
+              me = ctx.me,
+              page = page
+            )(ctx.body)
+            res <- {
+              if (HTTPRequest.isSynchronousHttp(ctx.req)) for {
+                info ← Env.current.userInfo(u, nbs, ctx)
+                _ <- Env.user.lightUserApi preloadMany pag.currentPageResults.flatMap(_.userIds)
+                _ <- Env.tournament.cached.nameCache preloadMany pag.currentPageResults.flatMap(_.tournamentId)
+                _ <- Env.team.cached.nameCache preloadMany info.teamIds
+                social ← Env.current.socialInfo(u, ctx)
+                searchForm = (filters.current == GameFilter.Search) option GameFilterMenu.searchForm(userGameSearch, filters.current)(ctx.body)
+              } yield html.user.show.games(u, info, pag, filters, searchForm, social)
+              else fuccess(html.user.show.gamesContent(u, nbs, pag, filters, filter))
+            }
+          } yield res,
+          api = _ => apiGames(u, filter, page)
+        )
+      }
+    }
+  }
+
+  private def EnabledUser(username: String)(f: UserModel => Fu[Result])(implicit ctx: Context): Fu[Result] =
+    OptionFuResult(UserRepo named username) { u =>
+      if (u.enabled || isGranted(_.UserSpy)) f(u)
+      else negotiate(
+        html = fuccess(NotFound(html.user.disabled(u))),
+        api = _ => fuccess(NotFound(jsonError("No such user, or account closed")))
+      )
+    }
+
+  def showMini(username: String) = Open { implicit ctx =>
+    OptionFuResult(UserRepo named username) { user =>
+      if (user.enabled || isGranted(_.UserSpy)) for {
+        blocked <- ctx.userId ?? { relationApi.fetchBlocks(user.id, _) }
+        crosstable <- ctx.userId ?? { Env.game.crosstableApi(user.id, _) }
+        followable <- ctx.isAuth ?? { Env.pref.api.followable(user.id) }
+        relation <- ctx.userId ?? { relationApi.fetchRelation(_, user.id) }
+        ping = env.isOnline(user.id) ?? UserLagCache.getLagRating(user.id)
+        res <- negotiate(
+          html = !ctx.is(user) ?? GameRepo.lastPlayedPlaying(user) map { pov =>
+            Ok(html.user.mini(user, pov, blocked, followable, relation, ping, crosstable))
+              .withHeaders(CACHE_CONTROL -> "max-age=5")
+          },
+          api = _ => {
+            import lila.game.JsonView.crosstableWrites
+            fuccess(Ok(Json.obj(
+              "crosstable" -> crosstable,
+              "perfs" -> lila.user.JsonView.perfs(user, user.best8Perfs)
+            )))
+          }
+        )
+      } yield res
+      else fuccess(Ok(html.user.miniClosed(user)))
+    }
   }
 
   def online = Open { implicit req =>
     val max = 50
-    def get(nb: Int) = UserRepo.byIdsSortRating(env.onlineUserIdMemo.keys, nb)
     negotiate(
       html = notFound,
-      api = _ => env.cached top50Online true map { list =>
+      api = _ => env.cached.getTop50Online map { list =>
         Ok(Json.toJson(list.take(getInt("nb").fold(10)(_ min max)).map(env.jsonView(_))))
       }
     )
   }
 
-  private def filter(
-    username: String,
-    filterOption: Option[String],
-    page: Int,
-    status: Results.Status = Results.Ok)(implicit ctx: BodyContext[_]) =
-    Reasonable(page) {
-      OptionFuResult(UserRepo named username) { u =>
-        if (u.enabled || isGranted(_.UserSpy)) negotiate(
-          html = {
-            if (lila.common.HTTPRequest.isSynchronousHttp(ctx.req)) userShow(u, filterOption, page)
-            else userGames(u, filterOption, page) map {
-              case (filterName, pag) => html.user.games(u, pag, filterName)
-            }
-          }.map { status(_) }.mon(_.http.response.user.show.website),
-          api = _ => userGames(u, filterOption, page).flatMap {
-            case (filterName, pag) => Env.api.userGameApi.filter(filterName, pag) map {
-              Ok(_)
-            }
-          }.mon(_.http.response.user.show.mobile))
-        else negotiate(
-          html = fuccess(NotFound(html.user.disabled(u))),
-          api = _ => fuccess(NotFound(jsonError("No such user, or account closed"))))
-      }
-    }
-
-  private def userShow(u: UserModel, filterOption: Option[String], page: Int)(implicit ctx: BodyContext[_]) = for {
-    info ← Env.current.userInfo(u, ctx)
-    filters = GameFilterMenu(info, ctx.me, filterOption)
-    pag <- GameFilterMenu.paginatorOf(
-      userGameSearch = userGameSearch,
-      user = u,
-      info = info.some,
-      filter = filters.current,
-      me = ctx.me,
-      page = page)(ctx.body)
-    relation <- ctx.userId ?? { relationApi.fetchRelation(_, u.id) }
-    notes <- ctx.me ?? { me =>
-      relationApi fetchFriends me.id flatMap { env.noteApi.get(u, me, _) }
-    }
-    followable <- ctx.isAuth ?? { Env.pref.api followable u.id }
-    blocked <- ctx.userId ?? { relationApi.fetchBlocks(u.id, _) }
-    searchForm = GameFilterMenu.searchForm(userGameSearch, filters.current)(ctx.body)
-  } yield html.user.show(u, info, pag, filters, searchForm, relation, notes, followable, blocked)
-
-  private val UserGamesRateLimitPerIP = new lila.memo.RateLimit(
+  private val UserGamesRateLimitPerIP = new lila.memo.RateLimit[IpAddress](
     credits = 500,
     duration = 10 minutes,
     name = "user games web/mobile per IP",
-    key = "user_games.web.ip")
+    key = "user_games.web.ip"
+  )
 
   implicit val userGamesDefault =
     ornicar.scalalib.Zero.instance[Fu[Paginator[GameModel]]](fuccess(Paginator.empty[GameModel]))
 
   private def userGames(
     u: UserModel,
-    filterOption: Option[String],
-    page: Int)(implicit ctx: BodyContext[_]): Fu[(String, Paginator[GameModel])] = {
-    import lila.app.mashup.GameFilter.{ All, Playing }
-    filterOption.fold({
-      Env.simul isHosting u.id map (_.fold(Playing, All).name)
-    })(fuccess) flatMap { filterName =>
-      UserGamesRateLimitPerIP(HTTPRequest lastRemoteAddress ctx.req, cost = page, msg = s"on ${u.username}") {
-        lila.mon.http.userGames.cost(page)
-        GameFilterMenu.paginatorOf(
-          userGameSearch = userGameSearch,
-          user = u,
-          info = none,
-          filter = GameFilterMenu.currentOf(GameFilterMenu.all, filterName),
-          me = ctx.me,
-          page = page
-        )(ctx.body)
-      } map { filterName -> _ }
+    filterName: String,
+    page: Int
+  )(implicit ctx: BodyContext[_]): Fu[Paginator[GameModel]] = {
+    UserGamesRateLimitPerIP(HTTPRequest lastRemoteAddress ctx.req, cost = page, msg = s"on ${u.username}") {
+      lila.mon.http.userGames.cost(page)
+      GameFilterMenu.paginatorOf(
+        userGameSearch = userGameSearch,
+        user = u,
+        nbs = none,
+        filter = GameFilterMenu.currentOf(GameFilterMenu.all, filterName),
+        me = ctx.me,
+        page = page
+      )(ctx.body)
     }
   }
 
@@ -163,20 +190,23 @@ object User extends LilaController {
       //     env lightUser pair.userId map { UserModel.LightCount(_, pair.nb) }
       //   }
       // }
-      tourneyWinners ← Env.tournament.winners scheduled nb
-      online ← env.cached top50Online true
+      tourneyWinners ← Env.tournament.winners.all.map(_.top)
+      online ← env.cached.getTop50Online
+      _ <- Env.user.lightUserApi preloadMany tourneyWinners.map(_.userId)
       res <- negotiate(
         html = fuccess(Ok(html.user.list(
           tourneyWinners = tourneyWinners,
           online = online,
           leaderboards = leaderboards,
           nbDay = nbDay,
-          nbAllTime = nbAllTime))),
+          nbAllTime = nbAllTime
+        ))),
         api = _ => fuccess {
           implicit val lpWrites = OWrites[UserModel.LightPerf](env.jsonView.lightPerfIsOnline)
           Ok(Json.obj(
             "bullet" -> leaderboards.bullet,
             "blitz" -> leaderboards.blitz,
+            "rapid" -> leaderboards.rapid,
             "classical" -> leaderboards.classical,
             "crazyhouse" -> leaderboards.crazyhouse,
             "chess960" -> leaderboards.chess960,
@@ -185,13 +215,15 @@ object User extends LilaController {
             "antichess" -> leaderboards.antichess,
             "atomic" -> leaderboards.atomic,
             "horde" -> leaderboards.horde,
-            "racingKings" -> leaderboards.racingKings))
-        })
+            "racingKings" -> leaderboards.racingKings
+          ))
+        }
+      )
     } yield res
   }
 
   def top200(perfKey: String) = Open { implicit ctx =>
-    lila.rating.PerfType(perfKey).fold(notFound) { perfType =>
+    PerfType(perfKey).fold(notFound) { perfType =>
       env.cached top200Perf perfType.id map { users =>
         Ok(html.user.top200(perfType, users))
       }
@@ -201,83 +233,111 @@ object User extends LilaController {
   def topWeek = Open { implicit ctx =>
     negotiate(
       html = notFound,
-      api = _ => env.cached.topWeek(true).map { users =>
+      api = _ => env.cached.topWeek(()).map { users =>
         Ok(Json toJson users.map(env.jsonView.lightPerfIsOnline))
-      })
+      }
+    )
   }
 
-  def mod(username: String) = Secure(_.UserSpy) { implicit ctx =>
-    me => OptionFuOk(UserRepo named username) { user =>
-      (!isGranted(_.SetEmail, user) ?? UserRepo.email(user.id)) zip
-        (Env.security userSpy user.id) zip
-        (Env.mod.assessApi.getPlayerAggregateAssessmentWithGames(user.id)) zip
+  def mod(username: String) = Secure(_.UserSpy) { implicit ctx => me =>
+    OptionFuOk(UserRepo named username) { user =>
+      UserRepo.emails(user.id) zip
+        (Env.security userSpy user) zip
+        Env.mod.assessApi.getPlayerAggregateAssessmentWithGames(user.id) zip
         Env.mod.logApi.userHistory(user.id) zip
         Env.plan.api.recentChargesOf(user) zip
-        Env.pref.api.getPref(user) flatMap {
-          case (((((email, spy), playerAggregateAssessment), history), charges), pref) =>
-            (Env.playban.api bans spy.usersSharingIp.map(_.id)) map { bans =>
-              html.user.mod(user, email, spy, playerAggregateAssessment, bans, history, charges, pref)
-            }
+        Env.report.api.byAndAbout(user, 20) zip
+        Env.pref.api.getPref(user) zip
+        Env.irwin.api.status(user) flatMap {
+          case emails ~ spy ~ assess ~ history ~ charges ~ reports ~ pref ~ irwin =>
+            val familyUserIds = user.id :: spy.otherUserIds.toList
+            Env.playban.api.bans(familyUserIds) zip
+              Env.user.noteApi.forMod(familyUserIds) zip
+              Env.user.lightUserApi.preloadMany {
+                reports.userIds ::: assess.??(_.games).flatMap(_.userIds)
+              } map {
+                case bans ~ notes ~ _ =>
+                  html.user.mod(user, emails, spy, assess, bans, history, charges, reports, pref, irwin, notes)
+              }
         }
     }
   }
 
-  def writeNote(username: String) = AuthBody { implicit ctx =>
-    me => OptionFuResult(UserRepo named username) { user =>
+  def writeNote(username: String) = AuthBody { implicit ctx => me =>
+    OptionFuResult(UserRepo named username) { user =>
       implicit val req = ctx.body
       env.forms.note.bindFromRequest.fold(
-        err => filter(username, none, 1, Results.BadRequest),
-        text => env.noteApi.write(user, text, me) inject Redirect(routes.User.show(username).url + "?note")
+        err => renderShow(user, Results.BadRequest),
+        data => env.noteApi.write(user, data.text, me, data.mod && isGranted(_.ModNote)) inject
+          Redirect(routes.User.show(username).url + "?note")
       )
     }
   }
 
-  def opponents(username: String) = Open { implicit ctx =>
-    OptionFuOk(UserRepo named username) { user =>
-      lila.game.BestOpponents(user.id, 50) flatMap { ops =>
-        ctx.isAuth.fold(
-          Env.pref.api.followables(ops map (_._1.id)),
-          fuccess(List.fill(50)(true))
-        ) flatMap { followables =>
-            (ops zip followables).map {
-              case ((u, nb), followable) => ctx.userId ?? {
-                relationApi.fetchRelation(_, u.id)
-              } map { lila.relation.Related(u, nb.some, followable, _) }
-            }.sequenceFu map { relateds =>
-              html.user.opponents(user, relateds)
-            }
-          }
-      }
-    }
+  def opponents = Auth { implicit ctx => me =>
+    for {
+      ops <- Env.game.bestOpponents(me.id)
+      followables <- Env.pref.api.followables(ops map (_._1.id))
+      relateds <- ops.zip(followables).map {
+        case ((u, nb), followable) => relationApi.fetchRelation(me.id, u.id) map {
+          lila.relation.Related(u, nb.some, followable, _)
+        }
+      }.sequenceFu
+    } yield html.user.opponents(me, relateds)
   }
 
   def perfStat(username: String, perfKey: String) = Open { implicit ctx =>
     OptionFuResult(UserRepo named username) { u =>
       if ((u.disabled || (u.lame && !ctx.is(u))) && !isGranted(_.UserSpy)) notFound
-      else lila.rating.PerfType(perfKey).fold(notFound) { perfType =>
+      else PerfType(perfKey).fold(notFound) { perfType =>
         for {
           perfStat <- Env.perfStat.get(u, perfType)
           ranks <- Env.user.cached.ranking.getAll(u.id)
           distribution <- u.perfs(perfType).established ?? {
             Env.user.cached.ratingDistribution(perfType) map some
           }
+          _ <- Env.user.lightUserApi preloadMany { u.id :: perfStat.userIds.map(_.value) }
           data = Env.perfStat.jsonView(u, perfStat, ranks get perfType.key, distribution)
           response <- negotiate(
             html = Ok(html.user.perfStat(u, ranks, perfType, data)).fuccess,
-            api = _ => Ok(data).fuccess)
+            api = _ => getBool("graph").?? {
+              Env.history.ratingChartApi.singlePerf(u, perfType).map(_.some)
+            } map {
+              _.fold(data) { graph => data + ("graph" -> graph) }
+            } map { Ok(_) }
+          )
         } yield response
       }
     }
   }
 
   def autocomplete = Open { implicit ctx =>
-    get("term", ctx.req).filter(_.nonEmpty).fold(BadRequest("No search term provided").fuccess: Fu[Result]) { term =>
-      JsonOk(UserRepo usernamesLike term)
+    get("term", ctx.req).filter(_.nonEmpty) match {
+      case None => BadRequest("No search term provided").fuccess
+      case Some(term) if getBool("exists") => UserRepo nameExists term map { r => Ok(JsBoolean(r)) }
+      case Some(term) => {
+        ctx.me.ifTrue(getBool("friend")) match {
+          case None => UserRepo userIdsLike term
+          case Some(follower) =>
+            Env.relation.api.searchFollowedBy(follower, term, 10) flatMap {
+              case Nil => UserRepo userIdsLike term
+              case userIds => fuccess(userIds)
+            }
+        }
+      } flatMap { userIds =>
+        if (getBool("object")) Env.user.lightUserApi.asyncMany(userIds) map { users =>
+          Json.obj(
+            "result" -> JsArray(users.flatten.map { u =>
+              lila.common.LightUser.lightUserWrites.writes(u).add("online" -> Env.user.isOnline(u.id))
+            })
+          )
+        }
+        else fuccess(Json toJson userIds)
+      } map { Ok(_) as JSON }
     }
   }
 
-  def myself = Auth { ctx =>
-    me =>
-      fuccess(Redirect(routes.User.show(me.username)))
+  def myself = Auth { ctx => me =>
+    fuccess(Redirect(routes.User.show(me.username)))
   }
 }

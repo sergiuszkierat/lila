@@ -6,14 +6,15 @@ import com.typesafe.config.Config
 final class Env(
     config: Config,
     db: lila.db.Env,
-    mongoCache: lila.memo.MongoCache.Builder,
     shutup: ActorSelection,
     notifyApi: lila.notify.NotifyApi,
     blocks: (String, String) => Fu[Boolean],
     follows: (String, String) => Fu[Boolean],
     getPref: String => Fu[lila.pref.Pref],
     system: ActorSystem,
-    isOnline: lila.user.User.ID => Boolean) {
+    isOnline: lila.user.User.ID => Boolean,
+    lightUser: lila.common.LightUser.GetterSync
+) {
 
   private val CollectionThread = config getString "collection.thread"
   private val ThreadMaxPerPage = config getInt "thread.max_per_page"
@@ -22,11 +23,12 @@ final class Env(
 
   lazy val forms = new DataForm(security = security)
 
-  lazy val jsonView = new JsonView(isOnline)
+  lazy val jsonView = new JsonView(isOnline, lightUser)
 
   lazy val batch = new MessageBatch(
     coll = threadColl,
-    notifyApi = notifyApi)
+    notifyApi = notifyApi
+  )
 
   lazy val api = new MessageApi(
     coll = threadColl,
@@ -34,12 +36,15 @@ final class Env(
     maxPerPage = ThreadMaxPerPage,
     blocks = blocks,
     notifyApi = notifyApi,
-    follows = follows)
+    security = security,
+    lilaBus = system.lilaBus
+  )
 
   lazy val security = new MessageSecurity(
     follows = follows,
     blocks = blocks,
-    getPref = getPref)
+    getPref = getPref
+  )
 }
 
 object Env {
@@ -48,11 +53,12 @@ object Env {
     config = lila.common.PlayApp loadConfig "message",
     db = lila.db.Env.current,
     shutup = lila.hub.Env.current.actor.shutup,
-    mongoCache = lila.memo.Env.current.mongoCache,
     notifyApi = lila.notify.Env.current.api,
     blocks = lila.relation.Env.current.api.fetchBlocks,
     follows = lila.relation.Env.current.api.fetchFollows,
     getPref = lila.pref.Env.current.api.getPref,
     system = lila.common.PlayApp.system,
-    isOnline = lila.user.Env.current.isOnline)
+    isOnline = lila.user.Env.current.isOnline,
+    lightUser = lila.user.Env.current.lightUserSync
+  )
 }

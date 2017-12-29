@@ -1,25 +1,24 @@
 package lila.tournament
 
-import org.joda.time.DateTime
 import play.api.libs.iteratee._
 import reactivemongo.bson._
-import scala.concurrent.duration._
 
-import lila.db.BSON._
 import lila.db.dsl.Coll
 
 private final class LeaderboardIndexer(
     tournamentColl: Coll,
-    leaderboardColl: Coll) {
+    leaderboardColl: Coll
+) {
 
   import LeaderboardApi._
   import BSONHandlers._
 
   def generateAll: Funit = leaderboardColl.remove(BSONDocument()) >> {
+    import reactivemongo.play.iteratees.cursorProducer
+
     tournamentColl.find(TournamentRepo.finishedSelect)
       .sort(BSONDocument("startsAt" -> -1))
-      .cursor[Tournament]()
-      .enumerate(20 * 1000, stopOnError = true) &>
+      .cursor[Tournament]().enumerator(20 * 1000) &>
       Enumeratee.mapM[Tournament].apply[Seq[Entry]](generateTour) &>
       Enumeratee.mapConcat[Seq[Entry]].apply[Entry](identity) &>
       Enumeratee.grouped(Iteratee takeUpTo 500) |>>>
@@ -43,7 +42,7 @@ private final class LeaderboardIndexer(
 
   private def generateTour(tour: Tournament): Fu[List[Entry]] = for {
     nbGames <- PairingRepo.countByTourIdAndUserIds(tour.id)
-    players <- PlayerRepo.bestByTourWithRank(tour.id, nb = 5000, skip = 0)
+    players <- PlayerRepo.bestByTourWithRank(tour.id, nb = 9000, skip = 0)
   } yield players.flatMap {
     case RankedPlayer(rank, player) => for {
       perfType <- tour.perfType
@@ -59,6 +58,7 @@ private final class LeaderboardIndexer(
       freq = tour.schedule.map(_.freq),
       speed = tour.schedule.map(_.speed),
       perf = perfType,
-      date = tour.startsAt)
+      date = tour.startsAt
+    )
   }
 }

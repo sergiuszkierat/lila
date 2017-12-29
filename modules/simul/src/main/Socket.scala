@@ -6,8 +6,6 @@ import play.api.libs.json._
 import scala.concurrent.duration._
 
 import actorApi._
-import lila.common.LightUser
-import lila.hub.actorApi.round.MoveEvent
 import lila.hub.TimeBomb
 import lila.socket.actorApi.{ Connected => _, _ }
 import lila.socket.{ SocketActor, History, Historical }
@@ -17,16 +15,17 @@ private[simul] final class Socket(
     val history: History[Messadata],
     getSimul: Simul.ID => Fu[Option[Simul]],
     jsonView: JsonView,
-    lightUser: String => Option[LightUser],
+    lightUser: lila.common.LightUser.Getter,
     uidTimeout: Duration,
-    socketTimeout: Duration) extends SocketActor[Member](uidTimeout) with Historical[Member, Messadata] {
+    socketTimeout: Duration
+) extends SocketActor[Member](uidTimeout) with Historical[Member, Messadata] {
 
-  override def preStart() {
+  override def preStart(): Unit = {
     super.preStart()
     lilaBus.subscribe(self, Symbol(s"chat-$simulId"))
   }
 
-  override def postStop() {
+  override def postStop(): Unit = {
     super.postStop()
     lilaBus.unsubscribe(self)
   }
@@ -35,7 +34,7 @@ private[simul] final class Socket(
 
   private var delayedCrowdNotification = false
 
-  private def redirectPlayer(game: lila.game.Game, colorOption: Option[chess.Color]) {
+  private def redirectPlayer(game: lila.game.Game, colorOption: Option[chess.Color]): Unit = {
     colorOption foreach { color =>
       val player = game player color
       player.userId foreach { userId =>
@@ -48,11 +47,11 @@ private[simul] final class Socket(
 
   def receiveSpecific = ({
 
-    case StartGame(game, hostId)       => redirectPlayer(game, game.playerByUserId(hostId) map (!_.color))
+    case StartGame(game, hostId) => redirectPlayer(game, game.playerByUserId(hostId) map (!_.color))
 
     case StartSimul(firstGame, hostId) => redirectPlayer(firstGame, firstGame.playerByUserId(hostId) map (_.color))
 
-    case HostIsOn(gameId)              => notifyVersion("hostGame", gameId, Messadata())
+    case HostIsOn(gameId) => notifyVersion("hostGame", gameId, Messadata())
 
     case Reload =>
       getSimul(simulId) foreach {
@@ -65,8 +64,8 @@ private[simul] final class Socket(
 
     case Aborted => notifyVersion("aborted", Json.obj(), Messadata())
 
-    case PingVersion(uid, v) => {
-      ping(uid)
+    case Ping(uid, Some(v), c) => {
+      ping(uid, c)
       timeBomb.delay
       withMember(uid) { m =>
         history.since(v).fold(resync(m))(_ foreach sendMessage(m))
@@ -78,14 +77,14 @@ private[simul] final class Socket(
       if (timeBomb.boom) self ! PoisonPill
     }
 
-    case GetVersion        => sender ! history.version
+    case GetVersion => sender ! history.version
 
-    case Socket.GetUserIds => sender ! userIds
+    case Socket.GetUserIds => sender ! members.values.flatMap(_.userId)
 
     case Join(uid, user) =>
       val (enumerator, channel) = Concurrent.broadcast[JsValue]
       val member = Member(channel, user)
-      addMember(uid, member)
+      addMember(uid.value, member)
       notifyCrowd
       sender ! Connected(enumerator, member)
 
@@ -95,12 +94,13 @@ private[simul] final class Socket(
 
     case NotifyCrowd =>
       delayedCrowdNotification = false
-      notifyAll("crowd", showSpectators(lightUser)(members.values))
+      showSpectators(lightUser)(members.values) foreach { notifyAll("crowd", _) }
+
   }: Actor.Receive) orElse lila.chat.Socket.out(
     send = (t, d, trollish) => notifyVersion(t, d, Messadata(trollish))
   )
 
-  def notifyCrowd {
+  def notifyCrowd: Unit = {
     if (!delayedCrowdNotification) {
       delayedCrowdNotification = true
       context.system.scheduler.scheduleOnce(500 millis, self, NotifyCrowd)

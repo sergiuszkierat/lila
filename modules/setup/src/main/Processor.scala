@@ -1,24 +1,18 @@
 package lila.setup
 
 import akka.actor.ActorSelection
-import akka.pattern.ask
-import chess.{ Game => ChessGame, Board, Color => ChessColor }
-import play.api.libs.json.{ Json, JsObject }
 
-import lila.db.dsl._
-import lila.game.{ Game, GameRepo, Pov, Progress, PerfPicker }
-import lila.i18n.I18nDomain
+import lila.game.{ GameRepo, Pov, PerfPicker }
 import lila.lobby.actorApi.{ AddHook, AddSeek }
-import lila.lobby.Hook
 import lila.user.{ User, UserContext }
-import makeTimeout.short
 
 private[setup] final class Processor(
     lobby: ActorSelection,
     gameCache: lila.game.Cached,
     maxPlaying: Int,
     fishnetPlayer: lila.fishnet.Player,
-    onStart: String => Unit) {
+    onStart: String => Unit
+) {
 
   def filter(config: FilterConfig)(implicit ctx: UserContext): Funit =
     saveConfig(_ withFilter config)
@@ -42,7 +36,8 @@ private[setup] final class Processor(
     configBase: HookConfig,
     uid: String,
     sid: Option[String],
-    blocking: Set[String])(implicit ctx: UserContext): Fu[Processor.HookResult] = {
+    blocking: Set[String]
+  )(implicit ctx: UserContext): Fu[Processor.HookResult] = {
     import Processor.HookResult._
     val config = configBase.fixColor
     saveConfig(_ withHook config) >> {
@@ -59,13 +54,16 @@ private[setup] final class Processor(
           }
         }
         case Right(None) if ctx.me.isEmpty => fuccess(Refused)
-        case _                             => fuccess(Refused)
+        case _ => fuccess(Refused)
       }
     }
   }
 
   def saveFriendConfig(config: FriendConfig)(implicit ctx: UserContext) =
     saveConfig(_ withFriend config)
+
+  def saveHookConfig(config: HookConfig)(implicit ctx: UserContext) =
+    saveConfig(_ withHook config)
 
   private def saveConfig(map: UserConfig => UserConfig)(implicit ctx: UserContext): Funit =
     ctx.me.fold(AnonConfigRepo.update(ctx.req) _)(user => UserConfigRepo.update(user) _)(map)

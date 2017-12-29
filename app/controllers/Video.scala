@@ -1,11 +1,9 @@
 package controllers
 
-import play.twirl.api.Html
-
 import lila.api.Context
 import lila.app._
 import lila.common.HTTPRequest
-import lila.video.{ View, Video => VideoModel, UserControl, Filter }
+import lila.video.{ View, UserControl, Filter }
 import views._
 
 object Video extends LilaController {
@@ -19,7 +17,8 @@ object Video extends LilaController {
         filter = Filter(reqTags),
         tags = tags,
         query = get("q"),
-        bot = HTTPRequest.isBot(ctx.req))
+        bot = HTTPRequest.isBot(ctx.req)
+      )
     } flatMap f
   }
 

@@ -5,7 +5,7 @@ import reactivemongo.api._
 import reactivemongo.bson._
 
 import lila.db.dsl._
-import lila.user.{ User, UserRepo }
+import lila.user.User
 
 object TeamRepo {
 
@@ -14,17 +14,25 @@ object TeamRepo {
 
   import BSONHandlers._
 
-  type ID = String
+  def byOrderedIds(ids: Seq[Team.ID]) = coll.byOrderedIds[Team, Team.ID](ids)(_.id)
 
-  def byOrderedIds(ids: Seq[String]) = coll.byOrderedIds[Team](ids)(_.id)
+  def cursor(
+    selector: Bdoc,
+    readPreference: ReadPreference = ReadPreference.secondaryPreferred
+  )(
+    implicit
+    cp: CursorProducer[Team]
+  ) =
+    coll.find(selector).cursor[Team](readPreference)
 
-  def cursor(selector: Bdoc) = coll.find(selector).cursor[Team]()
-
-  def owned(id: String, createdBy: String): Fu[Option[Team]] =
+  def owned(id: Team.ID, createdBy: User.ID): Fu[Option[Team]] =
     coll.uno[Team]($id(id) ++ $doc("createdBy" -> createdBy))
 
-  def teamIdsByCreator(userId: String): Fu[List[String]] =
-    coll.distinct[String, List]("_id", BSONDocument("createdBy" -> userId).some)
+  def teamIdsByCreator(userId: User.ID): Fu[List[String]] =
+    coll.distinct[String, List]("_id", $doc("createdBy" -> userId).some)
+
+  def creatorOf(teamId: Team.ID): Fu[Option[User.ID]] =
+    coll.primitiveOne[User.ID]($id(teamId), "_id")
 
   def name(id: String): Fu[Option[String]] =
     coll.primitiveOne[String]($id(id), "name")
@@ -48,7 +56,8 @@ object TeamRepo {
   def addRequest(teamId: String, request: Request): Funit =
     coll.update(
       $id(teamId) ++ $doc("requests.user" $ne request.user),
-      $push("requests", request.user)).void
+      $push("requests", request.user)
+    ).void
 
   val enabledQuery = $doc("enabled" -> true)
 

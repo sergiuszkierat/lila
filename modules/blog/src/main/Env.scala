@@ -1,14 +1,13 @@
 package lila.blog
 
-import akka.actor._
 import com.typesafe.config.Config
-
-import lila.common.PimpedConfig._
 
 final class Env(
     config: Config,
     scheduler: lila.common.Scheduler,
-    notifyApi: lila.notify.NotifyApi) {
+    asyncCache: lila.memo.AsyncCache.Builder,
+    timelineApi: lila.timeline.EntryApi
+)(implicit system: akka.actor.ActorSystem) {
 
   private val PrismicApiUrl = config getString "prismic.api_url"
   private val PrismicCollection = config getString "prismic.collection"
@@ -18,20 +17,21 @@ final class Env(
 
   lazy val api = new BlogApi(
     prismicUrl = PrismicApiUrl,
-    collection = PrismicCollection)
-
-  lazy val lastPostCache = new LastPostCache(api, LastPostCacheTtl, PrismicCollection)
+    asyncCache = asyncCache,
+    collection = PrismicCollection
+  )
 
   private lazy val notifier = new Notifier(
     blogApi = api,
-    notifyApi = notifyApi)
+    timelineApi = timelineApi
+  )
 
-  def cli = new lila.common.Cli {
-    def process = {
-      case "blog" :: "notify" :: prismicId :: Nil =>
-        notifier(prismicId) inject "done!"
-    }
-  }
+  lazy val lastPostCache = new LastPostCache(
+    api,
+    notifier,
+    LastPostCacheTtl,
+    PrismicCollection
+  )
 }
 
 object Env {
@@ -39,5 +39,9 @@ object Env {
   lazy val current: Env = "blog" boot new Env(
     config = lila.common.PlayApp loadConfig "blog",
     scheduler = lila.common.PlayApp.scheduler,
-    notifyApi = lila.notify.Env.current.api)
+    asyncCache = lila.memo.Env.current.asyncCache,
+    timelineApi = lila.timeline.Env.current.entryApi
+  )(
+    lila.common.PlayApp.system
+  )
 }

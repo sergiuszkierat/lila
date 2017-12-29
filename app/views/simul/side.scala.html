@@ -7,13 +7,17 @@
       <span data-icon="@pt.iconChar"></span>
       }
     </div>
-    <span class="clock">@sim.clock.show</span><br />
+    <span class="clock">@sim.clock.config.show</span><br />
     <div class="setup">
       @sim.variants.map(_.name).mkString(", ") • @trans.casual()
     </div>
     @trans.simulHostExtraTime(): @sim.clock.hostExtraMinutes @if(sim.clock.hostExtraMinutes == 1) { minute } else { minutes }
     <br />
-    Host color: @sim.color.getOrElse("random").capitalize
+    @trans.hostColorX(sim.color match {
+      case Some("white") => trans.white()
+      case Some("black") => trans.black()
+      case _ => trans.randomColor()
+    })
   </div>
-  @trans.by(usernameOrId(sim.hostId)), <span title="@showDateTime(sim.createdAt)">@momentFormat(sim.createdAt)</span>
+  @trans.by(usernameOrId(sim.hostId)), @momentFromNow(sim.createdAt)
 </div>

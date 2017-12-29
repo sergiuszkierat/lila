@@ -10,6 +10,7 @@
   </appender>
 
   <appender name="ALL_FILE" class="ch.qos.logback.core.FileAppender">
+    <filter class="ch.qos.logback.classic.filter.ThresholdFilter"><level>INFO</level></filter>
     <file>${application.home}/logs/all.log</file>
     <encoder><pattern>%date %-5level %logger{30} %message%n%xException{60}</pattern></encoder>
   </appender>
@@ -26,13 +27,19 @@
   <!--   </appender> -->
   <!-- </logger> -->
 
-  <logger name="reactivemongo" level="DEBUG">
+  <logger name="reactivemongo" level="INFO">
     <appender name="FILE" class="ch.qos.logback.core.FileAppender">
       <file>${application.home}/logs/reactivemongo.log</file>
       <encoder><pattern>%date [%level] %message%n%xException</pattern></encoder>
     </appender>
   </logger>
 
+  <logger name="relay" level="DEBUG">
+    <appender name="FILE" class="ch.qos.logback.core.FileAppender">
+      <file>${application.home}/logs/relay.log</file>
+      <encoder><pattern>%date [%level] %message%n%xException</pattern></encoder>
+    </appender>
+  </logger>
   <logger name="lobby" level="DEBUG">
     <appender name="FILE" class="ch.qos.logback.core.FileAppender">
       <file>${application.home}/logs/lobby.log</file>
@@ -66,6 +73,18 @@
   <logger name="csrf" level="DEBUG">
     <appender name="FILE" class="ch.qos.logback.core.FileAppender">
       <file>${application.home}/logs/csrf.log</file>
+      <encoder><pattern>%date [%level] %message%n%xException</pattern></encoder>
+    </appender>
+  </logger>
+  <logger name="http" level="DEBUG">
+    <appender name="FILE" class="ch.qos.logback.core.FileAppender">
+      <file>${application.home}/logs/http.log</file>
+      <encoder><pattern>%date [%level] %message%n%xException</pattern></encoder>
+    </appender>
+  </logger>
+  <logger name="auth" level="DEBUG">
+    <appender name="FILE" class="ch.qos.logback.core.FileAppender">
+      <file>${application.home}/logs/auth.log</file>
       <encoder><pattern>%date [%level] %message%n%xException</pattern></encoder>
     </appender>
   </logger>

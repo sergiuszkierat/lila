@@ -1,32 +1,44 @@
 package lila.tournament
 package arena
 
-import lila.common.Maths
 import lila.tournament.{ Score => AbstractScore }
 import lila.tournament.{ ScoringSystem => AbstractScoringSystem }
 
 private[tournament] object ScoringSystem extends AbstractScoringSystem {
+
   sealed abstract class Flag(val id: Int)
   case object Double extends Flag(3)
   case object StreakStarter extends Flag(2)
   case object Normal extends Flag(1)
 
+  sealed trait Berserk
+  case object NoBerserk extends Berserk
+  case object ValidBerserk extends Berserk
+  case object InvalidBerserk extends Berserk
+
+  sealed trait Result
+  case object ResWin extends Result
+  case object ResDraw extends Result
+  case object ResLoss extends Result
+  case object ResDQ extends Result
+
   case class Score(
-      win: Option[Boolean],
+      res: Result,
       flag: Flag,
-      berserk: Int) extends AbstractScore {
+      berserk: Berserk
+  ) extends AbstractScore {
 
-    val value = ((win, flag) match {
-      case (Some(true), Double) => 4
-      case (Some(true), _)      => 2
-      case (None, Double)       => 2
-      case (None, _)            => 1
-      case _                    => 0
-    }) + (~win ?? berserk)
+    def isBerserk = berserk != NoBerserk
 
-    def isBerserk = berserk > 0
-
-    def isWin = win contains true
+    val value = ((res, flag) match {
+      case (ResWin, Double) => 4
+      case (ResWin, _) => 2
+      case (ResDraw, Double) => 2
+      case (ResDraw, _) => 1
+      case _ => 0
+    }) + {
+      if (res == ResWin && berserk == ValidBerserk) 1 else 0
+    }
   }
 
   case class Sheet(scores: List[Score]) extends ScoreSheet {
@@ -36,33 +48,40 @@ private[tournament] object ScoringSystem extends AbstractScoringSystem {
 
   val emptySheet = Sheet(Nil)
 
-  def sheet(tour: Tournament, userId: String, pairings: Pairings): Sheet = Sheet {
+  def sheet(userId: String, pairings: Pairings): Sheet = Sheet {
     val nexts = (pairings drop 1 map some) :+ None
     pairings.zip(nexts).foldLeft(List.empty[Score]) {
       case (scores, (p, n)) =>
-        val berserkValue = p validBerserkOf userId
+        val berserk = if (p berserkOf userId) {
+          if (p.notSoQuickFinish) ValidBerserk else InvalidBerserk
+        } else NoBerserk
         (p.winner match {
-          case None if p.quickDraw => Score(Some(false), Normal, berserkValue)
+          case None if p.quickDraw => Score(ResDQ, Normal, berserk)
           case None => Score(
-            None,
+            ResDraw,
             if (isOnFire(scores)) Double else Normal,
-            berserkValue)
+            berserk
+          )
           case Some(w) if userId == w => Score(
-            Some(true),
+            ResWin,
             if (isOnFire(scores)) Double
             else if (scores.headOption ?? (_.flag == StreakStarter)) StreakStarter
-            else n.flatMap(_.winner) match {
-              case Some(w) if userId == w => StreakStarter
-              case _                        => Normal
+            else n match {
+              case None => StreakStarter
+              case Some(s) if s.winner.contains(userId) => StreakStarter
+              case _ => Normal
             },
-            berserkValue)
-          case _ => Score(Some(false), Normal, berserkValue)
+            berserk
+          )
+          case _ => Score(ResLoss, Normal, berserk)
         }) :: scores
     }
   }
 
   private def isOnFire = firstTwoAreWins _
 
-  private def firstTwoAreWins(scores: List[Score]) =
-    (scores.size >= 2) && (scores take 2 forall (~_.win))
+  private def firstTwoAreWins(scores: List[Score]) = scores match {
+    case Score(ResWin, _, _) :: Score(ResWin, _, _) :: _ => true
+    case _ => false
+  }
 }

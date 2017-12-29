@@ -5,7 +5,7 @@ import scala.util.Try
 
 import akka.actor._
 
-import lila.common.LilaException
+import lila.base.LilaException
 
 trait SequentialActor extends Actor {
 
@@ -25,7 +25,7 @@ trait SequentialActor extends Actor {
   private def busy: Receive = {
 
     case Done => dequeue match {
-      case None      => context become idle
+      case None => context become idle
       case Some(msg) => processThenDone(msg)
     }
 
@@ -34,7 +34,7 @@ trait SequentialActor extends Actor {
 
   def receive = idle
 
-  def onFailure(e: Exception) {}
+  def onFailure(e: Exception): Unit = {}
 
   private val queue = collection.mutable.Queue[Any]()
   private def dequeue: Option[Any] = Try(queue.dequeue).toOption
@@ -45,7 +45,7 @@ trait SequentialActor extends Actor {
     case _ => funit
   }
 
-  private def processThenDone(work: Any) {
+  private def processThenDone(work: Any): Unit = {
     work match {
       // we don't want to send Done after actor death
       case SequentialActor.Terminate => self ! PoisonPill
@@ -53,7 +53,7 @@ trait SequentialActor extends Actor {
         val future = (process orElse fallback)(msg)
         futureTimeout.fold(future) { timeout =>
           future.withTimeout(timeout, LilaException(s"Sequential actor timeout: $timeout"))(context.system)
-        }.addFailureEffect(onFailure).andThenAnyway { self ! Done }
+        }.addFailureEffect(onFailure).addEffectAnyway { self ! Done }
     }
   }
 }

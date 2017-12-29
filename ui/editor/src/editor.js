@@ -1,5 +1,10 @@
-var mapValues = require('lodash/object/mapValues')
 var m = require('mithril');
+
+function mapValues(o, f) {
+  var n = {};
+  for (var i in o) n[i] = f(o[i]);
+  return n;
+}
 
 function init(cfg) {
   return {
@@ -28,22 +33,17 @@ function fenMetadatas(data) {
   return data.color() + ' ' + (castles.length ? castles : '-') + ' -';
 }
 
-function computeFen(data, getBaseFen) {
-  return getBaseFen() + ' ' + fenMetadatas(data);
+function computeFen(data, cgFen) {
+  return cgFen + ' ' + fenMetadatas(data);
 }
 
 function makeUrl(url, fen) {
   return url + encodeURIComponent(fen).replace(/%20/g, '_').replace(/%2F/g, '/');
 }
 
-function trans(i18n, key) {
-  return i18n[key];
-}
-
 module.exports = {
   init: init,
   makeUrl: makeUrl,
   computeFen: computeFen,
-  castlesAt: castlesAt,
-  trans: trans
+  castlesAt: castlesAt
 };

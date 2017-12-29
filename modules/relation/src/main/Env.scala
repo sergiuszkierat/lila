@@ -1,21 +1,20 @@
 package lila.relation
 
 import akka.actor._
-import akka.pattern.pipe
 import com.typesafe.config.Config
 import scala.concurrent.duration._
-
-import lila.common.PimpedConfig._
 
 final class Env(
     config: Config,
     db: lila.db.Env,
     hub: lila.hub.Env,
-    getOnlineUserIds: () => Set[String],
-    lightUser: String => Option[lila.common.LightUser],
+    onlineUserIds: lila.memo.ExpireSetMemo,
+    lightUserApi: lila.user.LightUserApi,
     followable: String => Fu[Boolean],
     system: ActorSystem,
-    scheduler: lila.common.Scheduler) {
+    asyncCache: lila.memo.AsyncCache.Builder,
+    scheduler: lila.common.Scheduler
+) {
 
   private val settings = new {
     val CollectionRelation = config getString "collection.relation"
@@ -35,18 +34,26 @@ final class Env(
     timeline = hub.actor.timeline,
     reporter = hub.actor.report,
     followable = followable,
+    asyncCache = asyncCache,
     maxFollow = MaxFollow,
-    maxBlock = MaxBlock)
+    maxBlock = MaxBlock
+  )
+
+  val online = new OnlineDoing(
+    api,
+    lightUser = lightUserApi.sync,
+    onlineUserIds
+  )
 
   private[relation] val actor = system.actorOf(Props(new RelationActor(
-    getOnlineUserIds = getOnlineUserIds,
-    lightUser = lightUser,
-    api = api
+    lightUser = lightUserApi.sync,
+    api = api,
+    online = online
   )), name = ActorName)
 
   scheduler.once(15 seconds) {
     scheduler.message(ActorNotifyFreq) {
-      actor -> actorApi.NotifyMovement
+      actor -> actorApi.ComputeMovement
     }
   }
 }
@@ -57,9 +64,11 @@ object Env {
     config = lila.common.PlayApp loadConfig "relation",
     db = lila.db.Env.current,
     hub = lila.hub.Env.current,
-    getOnlineUserIds = () => lila.user.Env.current.onlineUserIdMemo.keySet,
-    lightUser = lila.user.Env.current.lightUser,
+    onlineUserIds = lila.user.Env.current.onlineUserIdMemo,
+    lightUserApi = lila.user.Env.current.lightUserApi,
     followable = lila.pref.Env.current.api.followable _,
     system = lila.common.PlayApp.system,
-    scheduler = lila.common.PlayApp.scheduler)
+    asyncCache = lila.memo.Env.current.asyncCache,
+    scheduler = lila.common.PlayApp.scheduler
+  )
 }

@@ -2,6 +2,7 @@ package lila.fishnet
 
 import org.joda.time.DateTime
 
+import chess.{ White, Black }
 import chess.format.{ FEN, Forsyth }
 
 import lila.game.{ Game, GameRepo, UciMemo }
@@ -9,7 +10,8 @@ import lila.game.{ Game, GameRepo, UciMemo }
 final class Player(
     moveDb: MoveDB,
     uciMemo: UciMemo,
-    val maxPlies: Int) {
+    val maxPlies: Int
+) {
 
   def apply(game: Game): Funit = game.aiLevel ?? { level =>
     makeWork(game, level) addEffect moveDb.add void
@@ -26,13 +28,22 @@ final class Player(
             id = game.id,
             initialFen = initialFen map FEN.apply,
             variant = game.variant,
-            moves = moves mkString " "),
+            moves = moves mkString " "
+          ),
           currentFen = FEN(Forsyth >> game.toChess),
           level = level,
+          clock = game.clock.map { clk =>
+            Work.Clock(
+              wtime = clk.remainingTime(White).centis,
+              btime = clk.remainingTime(Black).centis,
+              inc = clk.incrementSeconds
+            )
+          },
           tries = 0,
           lastTryByKey = none,
           acquired = none,
-          createdAt = DateTime.now)
+          createdAt = DateTime.now
+        )
       }
       else fufail(s"[fishnet] Too many moves (${game.turns}), won't play ${game.id}")
     else fufail(s"[fishnet] invalid position on ${game.id}")

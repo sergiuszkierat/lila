@@ -1,14 +1,11 @@
 package lila.insight
 
-import org.joda.time.DateTime
-import play.api.libs.iteratee._
 import reactivemongo.api.collections.bson.BSONBatchCommands.AggregationFramework._
 import reactivemongo.bson._
-import scala.concurrent.duration._
 import scalaz.NonEmptyList
 
 import lila.db.dsl._
-import lila.user.UserRepo
+import lila.rating.BSONHandlers.perfTypeIdHandler
 import lila.rating.PerfType
 
 private final class Storage(coll: Coll) {
@@ -18,7 +15,7 @@ private final class Storage(coll: Coll) {
   import Entry.{ BSONFields => F }
 
   def aggregate(operators: NonEmptyList[PipelineOperator]): Fu[AggregationResult] =
-    coll.aggregate(operators.head, operators.tail, allowDiskUse = true)
+    coll.aggregate(operators.head, operators.tail.toList, allowDiskUse = true)
 
   def fetchFirst(userId: String): Fu[Option[Entry]] =
     coll.find(selectUserId(userId)).sort(sortChronological).uno[Entry]
@@ -33,7 +30,8 @@ private final class Storage(coll: Coll) {
 
   def bulkInsert(ps: Seq[Entry]) = coll.bulkInsert(
     documents = ps.map(BSONHandlers.EntryBSONHandler.write).toStream,
-    ordered = false)
+    ordered = false
+  )
 
   def update(p: Entry) = coll.update(selectId(p.id), p, upsert = true).void
 
@@ -55,7 +53,7 @@ private final class Storage(coll: Coll) {
           perfType <- doc.getAs[PerfType]("_id")
           nb <- doc.getAs[Int]("nb")
         } yield perfType -> nb
-      }.toMap
+      }(scala.collection.breakOut)
     }
 }
 

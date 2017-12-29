@@ -2,24 +2,26 @@ package lila.fishnet
 
 import org.joda.time.DateTime
 import reactivemongo.bson._
-import scala.concurrent.duration._
-import scala.concurrent.Future
 import scala.util.{ Try, Success, Failure }
 
 import Client.Skill
+import lila.common.IpAddress
 import lila.db.dsl._
 import lila.hub.FutureSequencer
 
 final class FishnetApi(
     repo: FishnetRepo,
     moveDb: MoveDB,
+    analysisBuilder: AnalysisBuilder,
     analysisColl: Coll,
     sequencer: FutureSequencer,
     monitor: Monitor,
     sink: lila.analyse.Analyser,
     socketExists: String => Fu[Boolean],
+    clientVersion: ClientVersion,
     offlineMode: Boolean,
-    analysisNodes: Int)(implicit system: akka.actor.ActorSystem) {
+    analysisNodes: Int
+)(implicit system: akka.actor.ActorSystem) {
 
   import FishnetApi._
   import JsonApi.Request.{ PartialAnalysis, CompleteAnalysis }
@@ -27,21 +29,21 @@ final class FishnetApi(
 
   def keyExists(key: Client.Key) = repo.getEnabledClient(key).map(_.isDefined)
 
-  def authenticateClient(req: JsonApi.Request, ip: Client.IpAddress): Fu[Try[Client]] = {
+  def authenticateClient(req: JsonApi.Request, ip: IpAddress): Fu[Try[Client]] = {
     if (offlineMode) repo.getOfflineClient map some
     else repo.getEnabledClient(req.fishnet.apikey)
   } map {
-    case None         => Failure(new Exception("Can't authenticate: invalid key or disabled client"))
-    case Some(client) => ClientVersion accept req.fishnet.version map (_ => client)
+    case None => Failure(new Exception("Can't authenticate: invalid key or disabled client"))
+    case Some(client) => clientVersion accept req.fishnet.version map (_ => client)
   } flatMap {
     case Success(client) => repo.updateClientInstance(client, req instance ip) map Success.apply
-    case failure         => fuccess(failure)
+    case failure => fuccess(failure)
   }
 
   def acquire(client: Client): Fu[Option[JsonApi.Work]] = (client.skill match {
-    case Skill.Move     => acquireMove(client)
+    case Skill.Move => acquireMove(client)
     case Skill.Analysis => acquireAnalysis(client)
-    case Skill.All      => acquireMove(client) orElse acquireAnalysis(client)
+    case Skill.All => acquireMove(client) orElse acquireAnalysis(client)
   }).chronometer
     .mon(_.fishnet.acquire time client.skill.key)
     .logIfSlow(100, logger)(_ => s"acquire ${client.skill}")
@@ -63,7 +65,8 @@ final class FishnetApi(
     analysisColl.find(
       $doc("acquired" $exists false) ++ {
         !client.offline ?? $doc("lastTryByKey" $ne client.key) // client alternation
-      }).sort($doc(
+      }
+    ).sort($doc(
         "sender.system" -> 1, // user requests first, then lichess auto analysis
         "createdAt" -> 1 // oldest requests first
       )).uno[Work.Analysis].flatMap {
@@ -89,8 +92,7 @@ final class FishnetApi(
             if (complete.weak && work.game.variant.standard) {
               Monitor.weak(work, client, complete)
               repo.updateOrGiveUpAnalysis(work.weak) >> fufail(WeakAnalysis)
-            }
-            else AnalysisBuilder(client, work, complete.analysis) flatMap { analysis =>
+            } else analysisBuilder(client, work, complete.analysis) flatMap { analysis =>
               monitor.analysis(work, client, complete)
               repo.deleteAnalysis(work) inject PostAnalysisResult.Complete(analysis)
             }
@@ -105,7 +107,7 @@ final class FishnetApi(
           }
           case partial: PartialAnalysis => socketExists(work.game.id) flatMap {
             case true =>
-              AnalysisBuilder.partial(client, work, partial.analysis) map { analysis =>
+              analysisBuilder.partial(client, work, partial.analysis) map { analysis =>
                 PostAnalysisResult.Partial(analysis)
               }
             case false => fuccess(PostAnalysisResult.UnusedPartial)
@@ -117,13 +119,13 @@ final class FishnetApi(
     }.chronometer.mon(_.fishnet.analysis.post)
       .logIfSlow(200, logger) {
         case PostAnalysisResult.Complete(res) => s"post analysis for ${res.id}"
-        case PostAnalysisResult.Partial(res)  => s"partial analysis for ${res.id}"
+        case PostAnalysisResult.Partial(res) => s"partial analysis for ${res.id}"
         case PostAnalysisResult.UnusedPartial => s"unused partial analysis"
       }.result
       .flatMap {
-        case r@PostAnalysisResult.Complete(res) => sink save res inject r
-        case r@PostAnalysisResult.Partial(res)  => sink progress res inject r
-        case r@PostAnalysisResult.UnusedPartial => fuccess(r)
+        case r @ PostAnalysisResult.Complete(res) => sink save res inject r
+        case r @ PostAnalysisResult.Partial(res) => sink progress res inject r
+        case r @ PostAnalysisResult.UnusedPartial => fuccess(r)
       }
 
   def abort(workId: Work.Id, client: Client): Funit = sequencer {
@@ -138,6 +140,15 @@ final class FishnetApi(
   def prioritaryAnalysisInProgress(gameId: String): Fu[Option[Work.InProgress]] =
     repo.getAnalysisByGameId(gameId) map { _.flatMap(_.inProgress) }
 
+  def status = repo.countAnalysis(acquired = false) map { queued =>
+    import play.api.libs.json.Json
+    Json.obj(
+      "analysis" -> Json.obj(
+        "queued" -> queued
+      )
+    )
+  }
+
   private[fishnet] def createClient(userId: Client.UserId, skill: String): Fu[Client] =
     Client.Skill.byKey(skill).fold(fufail[Client](s"Invalid skill $skill")) { sk =>
       val client = Client(
@@ -146,7 +157,8 @@ final class FishnetApi(
         skill = sk,
         instance = None,
         enabled = true,
-        createdAt = DateTime.now)
+        createdAt = DateTime.now
+      )
       repo addClient client inject client
     }
 
@@ -160,7 +172,7 @@ final class FishnetApi(
 
 object FishnetApi {
 
-  import lila.common.LilaException
+  import lila.base.LilaException
 
   case object WeakAnalysis extends LilaException {
     val message = "Analysis nodes per move is too low"

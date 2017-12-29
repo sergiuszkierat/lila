@@ -1,23 +1,25 @@
 package lila.study
 
 import chess.format.pgn.{ Glyph, Glyphs }
-import chess.format.{ Uci, UciCharPair, Forsyth, FEN }
-import chess.opening.FullOpening
+import chess.format.{ Uci, UciCharPair, FEN }
 import chess.variant.Crazyhouse
 
-import lila.socket.tree.Node.{ Shape, Shapes, Comment, Comments }
-import lila.user.User
+import chess.Centis
+import lila.tree.Node.{ Shapes, Comment, Comments, Gamebook }
 
 sealed trait RootOrNode {
   val ply: Int
   val fen: FEN
   val check: Boolean
   val shapes: Shapes
+  val clock: Option[Centis]
   val crazyData: Option[Crazyhouse.Data]
   val children: Node.Children
   val comments: Comments
+  val gamebook: Option[Gamebook]
   val glyphs: Glyphs
   def fullMoveNumber = 1 + ply / 2
+  def mainline: List[Node]
 }
 
 case class Node(
@@ -28,9 +30,12 @@ case class Node(
     check: Boolean,
     shapes: Shapes = Shapes(Nil),
     comments: Comments = Comments(Nil),
+    gamebook: Option[Gamebook] = None,
     glyphs: Glyphs = Glyphs.empty,
+    clock: Option[Centis],
     crazyData: Option[Crazyhouse.Data],
-    children: Node.Children) extends RootOrNode {
+    children: Node.Children
+) extends RootOrNode {
 
   import Node.Children
 
@@ -39,12 +44,30 @@ case class Node(
       copy(children = newChildren)
     }
 
+  def withoutChildren = copy(children = Node.emptyChildren)
+
+  def withClock(centis: Option[Centis]) = copy(clock = centis)
+
+  def isCommented = comments.value.nonEmpty
+
   def setComment(comment: Comment) = copy(comments = comments set comment)
   def deleteComment(commentId: Comment.Id) = copy(comments = comments delete commentId)
+  def deleteComments = copy(comments = Comments.empty)
+
+  def setGamebook(gamebook: Gamebook) = copy(gamebook = gamebook.some)
+
+  def setShapes(s: Shapes) = copy(shapes = s)
 
   def toggleGlyph(glyph: Glyph) = copy(glyphs = glyphs toggle glyph)
 
   def mainline: List[Node] = this :: children.first.??(_.mainline)
+
+  def updateMainlineLast(f: Node => Node): Node =
+    children.first.fold(f(this)) { main =>
+      copy(children = children.update(main updateMainlineLast f))
+    }
+
+  override def toString = s"$id:${move.san}"
 }
 
 object Node {
@@ -57,58 +80,60 @@ object Node {
     def variations = nodes drop 1
 
     def nodeAt(path: Path): Option[Node] = path.split match {
-      case None                               => none
+      case None => none
       case Some((head, tail)) if tail.isEmpty => get(head)
-      case Some((head, tail))                 => get(head) flatMap (_.children nodeAt tail)
+      case Some((head, tail)) => get(head) flatMap (_.children nodeAt tail)
     }
 
     def addNodeAt(node: Node, path: Path): Option[Children] = path.split match {
       case None if has(node.id) => this.some
-      case None                 => copy(nodes = nodes :+ node).some
-      case Some((head, tail))   => updateChildren(head, _.addNodeAt(node, tail))
+      case None => Children(nodes :+ node).some
+      case Some((head, tail)) => updateChildren(head, _.addNodeAt(node, tail))
     }
 
     def deleteNodeAt(path: Path): Option[Children] = path.split match {
-      case None                                 => none
-      case Some((head, Path(Nil))) if has(head) => copy(nodes = nodes.filterNot(_.id == head)).some
-      case Some((_, Path(Nil)))                 => none
-      case Some((head, tail))                   => updateChildren(head, _.deleteNodeAt(tail))
+      case None => none
+      case Some((head, Path(Nil))) if has(head) => Children(nodes.filterNot(_.id == head)).some
+      case Some((_, Path(Nil))) => none
+      case Some((head, tail)) => updateChildren(head, _.deleteNodeAt(tail))
     }
 
-    def promoteNodeAt(path: Path): Option[Children] = path.split match {
+    def promoteToMainlineAt(path: Path): Option[Children] = path.split match {
       case None => this.some
       case Some((head, tail)) =>
         get(head).flatMap { node =>
-          node.withChildren(_.promoteNodeAt(tail)).map { promoted =>
-            copy(nodes = promoted +: nodes.filterNot(node ==))
+          node.withChildren(_.promoteToMainlineAt(tail)).map { promoted =>
+            Children(promoted +: nodes.filterNot(node ==))
           }
         }
     }
 
-    def setShapesAt(shapes: Shapes, path: Path): Option[Children] = path.split match {
-      case None                    => none
-      case Some((head, Path(Nil))) => updateWith(head, _.copy(shapes = shapes).some)
-      case Some((head, tail))      => updateChildren(head, _.setShapesAt(shapes, tail))
+    def promoteUpAt(path: Path): Option[(Children, Boolean)] = path.split match {
+      case None => Some(this -> false)
+      case Some((head, tail)) => for {
+        node <- get(head)
+        mainlineNode <- nodes.headOption
+        (newChildren, isDone) <- node.children promoteUpAt tail
+        newNode = node.copy(children = newChildren)
+      } yield {
+        if (isDone) update(newNode) -> true
+        else if (newNode.id == mainlineNode.id) update(newNode) -> false
+        else Children(newNode +: nodes.filterNot(newNode ==)) -> true
+      }
     }
 
-    def setCommentAt(comment: Comment, path: Path): Option[Children] = path.split match {
-      case None                    => none
-      case Some((head, Path(Nil))) => updateWith(head, _.setComment(comment).some)
-      case Some((head, tail))      => updateChildren(head, _.setCommentAt(comment, tail))
-    }
-    def deleteCommentAt(commentId: Comment.Id, path: Path): Option[Children] = path.split match {
-      case None                    => none
-      case Some((head, Path(Nil))) => updateWith(head, _.deleteComment(commentId).some)
-      case Some((head, tail))      => updateChildren(head, _.deleteCommentAt(commentId, tail))
-    }
-
-    def toggleGlyphAt(glyph: Glyph, path: Path): Option[Children] = path.split match {
-      case None                    => none
-      case Some((head, Path(Nil))) => updateWith(head, _.toggleGlyph(glyph).some)
-      case Some((head, tail))      => updateChildren(head, _.toggleGlyphAt(glyph, tail))
+    def updateAt(path: Path, f: Node => Node): Option[Children] = path.split match {
+      case None => none
+      case Some((head, Path(Nil))) => updateWith(head, n => Some(f(n)))
+      case Some((head, tail)) => updateChildren(head, _.updateAt(tail, f))
     }
 
     def get(id: UciCharPair): Option[Node] = nodes.find(_.id == id)
+
+    def getNodeAndIndex(id: UciCharPair): Option[(Node, Int)] =
+      nodes.zipWithIndex.collectFirst {
+        case pair if pair._1.id == id => pair
+      }
 
     def has(id: UciCharPair): Boolean = nodes.exists(_.id == id)
 
@@ -118,11 +143,25 @@ object Node {
     def updateChildren(id: UciCharPair, f: Children => Option[Children]): Option[Children] =
       updateWith(id, _ withChildren f)
 
-    def update(child: Node): Children = copy(
-      nodes = nodes.map {
-        case n if child.id == n.id => child
-        case n                     => n
-      })
+    def update(child: Node): Children = Children(nodes.map {
+      case n if child.id == n.id => child
+      case n => n
+    })
+
+    def updateMainline(f: Node => Node): Children = Children(nodes match {
+      case main +: others =>
+        val newNode = f(main)
+        newNode.copy(children = newNode.children.updateMainline(f)) +: others
+      case x => x
+    })
+
+    // List(0, 0, 1, 0, 2)
+    def pathToIndexes(path: Path): Option[List[Int]] =
+      path.split.fold(List.empty[Int].some) {
+        case (head, tail) => getNodeAndIndex(head) flatMap {
+          case (node, index) => node.children.pathToIndexes(tail).map(rest => index :: rest)
+        }
+      }
   }
   val emptyChildren = Children(Vector.empty)
 
@@ -132,14 +171,19 @@ object Node {
       check: Boolean,
       shapes: Shapes = Shapes(Nil),
       comments: Comments = Comments(Nil),
+      gamebook: Option[Gamebook] = None,
       glyphs: Glyphs = Glyphs.empty,
+      clock: Option[Centis],
       crazyData: Option[Crazyhouse.Data],
-      children: Children) extends RootOrNode {
+      children: Children
+  ) extends RootOrNode {
 
     def withChildren(f: Children => Option[Children]) =
       f(children) map { newChildren =>
         copy(children = newChildren)
       }
+
+    def withoutChildren = copy(children = Node.emptyChildren)
 
     def nodeAt(path: Path): Option[RootOrNode] =
       if (path.isEmpty) this.some else children nodeAt path
@@ -148,18 +192,34 @@ object Node {
 
     def setShapesAt(shapes: Shapes, path: Path): Option[Root] =
       if (path.isEmpty) copy(shapes = shapes).some
-      else withChildren(_.setShapesAt(shapes, path))
+      else updateChildrenAt(path, _ setShapes shapes)
 
     def setCommentAt(comment: Comment, path: Path): Option[Root] =
       if (path.isEmpty) copy(comments = comments set comment).some
-      else withChildren(_.setCommentAt(comment, path))
+      else updateChildrenAt(path, _ setComment comment)
+
     def deleteCommentAt(commentId: Comment.Id, path: Path): Option[Root] =
       if (path.isEmpty) copy(comments = comments delete commentId).some
-      else withChildren(_.deleteCommentAt(commentId, path))
+      else updateChildrenAt(path, _ deleteComment commentId)
+
+    def setGamebookAt(gamebook: Gamebook, path: Path): Option[Root] =
+      if (path.isEmpty) copy(gamebook = gamebook.some).some
+      else updateChildrenAt(path, _ setGamebook gamebook)
 
     def toggleGlyphAt(glyph: Glyph, path: Path): Option[Root] =
       if (path.isEmpty) copy(glyphs = glyphs toggle glyph).some
-      else withChildren(_.toggleGlyphAt(glyph, path))
+      else updateChildrenAt(path, _ toggleGlyph glyph)
+
+    def setClockAt(clock: Option[Centis], path: Path): Option[Root] =
+      if (path.isEmpty) copy(clock = clock).some
+      else updateChildrenAt(path, _ withClock clock)
+
+    private def updateChildrenAt(path: Path, f: Node => Node): Option[Root] =
+      withChildren(_.updateAt(path, f))
+
+    def updateMainlineLast(f: Node => Node): Root = children.first.fold(this) { main =>
+      copy(children = children.update(main updateMainlineLast f))
+    }
 
     lazy val mainline: List[Node] = children.first.??(_.mainline)
 
@@ -172,6 +232,8 @@ object Node {
         case (node, _) => node.ply
       }
     }
+
+    def mainlinePath = Path(mainline.map(_.id))
   }
 
   object Root {
@@ -180,23 +242,29 @@ object Node {
       ply = 0,
       fen = FEN(variant.initialFen),
       check = false,
+      clock = none,
       crazyData = variant.crazyhouse option Crazyhouse.Data.init,
-      children = emptyChildren)
+      children = emptyChildren
+    )
 
-    def fromRoot(b: lila.socket.tree.Root): Root = Root(
+    def fromRoot(b: lila.tree.Root): Root = Root(
       ply = b.ply,
       fen = FEN(b.fen),
       check = b.check,
+      clock = b.clock,
       crazyData = b.crazyData,
-      children = Children(b.children.toVector map fromBranch))
+      children = Children(b.children.map(fromBranch)(scala.collection.breakOut))
+    )
   }
 
-  def fromBranch(b: lila.socket.tree.Branch): Node = Node(
+  def fromBranch(b: lila.tree.Branch): Node = Node(
     id = b.id,
     ply = b.ply,
     move = b.move,
     fen = FEN(b.fen),
     check = b.check,
     crazyData = b.crazyData,
-    children = Children(b.children.toVector map fromBranch))
+    clock = b.clock,
+    children = Children(b.children.map(fromBranch)(scala.collection.breakOut))
+  )
 }

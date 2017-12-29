@@ -2,14 +2,12 @@ package lila.api
 
 import akka.actor._
 import com.typesafe.config.Config
-import lila.common.PimpedConfig._
+
 import lila.simul.Simul
-import scala.collection.JavaConversions._
-import scala.concurrent.duration._
 
 final class Env(
     config: Config,
-    db: lila.db.Env,
+    settingStore: lila.memo.SettingStore.Builder,
     renderer: ActorSelection,
     system: ActorSystem,
     scheduler: lila.common.Scheduler,
@@ -28,9 +26,11 @@ final class Env(
     lobbyEnv: lila.lobby.Env,
     setupEnv: lila.setup.Env,
     getSimul: Simul.ID => Fu[Option[Simul]],
-    getSimulName: Simul.ID => Option[String],
+    getSimulName: Simul.ID => Fu[Option[String]],
     getTournamentName: String => Option[String],
-    val isProd: Boolean) {
+    pools: List[lila.pool.PoolConfig],
+    val isProd: Boolean
+) {
 
   val CliUsername = config getString "cli.username"
 
@@ -42,7 +42,6 @@ final class Env(
     val BaseUrl = config getString "net.base_url"
     val Port = config getInt "http.port"
     val AssetDomain = config getString "net.asset.domain"
-    val AssetVersion = config getInt "net.asset.version"
     val Email = config getString "net.email"
     val Crawlable = config getBoolean "net.crawlable"
   }
@@ -51,19 +50,14 @@ final class Env(
   val ExplorerEndpoint = config getString "explorer.endpoint"
   val TablebaseEndpoint = config getString "explorer.tablebase.endpoint"
 
-  object assetVersion {
-    import reactivemongo.bson._
-    import lila.db.dsl._
-    private val coll = db("flag")
-    private val cache = lila.memo.MixedCache.single[Int](
-      f = coll.primitiveOne[BSONNumberLike]($id("asset"), "version").map {
-        _.fold(Net.AssetVersion)(_.toInt max Net.AssetVersion)
-      },
-      timeToLive = 10.seconds,
-      default = Net.AssetVersion,
-      logger = lila.log("assetVersion"))
-    def get = cache get true
-  }
+  private val InfluxEventEndpoint = config getString "api.influx_event.endpoint"
+  private val InfluxEventEnv = config getString "api.influx_event.env"
+
+  val assetVersionSetting = settingStore[Int](
+    "assetVersion",
+    default = config getInt "net.asset.version",
+    text = "Assets version. Increment to force all clients to load a new version of static assets. Decrement to serve a previous revision of static assets.".some
+  )
 
   object Accessibility {
     val blindCookieName = config getString "accessibility.blind.cookie.name"
@@ -77,8 +71,9 @@ final class Env(
 
   val pgnDump = new PgnDump(
     dumper = gamePgnDump,
-    simulName = getSimulName,
-    tournamentName = getTournamentName)
+    getSimulName = getSimulName,
+    getTournamentName = getTournamentName
+  )
 
   val userApi = new UserApi(
     jsonView = userEnv.jsonView,
@@ -86,16 +81,22 @@ final class Env(
     relationApi = relationApi,
     bookmarkApi = bookmarkApi,
     crosstableApi = crosstableApi,
-    prefApi = prefApi)
+    gameCache = gameCache,
+    prefApi = prefApi
+  )
 
   val gameApi = new GameApi(
     netBaseUrl = Net.BaseUrl,
     apiToken = apiToken,
     pgnDump = pgnDump,
-    gameCache = gameCache)
+    gameCache = gameCache,
+    crosstableApi = crosstableApi
+  )
 
   val userGameApi = new UserGameApi(
-    bookmarkApi = bookmarkApi)
+    bookmarkApi = bookmarkApi,
+    lightUser = userEnv.lightUserSync
+  )
 
   val roundApi = new RoundApiBalancer(
     api = new RoundApi(
@@ -104,39 +105,45 @@ final class Env(
       forecastApi = forecastApi,
       bookmarkApi = bookmarkApi,
       getTourAndRanks = getTourAndRanks,
-      getSimul = getSimul,
-      lightUser = userEnv.lightUser),
+      getSimul = getSimul
+    ),
     system = system,
-    nbActors = math.max(1, math.min(16, Runtime.getRuntime.availableProcessors - 1)))
+    nbActors = math.max(1, math.min(16, Runtime.getRuntime.availableProcessors - 1))
+  )
 
   val lobbyApi = new LobbyApi(
-    lobby = lobbyEnv.lobby,
-    lobbyVersion = () => lobbyEnv.history.version,
     getFilter = setupEnv.filter,
-    lightUser = userEnv.lightUser,
-    seekApi = lobbyEnv.seekApi)
+    lightUserApi = userEnv.lightUserApi,
+    seekApi = lobbyEnv.seekApi,
+    pools = pools
+  )
 
   private def makeUrl(path: String): String = s"${Net.BaseUrl}/$path"
 
-  lazy val cli = new Cli(system.lilaBus, renderer)
+  lazy val cli = new Cli(system.lilaBus)
 
   KamonPusher.start(system) {
     new KamonPusher(countUsers = () => userEnv.onlineUserIdMemo.count)
   }
+
+  if (InfluxEventEnv != "dev") system.actorOf(Props(new InfluxEvent(
+    endpoint = InfluxEventEndpoint,
+    env = InfluxEventEnv
+  )), name = "influx-event")
 }
 
 object Env {
 
   lazy val current = "api" boot new Env(
     config = lila.common.PlayApp.loadConfig,
-    db = lila.db.Env.current,
+    settingStore = lila.memo.Env.current.settingStore,
     renderer = lila.hub.Env.current.actor.renderer,
     userEnv = lila.user.Env.current,
     analyseEnv = lila.analyse.Env.current,
     lobbyEnv = lila.lobby.Env.current,
     setupEnv = lila.setup.Env.current,
     getSimul = lila.simul.Env.current.repo.find,
-    getSimulName = lila.simul.Env.current.cached.name,
+    getSimulName = lila.simul.Env.current.api.idToName,
     getTournamentName = lila.tournament.Env.current.cached.name,
     roundJsonView = lila.round.Env.current.jsonView,
     noteApi = lila.round.Env.current.noteApi,
@@ -150,5 +157,7 @@ object Env {
     gameCache = lila.game.Env.current.cached,
     system = lila.common.PlayApp.system,
     scheduler = lila.common.PlayApp.scheduler,
-    isProd = lila.common.PlayApp.isProd)
+    pools = lila.pool.Env.current.api.configs,
+    isProd = lila.common.PlayApp.isProd
+  )
 }

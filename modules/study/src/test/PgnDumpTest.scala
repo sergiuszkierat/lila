@@ -3,11 +3,8 @@ package lila.study
 import chess.format.pgn._
 import chess.format.{ FEN, Uci, UciCharPair }
 import chess.variant
-import lila.socket.tree.Node.Shape._
-import lila.socket.tree.Node.Shapes
 import Node._
 import org.specs2.mutable._
-import org.specs2.specification._
 
 class PgnDumpTest extends Specification {
 
@@ -19,8 +16,10 @@ class PgnDumpTest extends Specification {
     move = Uci.WithSan(Uci(uci).get, san),
     fen = FEN("<fen>"),
     check = false,
+    clock = None,
     crazyData = None,
-    children = children)
+    children = children
+  )
 
   def children(nodes: Node*) = Children(nodes.toVector)
 

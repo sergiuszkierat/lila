@@ -9,7 +9,8 @@ import makeTimeout.short
 
 private final class MoveDB(
     roundMap: ActorSelection,
-    system: ActorSystem) {
+    system: ActorSystem
+) {
 
   import Work.Move
 
@@ -22,23 +23,24 @@ private final class MoveDB(
     moveId: Work.Id,
     client: Client,
     data: JsonApi.Request.PostMove,
-    measurement: lila.mon.Measurement) =
+    measurement: lila.mon.Measurement
+  ) =
     actor ! PostResult(moveId, client, data, measurement)
 
   def monitor = actor ! Mon
 
   def clean = actor ? Clean mapTo manifest[Iterable[Move]]
 
-  private object GetSize
   private object Mon
   private object Clean
   private case class Add(move: Move)
   private case class Acquire(client: Client)
   private case class PostResult(
-    moveId: Work.Id,
-    client: Client,
-    data: JsonApi.Request.PostMove,
-    measurement: lila.mon.Measurement)
+      moveId: Work.Id,
+      client: Client,
+      data: JsonApi.Request.PostMove,
+      measurement: lila.mon.Measurement
+  )
 
   private val actor = system.actorOf(Props(new Actor {
 
@@ -101,8 +103,7 @@ private final class MoveDB(
       if (move.isOutOfTries) {
         logger.warn(s"Give up on move $move")
         coll -= move.id
-      }
-      else coll += (move.id -> move)
+      } else coll += (move.id -> move)
 
     def clearIfFull =
       if (coll.size > maxSize) {

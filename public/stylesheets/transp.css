@@ -1,6 +1,6 @@
 body.transp {
   background-color: #1a1a1a;
-  color: #ccc;
+  color: #ddd;
 }
 body.transp a,
 body.transp a:visited,
@@ -14,6 +14,7 @@ body.transp div.analysis_menu > a.active,
 body.transp div.chat_menu > a,
 body.transp div.current_player div.player p,
 body.transp div.vstext,
+body.transp .tview2 move,
 body.transp #lichess_forum div.post .message,
 body.transp #lichess_blog {
   color: #ccc;
@@ -31,6 +32,8 @@ body.transp::before {
   will-change: transform;
   z-index: -1;
 }
+body.transp #timeline,
+body.dark .areplay,
 body.transp div.training .box,
 body.transp div.side_box,
 body.transp div.box,
@@ -47,7 +50,6 @@ body.transp #friend_box,
 body.transp .analysis_panels > div,
 body.transp .button:hover,
 body.transp a.button:hover,
-body.transp .ui-state-hover,
 body.transp #topmenu section:hover > a,
 body.transp #topmenu div,
 body.transp #start_buttons a,
@@ -70,6 +72,8 @@ body.transp table.translations tbody tr,
 body.transp form.translation_form div.message,
 body.transp #video_side .tag_list a.checked,
 body.transp #powerTip,
+body.transp .study_comment_form .material.form .form-group textarea,
+body.transp .chapter_desc,
 body.transp div.vstext,
 body.transp .action_menu {
   background: rgba(0, 0, 0, 0.6);
@@ -90,8 +94,6 @@ body.transp #team .forum li:nth-child(odd),
 body.transp table.translations tbody tr:nth-child(odd),
 body.transp form.translation_form div.message:nth-child(even),
 body.transp div.content_box table.datatable tr:nth-child(odd),
-body.transp div.game_config .optional_config,
-body.transp div.game_config .ratings,
 body.transp div.search_status {
   background: rgba(0, 0, 0, 0.3);
 }
@@ -119,17 +121,10 @@ body.transp #start_buttons a {
   transition: 0.13s;
   box-shadow: 0 0 9px rgba(255, 255, 255, 0.4);
 }
-body.transp .pull-quote p:after,
-body.transp .content_box .pull-quote p:after,
-body.transp div.lichess_overboard .pull-quote p:after {
-    background: linear-gradient(45deg, #505050, #505050 55%, transparent 55%, transparent);
-    border: none;
-}
 body.transp #start_buttons a:hover {
   background: rgba(20, 20, 20, 0.6);
 }
 body.transp #top a.toggle,
-body.transp #top #sound_state,
 body.transp #tv_channels,
 body.transp #video_side,
 body.transp #video_side a,
@@ -148,13 +143,15 @@ body.transp .under_chat,
 body.transp #now_playing h3,
 body.transp div.sub_ratings,
 body.transp div.sub_ratings span,
+body.transp .cemetery score,
 body.transp #site_title,
 body.transp #site_header .baseline,
 body.transp #streams_on_air a.stream span {
   color: #f0f0f0;
   text-shadow: 0 0 2px #000, 0 0 5px #000;
 }
-body.transp .crosstable th,
+body.transp .crosstable th.score,
+body.transp .crosstable td,
 body.transp #chat div.top,
 body.transp div.side_box .top,
 body.transp div.box .top,
@@ -162,8 +159,6 @@ body.transp #friend_box .title,
 body.transp div.undertable_top,
 body.transp .button,
 body.transp .button:visited,
-body.transp .ui-state-default,
-body.transp #translation_call,
 body.transp #notifications > div,
 body.transp div.vstext,
 body.transp div.user_show div.content_box_inter.tabs,
@@ -171,13 +166,10 @@ body.transp #qa .answers-header,
 body.transp #video .card .info,
 body.transp #video .card .reveal,
 body.transp table.slist thead {
-  background: rgba(0, 0, 0, 0.5);
   background: linear-gradient(to bottom, rgba(0, 0, 0, 0.5) 0%, rgba(0, 0, 0, 0.7) 100%);
 }
 body.transp #timeline {
-  background: rgba(0, 0, 0, 0.6);
-  padding: 4px;
-  width: 224px;
+  padding-left: 7px;
   box-sizing: border-box;
 }
 body.transp div.lichess_board,
@@ -189,20 +181,13 @@ body.transp #powerTip {
 body.transp #site_title {
   opacity: 0.9;
 }
-body.transp #themepicker input.background_image {
-  display: block;
-  width: 100%;
-  border: 1px solid #444;
-  border-left: 0;
-  border-right: 0;
-  padding: 5px;
-  box-sizing: border-box;
-  margin-bottom: 10px;
-}
 body.transp ::-webkit-scrollbar,
 body.transp ::-webkit-scrollbar-corner {
   background: rgba(0, 0, 0, 0.1);
 }
 body.transp .action_menu .setting {
   margin-right: 10px;
+}
+body.transp #analyse-cm {
+  color: #888;
 }

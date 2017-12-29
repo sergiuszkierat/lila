@@ -1,37 +1,49 @@
 package lila.round
 
-import akka.actor.ActorRef
 import akka.actor.ActorSelection
 
 import actorApi._
+import lila.chat.Chat
 import lila.chat.actorApi._
 import lila.game.Game
 import lila.i18n.I18nKey.{ Select => SelectI18nKey }
-import lila.i18n.I18nKeys
+import lila.i18n.{ I18nKeys, enLang }
+import lila.hub.actorApi.shutup.PublicSource
 
-final class Messenger(
-    val chat: ActorSelection,
-    i18nKeys: I18nKeys) {
+final class Messenger(val chat: ActorSelection) {
 
-  def system(game: Game, message: SelectI18nKey, args: Any*) {
-    val translated = message(i18nKeys).en(args: _*)
-    chat ! SystemTalk(game.id + "/w", translated)
-    if (game.nonAi) chat ! SystemTalk(game.id, translated)
+  def system(game: Game, message: SelectI18nKey, args: Any*): Unit = {
+    val translated = message(I18nKeys).literalTxtTo(enLang, args)
+    chat ! SystemTalk(Chat.Id(watcherId(game.id)), translated)
+    if (game.nonAi) chat ! SystemTalk(Chat.Id(game.id), translated)
   }
 
-  def systemForOwners(gameId: String, message: SelectI18nKey, args: Any*) {
-    val translated = message(i18nKeys).en(args: _*)
-    chat ! SystemTalk(gameId, translated)
+  def systemForOwners(gameId: Game.ID, message: SelectI18nKey, args: Any*): Unit = {
+    val translated = message(I18nKeys).literalTxtTo(enLang, args)
+    chat ! SystemTalk(Chat.Id(gameId), translated)
   }
 
-  def watcher(gameId: String, member: Member, text: String) =
+  def watcher(gameId: Game.ID, member: Member, text: String) =
     member.userId foreach { userId =>
-      chat ! UserTalk(gameId + "/w", userId, text)
+      val source = PublicSource.Watcher(gameId)
+      chat ! UserTalk(Chat.Id(watcherId(gameId)), userId, text, source.some)
     }
 
-  def owner(gameId: String, member: Member, text: String) =
-    chat ! (member.userId match {
-      case Some(userId) => UserTalk(gameId, userId, text, public = false)
-      case None         => PlayerTalk(gameId, member.color.white, text)
-    })
+  private val whisperCommands = List("/whisper ", "/w ")
+
+  def owner(gameId: Game.ID, member: Member, text: String) = (member.userId match {
+    case Some(userId) =>
+      whisperCommands.collectFirst {
+        case command if text startsWith command =>
+          val source = PublicSource.Watcher(gameId)
+          UserTalk(Chat.Id(watcherId(gameId)), userId, text drop command.size, source.some)
+      } orElse {
+        if (text startsWith "/") none // mistyped command?
+        else UserTalk(Chat.Id(gameId), userId, text, publicSource = none).some
+      }
+    case None =>
+      PlayerTalk(Chat.Id(gameId), member.color.white, text).some
+  }) foreach chat.!
+
+  private def watcherId(gameId: Game.ID) = s"$gameId/w"
 }

@@ -21,7 +21,9 @@ case class Post(
     lang: Option[String],
     editHistory: Option[List[OldVersion]] = None,
     createdAt: DateTime,
-    updatedAt: Option[DateTime] = None) {
+    updatedAt: Option[DateTime] = None,
+    modIcon: Option[Boolean]
+) {
 
   private val permitEditsFor = 4 hours
   private val showEditFormFor = 3 hours
@@ -34,7 +36,7 @@ case class Post(
 
   def isTeam = categId startsWith teamSlug("")
 
-  def isStaff = categId == "staff"
+  def isStaff = categId == Categ.staffId
 
   def updatedOrCreatedAt = updatedAt | createdAt
 
@@ -58,9 +60,13 @@ case class Post(
   }
 
   def hasEdits = editHistory.isDefined
+
+  def displayModIcon = ~modIcon
 }
 
 object Post {
+
+  type ID = String
 
   val idSize = 8
 
@@ -74,10 +80,12 @@ object Post {
     number: Int,
     lang: Option[String],
     troll: Boolean,
-    hidden: Boolean): Post = {
+    hidden: Boolean,
+    modIcon: Option[Boolean]
+  ): Post = {
 
     Post(
-      _id = Random nextStringUppercase idSize,
+      _id = Random nextString idSize,
       topicId = topicId,
       author = author,
       userId = userId,
@@ -88,6 +96,8 @@ object Post {
       troll = troll,
       hidden = hidden,
       createdAt = DateTime.now,
-      categId = categId)
+      categId = categId,
+      modIcon = modIcon
+    )
   }
 }

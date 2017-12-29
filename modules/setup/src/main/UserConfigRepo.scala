@@ -1,11 +1,8 @@
 package lila.setup
 
-import reactivemongo.api._
 import reactivemongo.bson._
 
-import lila.common.LilaException
 import lila.db.dsl._
-import lila.game.Game
 import lila.user.User
 
 private[setup] object UserConfigRepo {
@@ -18,7 +15,8 @@ private[setup] object UserConfigRepo {
       coll.update(
         $id(config.id),
         f(config),
-        upsert = true).void
+        upsert = true
+      ).void
     }
 
   def config(user: User): Fu[UserConfig] =

@@ -2,46 +2,45 @@ package lila.game
 
 import scala.concurrent.duration._
 
-import chess.variant.Variant
-import org.joda.time.DateTime
-
-import lila.db.BSON._
 import lila.db.dsl._
-import lila.memo.{ AsyncCache, MongoCache, ExpireSetMemo, Builder }
-import lila.user.{ User, UidNb }
-import UidNb.UidNbBSONHandler
+import lila.memo.{ MongoCache, ExpireSetMemo }
+import lila.user.User
 
 final class Cached(
     coll: Coll,
-    mongoCache: MongoCache.Builder,
-    defaultTtl: FiniteDuration) {
+    asyncCache: lila.memo.AsyncCache.Builder,
+    mongoCache: MongoCache.Builder
+) {
 
-  def nbImportedBy(userId: String): Fu[Int] = count(Query imported userId)
-  def clearNbImportedByCache(userId: String) = count.remove(Query imported userId)
+  def nbImportedBy(userId: String): Fu[Int] = nbImportedCache(userId)
+  def clearNbImportedByCache = nbImportedCache remove _
 
-  def nbPlaying(userId: String): Fu[Int] = countShortTtl(Query nowPlaying userId)
+  def nbPlaying(userId: String): Fu[Int] = countShortTtl.get(Query nowPlaying userId)
 
-  def nbTotal: Fu[Int] = count($empty)
+  def nbTotal: Fu[Int] = countCache($empty)
 
   private implicit val userHandler = User.userBSONHandler
 
   val rematch960 = new ExpireSetMemo(3.hours)
 
-  val isRematch = new ExpireSetMemo(3.hours)
+  private val countShortTtl = asyncCache.multi[Bdoc, Int](
+    name = "game.countShortTtl",
+    f = coll.countSel(_),
+    expireAfter = _.ExpireAfterWrite(5.seconds)
+  )
 
-  // very expensive
-  // val activePlayerUidsDay = mongoCache[Int, List[UidNb]](
-  //   prefix = "player:active:day",
-  //   (nb: Int) => GameRepo.activePlayersSince(DateTime.now minusDays 1, nb),
-  //   timeToLive = 1 hour)
+  private val nbImportedCache = mongoCache[User.ID, Int](
+    prefix = "game:imported",
+    f = userId => coll countSel Query.imported(userId),
+    timeToLive = 1 hour,
+    timeToLiveMongo = 30.days.some,
+    keyToString = identity
+  )
 
-  private val countShortTtl = AsyncCache[Bdoc, Int](
-    f = (o: Bdoc) => coll countSel o,
-    timeToLive = 5.seconds)
-
-  private val count = mongoCache(
+  private val countCache = mongoCache[Bdoc, Int](
     prefix = "game:count",
-    f = (o: Bdoc) => coll countSel o,
-    timeToLive = defaultTtl,
-    keyToString = lila.db.BSON.hashDoc)
+    f = coll.countSel(_),
+    timeToLive = 1 hour,
+    keyToString = lila.db.BSON.hashDoc
+  )
 }
